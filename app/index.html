@@ -782,7 +782,7 @@
       <h3>Data &amp; privacy</h3>
       <div class="group">
         <div class="setting"><div><b>Kept on the hub</b><p>Team names and members, notes, and sessions with their goals, repos and comments.</p></div></div>
-        <div class="setting"><div><b>Passed through the hub</b><p>Terminal output and Claude Code's hook events, live. The last 256 KB of each running agent's output is held in memory so someone joining sees the current screen; it isn't written to disk.</p></div></div>
+        <div class="setting"><div><b>Passed through the hub</b><p>Terminal output and Claude Code's hook events, live. The last 256 KB of each agent's output is held in memory, so someone joining sees the current screen and a stopped agent's last screen can be looked at (the 20 most recent per team). None of it is written to disk, and it's gone when the hub restarts.</p></div></div>
         <div class="setting"><div><b>Never sent to the hub</b><p>Your code and repos. Agents and git run on your Mac, and the GitHub CLI's login stays here too.</p></div></div>
         <div class="setting"><div><b>Your GitHub sign-in</b><p>Read-only access to your public profile, used to check who you are. Stored encrypted on this Mac; the hub never saves it.</p></div></div>
         <div class="setting"><div><b>Training or analytics</b></div><span class="where">Never</span></div>

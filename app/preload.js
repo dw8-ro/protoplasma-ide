@@ -1,0 +1,53 @@
+// The renderer's entire API surface. It has no Node access beyond these calls.
+const { contextBridge, ipcRenderer } = require('electron');
+
+const listen = channel => fn => ipcRenderer.on(channel, (_, ...args) => fn(...args));
+
+contextBridge.exposeInMainWorld('proto', {
+  savedUser: () => ipcRenderer.invoke('auth:saved'),
+  signIn: () => ipcRenderer.invoke('auth:start'),
+  cancelSignIn: () => ipcRenderer.invoke('auth:cancel'),
+  signOut: () => ipcRenderer.invoke('auth:signOut'),
+  onSignedIn: listen('auth:done'),
+
+  teams: () => ipcRenderer.invoke('teams:list'),
+  createTeam: opts => ipcRenderer.invoke('teams:create', opts),
+  openTeam: key => ipcRenderer.invoke('teams:open', key),
+  invite: (key, login) => ipcRenderer.invoke('teams:invite', key, login),
+  removeMember: (key, login) => ipcRenderer.invoke('teams:remove', key, login),
+  leaveTeam: key => ipcRenderer.invoke('teams:leave', key),
+  deleteTeam: key => ipcRenderer.invoke('teams:delete', key),
+  addMemory: (key, note) => ipcRenderer.invoke('memories:add', key, note),
+  removeMemory: (key, id) => ipcRenderer.invoke('memories:remove', key, id),
+  saveSession: (key, session) => ipcRenderer.invoke('sessions:save', key, session),
+  setSessionDone: (key, name, done) => ipcRenderer.invoke('sessions:done', key, name, done),
+  renameSession: (key, name, rename) => ipcRenderer.invoke('sessions:rename', key, name, rename),
+  deleteSession: (key, name) => ipcRenderer.invoke('sessions:delete', key, name),
+  sessionFolder: (repo, name) => ipcRenderer.invoke('sessions:folder', repo, name),
+  addComment: (key, name, text) => ipcRenderer.invoke('comments:add', key, name, text),
+  removeComment: (key, name, id) => ipcRenderer.invoke('comments:remove', key, name, id),
+  revealRepo: repo => ipcRenderer.invoke('repo:reveal', repo),
+  removeSessionFolder: (repo, name) => ipcRenderer.invoke('sessions:removeFolder', repo, name),
+
+  repos: () => ipcRenderer.invoke('repos:list'),
+  pulls: repo => ipcRenderer.invoke('repos:pulls', repo),
+  issues: repo => ipcRenderer.invoke('repos:issues', repo),
+  openExternal: url => ipcRenderer.invoke('openExternal', url),
+  pickFolder: from => ipcRenderer.invoke('pickFolder', from),
+  focus: () => ipcRenderer.send('focus'),
+  setTheme: theme => ipcRenderer.send('theme', theme),
+  appInfo: () => ipcRenderer.invoke('app:info'),
+  ghStatus: () => ipcRenderer.invoke('gh:status'),
+  setBadge: count => ipcRenderer.send('badge', count),
+  copy: text => ipcRenderer.send('clipboard', text),
+  onMenu: listen('menu'),
+
+  agents: () => ipcRenderer.invoke('agents:status'),
+  startLane: opts => ipcRenderer.invoke('startLane', opts),
+  write: (id, d) => ipcRenderer.send('lane:write', id, d),
+  resize: (id, cols, rows) => ipcRenderer.send('lane:resize', id, cols, rows),
+  kill: id => ipcRenderer.send('lane:kill', id),
+  onData: listen('lane:data'),
+  onExit: listen('lane:exit'),
+  onRefused: listen('lane:refused'),
+});

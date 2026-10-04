@@ -1,0 +1,800 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; connect-src ws: wss:; img-src 'self' https://avatars.githubusercontent.com https://github.com">
+<title>Protoplasma</title>
+<link rel="stylesheet" href="../node_modules/@xterm/xterm/css/xterm.css">
+<style>
+  :root {
+    color-scheme: dark;
+    --canvas: #0e0e10;
+    --main: #141416;
+    --surface: #1b1b1e;
+    --raised: #242428;
+    --line: #2a2a2f;
+    --line-strong: #3a3a41;
+    --text: #ececef;
+    --muted: #8e8e96;
+    --faint: #5d5d65;
+    --live: #6fd6a8;
+    --needs: #f2b35b;
+    --overlap: #f07a8b;
+    --lane: #141416;
+    --primary: #f4f4f5;
+    --primary-hover: #ffffff;
+    --primary-text: #0b0b0c;
+    --ui: -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif;
+    --mono: ui-monospace, "SF Mono", Menlo, monospace;
+  }
+  :root[data-theme=light] {
+    color-scheme: light;
+    --canvas: #f3f3f5;
+    --main: #ffffff;
+    --surface: #ffffff;
+    --raised: #eeeef1;
+    --line: #e3e3e8;
+    --line-strong: #cfcfd6;
+    --text: #17171a;
+    --muted: #5d5d66;
+    --faint: #8a8a93;
+    --live: #17875b;
+    --needs: #a86a12;
+    --overlap: #cf3f58;
+    --lane: #ffffff;
+    --primary: #17171a;
+    --primary-hover: #000000;
+    --primary-text: #ffffff;
+  }
+  /* The teammate colours are tuned for dark backgrounds; darken them where they're used as text on light. */
+  :root[data-theme=light] .avatar { color: color-mix(in srgb, var(--c) 62%, black); }
+  * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
+  html, body { height: 100%; }
+  body {
+    --side: 248px; margin: 0; display: grid; grid-template: 48px minmax(0, 1fr) / var(--side) minmax(0, 1fr);
+    background: var(--canvas); color: var(--text); font: 13px/1.45 var(--ui);
+    -webkit-font-smoothing: antialiased; user-select: none;
+  }
+  body.sidebar-hidden { --side: 0px; }
+  body.sidebar-hidden .sidebar { display: none; }
+  h1, h2, h3, p { margin: 0; }
+  button, input { font: inherit; color: inherit; }
+  :focus-visible { outline: 2px solid color-mix(in srgb, var(--text) 55%, transparent); outline-offset: 2px; }
+  ::-webkit-scrollbar { width: 10px; height: 10px; }
+  ::-webkit-scrollbar-thumb { background: var(--line-strong); border-radius: 10px; border: 3px solid transparent; background-clip: padding-box; }
+
+  /* Controls */
+  .btn {
+    display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+    height: 32px; padding: 0 14px; border-radius: 8px; border: 1px solid var(--line-strong);
+    background: var(--raised); font-weight: 500; cursor: pointer; white-space: nowrap;
+  }
+  .btn:hover { border-color: var(--faint); }
+  .btn:disabled { opacity: .5; cursor: default; }
+  .btn.primary { background: var(--primary); color: var(--primary-text); border-color: var(--primary); }
+  .btn.primary:hover:not(:disabled) { background: var(--primary-hover); }
+  .btn.ghost { background: transparent; border-color: transparent; color: var(--muted); }
+  .btn.ghost:hover { color: var(--text); background: var(--raised); }
+  .btn.small { height: 26px; padding: 0 10px; font-size: 12px; border-radius: 7px; }
+  .btn.wide { width: 100%; height: 40px; font-size: 14px; }
+  .btn svg { width: 16px; height: 16px; }
+  .btn.primary svg { width: 13px; height: 13px; margin-left: -3px; }
+  input:not([type=radio], [type=checkbox]) {
+    width: 100%; height: 34px; padding: 0 11px; border-radius: 8px; border: 1px solid var(--line-strong);
+    background: var(--canvas); user-select: text;
+  }
+  input::placeholder { color: var(--faint); }
+  input:focus { outline: none; border-color: var(--muted); }
+  input[readonly] { color: var(--muted); font-family: var(--mono); font-size: 12px; }
+  .row { display: flex; gap: 8px; }
+  .fine { color: var(--faint); font-size: 12px; line-height: 1.5; }
+
+  /* Identity: every teammate has a colour (set as --c) */
+  .avatar {
+    --c: var(--muted); flex: none; width: 22px; height: 22px; border-radius: 50%; display: grid; place-items: center; overflow: hidden;
+    font-size: 10px; font-weight: 650; color: var(--c);
+    background: color-mix(in srgb, var(--c) 16%, var(--surface));
+    box-shadow: 0 0 0 2px var(--surface), 0 0 0 3.5px color-mix(in srgb, var(--c) 70%, transparent);
+  }
+  .avatar img { width: 100%; height: 100%; }
+  .stack { display: flex; }
+  .stack .avatar + .avatar { margin-left: -4px; }
+  .pill {
+    display: inline-flex; align-items: center; gap: 6px; height: 22px; padding: 0 9px; border-radius: 999px;
+    font-size: 11.5px; font-weight: 500; color: var(--muted); background: var(--raised); border: 1px solid var(--line); white-space: nowrap;
+  }
+  .pill .dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+  .pill.working { color: var(--live); }
+  .pill.working .dot { animation: pulse 1.8s ease-in-out infinite; }
+  .pill.needs, .pill.overlap { background: color-mix(in srgb, currentColor 11%, transparent); border-color: color-mix(in srgb, currentColor 28%, transparent); }
+  .pill.needs { color: var(--needs); }
+  .pill.overlap { color: var(--overlap); }
+  .where { color: var(--faint); font-size: 12px; font-weight: 400; }
+  @keyframes pulse { 50% { opacity: .35; } }
+
+  /* Title bar */
+  .titlebar {
+    grid-column: 1 / -1; display: flex; align-items: center; gap: 14px; padding: 0 16px 0 82px;
+    border-bottom: 1px solid var(--line); -webkit-app-region: drag;
+  }
+  .titlebar button { -webkit-app-region: no-drag; }
+  .brand { display: flex; align-items: center; gap: 8px; font-weight: 600; letter-spacing: -0.01em; }
+  .mark { width: 18px; height: 18px; color: var(--text); }
+  .team-switch {
+    display: flex; align-items: center; gap: 8px; height: 30px; padding: 0 10px 0 12px; border-radius: 8px;
+    background: var(--surface); border: 1px solid var(--line); cursor: pointer; font-weight: 500;
+  }
+  .team-switch:hover { border-color: var(--line-strong); }
+  .team-switch svg { width: 12px; height: 12px; color: var(--faint); }
+  .conn { margin-left: auto; display: flex; align-items: center; gap: 7px; color: var(--muted); font-size: 12px; }
+  .conn .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--faint); }
+  .conn.live .dot { background: var(--live); }
+  .conn.retrying .dot { background: var(--needs); }
+
+  /* Sidebar: where you are, the team's workspaces (repos) with their sessions, and your account */
+  .sidebar { display: flex; flex-direction: column; min-height: 0; border-right: 1px solid var(--line); padding: 12px 8px 0; }
+  .side-link, .ws, .ws-session {
+    display: flex; align-items: center; gap: 9px; width: 100%; height: 30px; padding: 0 9px; border: 0; border-radius: 7px;
+    background: none; color: var(--muted); text-align: left; cursor: pointer; font-weight: 500; white-space: nowrap;
+  }
+  .side-link svg, .ws svg { flex: none; width: 15px; height: 15px; }
+  .side-link:hover, .ws:hover, .ws-session:hover { color: var(--text); }
+  .side-link.on, .ws.on, .ws-session.on { background: var(--raised); color: var(--text); }
+  .side-label { display: flex; align-items: center; justify-content: space-between; padding: 18px 4px 6px 9px; color: var(--faint); font-size: 12px; }
+  .icon-btn.small { width: 22px; height: 22px; border-radius: 6px; }
+  .icon-btn.small svg { width: 13px; height: 13px; }
+  .ws-row { position: relative; }
+  .ws-row .ws { padding-right: 30px; }
+  .ws-row .ws-menu { position: absolute; top: 4px; right: 4px; opacity: 0; }
+  .ws-row:hover .ws-menu, .ws-row .ws-menu:focus-visible { opacity: 1; }
+  .ws-more { border: 0; background: none; color: var(--faint); font-size: 12px; padding: 8px 9px; cursor: pointer; }
+  .ws-more:hover { color: var(--text); }
+  .workspaces { flex: 1; min-height: 0; overflow: auto; }
+  .ws span, .ws-session span { overflow: hidden; text-overflow: ellipsis; }
+  .ws { font-size: 12.5px; }
+  .ws-session { height: 26px; padding-left: 33px; font-weight: 400; font-size: 12.5px; }
+  .ws-session .dot { flex: none; margin-left: auto; width: 6px; height: 6px; border-radius: 50%; background: none; }
+  .ws-session .dot.working { background: var(--live); }
+  .ws-session .dot.needs { background: var(--needs); }
+  .ws-session .dot.overlap { background: var(--overlap); }
+  .side-foot { display: flex; align-items: center; gap: 10px; margin: 8px 0 0; padding: 12px 6px; border-top: 1px solid var(--line); }
+  .side-foot .avatar { width: 26px; height: 26px; font-size: 11px; }
+  .me-name { flex: 1; min-width: 0; display: grid; line-height: 1.25; }
+  .me-name b { font-weight: 500; overflow: hidden; text-overflow: ellipsis; }
+  .me-name span { color: var(--faint); font-size: 11.5px; }
+
+  /* Pages: Sessions and People */
+  .main { display: flex; flex-direction: column; min-width: 0; min-height: 0; background: var(--main); }
+  .page { flex: 1; min-height: 0; overflow: auto; padding: 22px 28px 28px; }
+  .page-head { display: flex; align-items: center; gap: 10px; margin-bottom: 18px; }
+  .page-head h1 { font-size: 18px; font-weight: 600; letter-spacing: -0.015em; }
+  .page-head .spacer { margin-left: auto; }
+  .page-head select, .page-head input { height: 30px; border-radius: 8px; border: 1px solid var(--line); background: var(--surface); color: var(--muted); padding: 0 10px; font: inherit; }
+  .page-head input { width: 190px; }
+  .chip { display: inline-flex; align-items: center; gap: 8px; height: 26px; padding: 0 6px 0 10px; border-radius: 7px; background: var(--surface); border: 1px solid var(--line); color: var(--muted); font: 12px var(--mono); }
+  .chip button { border: 0; background: none; color: var(--faint); cursor: pointer; padding: 0 4px; font: inherit; }
+  .session-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 14px; align-items: start; }
+  .session-grid .hint { grid-column: 1 / -1; }
+  .card-agents { color: var(--muted); font-size: 12px; }
+  .card-status { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-radius: 8px; border: 1px solid var(--line); color: var(--faint); font-size: 12px; }
+  .card-status .pill { border: 0; background: none; padding: 0; height: auto; color: var(--text); font-weight: 600; }
+  .card-status .pill.working { color: var(--live); }
+  .card-status .pill.needs { color: var(--needs); }
+  .card-status .pill.overlap { color: var(--overlap); }
+  .people-list { list-style: none; margin: 0; padding: 0; border-top: 1px solid var(--line); }
+  .people-list li { display: flex; align-items: center; gap: 12px; padding: 12px 4px; border-bottom: 1px solid var(--line); }
+  .people-list .avatar { width: 30px; height: 30px; font-size: 12px; }
+  .people-list .who { flex: 1; display: grid; line-height: 1.3; }
+  .people-list .who span { color: var(--faint); font: 11.5px var(--mono); }
+  .people-list .role { color: var(--muted); font-size: 12px; }
+
+  /* Small pop-up menus (session actions, adding an agent) */
+  .menu { position: fixed; z-index: 20; min-width: 180px; padding: 5px; border-radius: 10px; background: var(--surface); border: 1px solid var(--line-strong); box-shadow: 0 16px 40px rgba(0, 0, 0, .35); }
+  .menu button { display: flex; justify-content: space-between; gap: 16px; width: 100%; padding: 7px 10px; border: 0; border-radius: 6px; background: none; text-align: left; cursor: pointer; }
+  .menu button:hover:not(:disabled) { background: var(--raised); }
+  .menu button:disabled { color: var(--faint); cursor: default; }
+  .menu button span { color: var(--faint); font-size: 12px; }
+  .menu .menu-label { padding: 5px 10px 3px; color: var(--faint); font-size: 11.5px; }
+
+  .card {
+    display: grid; gap: 10px; padding: 14px 16px; border-radius: 12px; cursor: pointer;
+    background: var(--surface); border: 1px solid var(--line);
+  }
+  .card:hover { border-color: var(--line-strong); }
+  .card-top { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+  .card-title { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .card-people { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 12px; }
+  .files { list-style: none; margin: 0; padding: 8px 0 0; border-top: 1px solid var(--line); display: grid; gap: 4px; }
+  .files li { display: flex; justify-content: space-between; gap: 8px; font-size: 11.5px; color: var(--muted); }
+  .files .path { font-family: var(--mono); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; direction: rtl; text-align: left; }
+  .files .overlap { color: var(--overlap); }
+  .files .who { flex: none; }
+  .files .more { color: var(--faint); }
+  .hint { color: var(--muted); padding: 8px 4px; line-height: 1.5; }
+  .card-branch { display: flex; align-items: center; gap: 6px; color: var(--faint); font: 11.5px var(--mono); overflow: hidden; white-space: nowrap; }
+  .card-branch svg { width: 12px; height: 12px; flex: none; }
+  .card-people .ago { margin-left: auto; color: var(--faint); }
+  .card-task { color: var(--muted); font-size: 12px; line-height: 1.4; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+  .card-branch .diff { margin-left: auto; }
+  .diff { font: 11.5px var(--mono); white-space: nowrap; }
+  .diff .add { color: var(--live); }
+  .diff .del { color: var(--overlap); margin-left: 5px; }
+  .pill.done .dot { background: none; box-shadow: inset 0 0 0 1.5px currentColor; }
+
+  /* Alerts: only things someone can act on */
+  .alerts { display: grid; gap: 6px; margin: 10px 0 0; }
+  .alerts:empty { display: none; }
+  .alert {
+    display: grid; gap: 2px; padding: 10px 12px; border-radius: 10px; cursor: pointer; text-align: left; font-size: 12px;
+    color: var(--needs); background: color-mix(in srgb, currentColor 9%, transparent); border: 1px solid color-mix(in srgb, currentColor 26%, transparent);
+  }
+  .alert.overlap { color: var(--overlap); }
+  .alert b { color: var(--text); font-weight: 600; }
+  .alert span { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+  /* Session view: one agent at a time (or two side by side), with the session panel on the right */
+  .room { flex: 1; display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+  .room-head { display: flex; align-items: center; gap: 8px; height: 46px; padding: 0 14px 0 20px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+  .crumbs { display: flex; align-items: center; gap: 8px; min-width: 0; font-size: 12.5px; }
+  .crumbs b { font-weight: 600; }
+  .crumbs .crumb { color: var(--faint); overflow: hidden; text-overflow: ellipsis; }
+  .crumbs .crumb::before { content: '/'; margin-right: 8px; color: var(--line-strong); }
+  .crumbs .who { font-weight: 600; flex: none; }
+  .room-head .spacer { margin-left: auto; }
+  .room-body { flex: 1; min-height: 0; display: flex; }
+  .stage { flex: 1; min-width: 0; min-height: 0; display: flex; flex-direction: column; }
+  .back-bar { display: flex; align-items: center; gap: 10px; padding: 12px 20px 10px; }
+  .back-bar b { font-weight: 600; }
+  .lanes { flex: 1; min-height: 0; display: flex; gap: 12px; padding: 14px; overflow: auto; }
+  .panel { flex: none; width: 292px; margin: 14px 14px 14px 0; display: flex; flex-direction: column; min-height: 0; border: 1px solid var(--line); border-radius: 12px; background: var(--surface); overflow: hidden; }
+  .panel-tabs { display: flex; gap: 2px; padding: 8px; border-bottom: 1px solid var(--line); }
+  .panel-tabs button { height: 26px; padding: 0 10px; border: 0; border-radius: 6px; background: none; color: var(--faint); cursor: pointer; font-weight: 500; font-size: 12.5px; }
+  .panel-tabs button.on { background: var(--raised); color: var(--text); }
+  .panel-body { flex: 1; min-height: 0; overflow: auto; padding: 12px; }
+  .person { margin-bottom: 16px; }
+  .person-head { display: flex; align-items: center; gap: 9px; }
+  .person-head b { flex: 1; font-weight: 600; overflow: hidden; text-overflow: ellipsis; }
+  .person-head b span { color: var(--faint); font-weight: 400; }
+  .person-meta { display: flex; justify-content: space-between; margin: 3px 0 8px 31px; color: var(--faint); font-size: 11.5px; }
+  .add-agent { width: 22px; height: 22px; border-radius: 6px; border: 0; background: var(--primary); color: var(--primary-text); cursor: pointer; font-size: 15px; line-height: 1; }
+  .agent-card {
+    --c: var(--muted); position: relative; display: grid; gap: 3px; width: calc(100% - 31px); margin: 0 0 6px 31px; padding: 7px 26px 7px 10px;
+    border: 0; border-left: 2px solid color-mix(in srgb, var(--c) 80%, transparent); border-radius: 0 7px 7px 0; background: none; text-align: left; cursor: pointer;
+  }
+  .agent-card:hover, .agent-card.on { background: var(--raised); }
+  .agent-card b { font-size: 12px; font-weight: 600; color: var(--muted); }
+  .agent-card.on b { color: var(--text); }
+  .agent-card .sub { color: var(--faint); font-size: 11.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .agent-card .sub.working { color: var(--live); }
+  .agent-card .sub.needs { color: var(--needs); }
+  .agent-card .sub.overlap { color: var(--overlap); }
+  .agent-card .stop { position: absolute; top: 5px; right: 5px; width: 18px; height: 18px; border: 0; border-radius: 5px; background: none; color: var(--faint); cursor: pointer; line-height: 1; }
+  .agent-card .stop:hover { background: var(--line-strong); color: var(--text); }
+  .panel-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; width: 100%; min-height: 32px; padding: 0 8px; border: 0; border-radius: 7px; background: none; text-align: left; color: var(--text); }
+  .panel-row b { font-weight: 500; }
+  button.panel-row { cursor: pointer; }
+  button.panel-row:hover { background: var(--raised); }
+  .panel-row span { color: var(--faint); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .panel-row .mono { font-family: var(--mono); }
+  .panel-label { padding: 12px 8px 4px; color: var(--faint); font-size: 12px; }
+  .panel-foot { display: flex; align-items: center; gap: 8px; padding: 10px 12px; border-top: 1px solid var(--line); color: var(--faint); font-size: 12px; }
+  .panel-foot:empty { display: none; }
+  .panel .files { margin: 4px 8px 0; }
+  .agent-card .sub.prompt { white-space: normal; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; color: var(--muted); }
+  .comment { position: relative; display: flex; gap: 9px; padding: 6px 26px 6px 8px; }
+  .comment-body { min-width: 0; font-size: 12px; }
+  .comment-body b { font-weight: 600; margin-right: 6px; }
+  .comment-body .ago { color: var(--faint); font-size: 11.5px; }
+  .comment-body p { margin-top: 2px; color: var(--text); line-height: 1.45; overflow-wrap: anywhere; user-select: text; }
+  .comment .stop { position: absolute; top: 6px; right: 4px; width: 18px; height: 18px; border: 0; border-radius: 5px; background: none; color: var(--faint); cursor: pointer; }
+  .comment .stop:hover { background: var(--line-strong); color: var(--text); }
+  .panel-empty { padding: 4px 8px; color: var(--faint); font-size: 12px; }
+  .comment-form { padding: 10px 12px; border-top: 1px solid var(--line); }
+  .comment-form input { height: 32px; font-size: 12.5px; }
+  /* An agent's terminal, framed the way Amoeba frames its composer: a rounded border in the owner's colour with their
+     name cut into it, the terminal sitting on the page background, and a quiet toolbar underneath. */
+  .lane {
+    --c: var(--muted); position: relative; flex: none; align-self: flex-start; display: flex; flex-direction: column; margin-top: 8px;
+    background: var(--lane); border: 1px solid color-mix(in srgb, var(--c) 55%, var(--line)); border-radius: 14px;
+  }
+  .lane.mine { order: -1; flex: 1 1 560px; align-self: stretch; min-width: 440px; }
+  .lane-label { position: absolute; top: -8px; left: 14px; padding: 0 6px; background: var(--main); color: var(--c); font-size: 11px; font-weight: 600; line-height: 16px; }
+  .screen { margin: 14px 8px 8px 16px; overflow: hidden; } /* margins, not padding: the fit addon sizes to the padded box */
+  .lane.mine .screen { flex: 1; min-height: 0; }
+  .lane-bar { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border-top: 1px solid var(--line); white-space: nowrap; font-size: 12px; color: var(--muted); }
+  .lane-bar > * { flex: none; }
+  .lane-bar .tag { height: 24px; padding: 0 9px; border-radius: 7px; border: 1px solid var(--line); color: var(--text); line-height: 22px; font-weight: 500; flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+  .lane-bar .state { display: inline-flex; align-items: center; gap: 6px; }
+  .lane-bar .state .dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+  .lane-bar .state.working { color: var(--live); }
+  .lane-bar .state.working .dot { animation: pulse 1.8s ease-in-out infinite; }
+  .lane-bar .state.needs { color: var(--needs); }
+  .lane-bar .state.overlap { color: var(--overlap); }
+  .lane-bar .branch { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; color: var(--faint); font: 11.5px var(--mono); }
+  .lane-bar .access { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; margin-left: auto; color: var(--faint); }
+  .empty { margin: auto; display: grid; justify-items: center; gap: 14px; color: var(--muted); text-align: center; max-width: 320px; }
+  .empty .mark { width: 36px; height: 36px; color: var(--faint); }
+
+  /* A stopped agent's last screen, read-only */
+  .replay { flex: 1; min-height: 0; overflow: auto; padding: 4px 20px 20px; }
+  .replay #replayScreen { border: 1px solid var(--line); border-radius: 14px; padding: 14px 8px 8px 16px; display: inline-block; max-width: 100%; }
+
+  /* First-run checklist on the Sessions page */
+  .setup { margin-bottom: 18px; padding: 16px 18px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface); max-width: 760px; }
+  .setup h2 { font-size: 14px; font-weight: 600; margin-bottom: 4px; }
+  .setup > p { color: var(--muted); font-size: 12px; margin-bottom: 10px; }
+  .setup-item { display: flex; align-items: center; gap: 12px; padding: 9px 0; border-top: 1px solid var(--line); }
+  .setup-item > div { flex: 1; min-width: 0; }
+  .setup-item b { font-weight: 500; }
+  .setup-item p { color: var(--muted); font-size: 12px; margin-top: 2px; }
+  .setup-item code { font: 11.5px var(--mono); color: var(--text); background: var(--raised); border: 1px solid var(--line); border-radius: 6px; padding: 1px 6px; }
+  .setup .actions { margin-top: 10px; justify-content: flex-start; }
+
+  /* Quick switcher (⌘K) */
+  .switcher { width: 560px; padding: 10px; top: 14vh; margin-top: 0; }
+  .switcher input { height: 40px; font-size: 14px; border: 0; background: transparent; }
+  .switcher input:focus { border: 0; }
+  .switcher-list { max-height: 50vh; overflow: auto; border-top: 1px solid var(--line); margin-top: 6px; padding-top: 6px; }
+  .switch-row { display: flex; align-items: center; gap: 10px; width: 100%; padding: 8px 10px; border: 0; border-radius: 8px; background: none; text-align: left; cursor: pointer; }
+  .switch-row.on { background: var(--raised); }
+  .switch-row span { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .switch-row small { color: var(--faint); font-size: 11.5px; }
+
+  /* Pull requests and issues */
+  .gh-panel { flex: 1; min-height: 0; overflow: auto; padding: 4px 20px 20px; }
+  .gh-list { display: grid; border: 1px solid var(--line); border-radius: 12px; overflow: hidden; background: var(--surface); }
+  .gh-item {
+    display: grid; grid-template-columns: 56px 1fr auto auto; align-items: center; gap: 12px; padding: 12px 16px;
+    background: none; border: 0; border-top: 1px solid var(--line); text-align: left; cursor: pointer;
+  }
+  .gh-item:first-child { border-top: 0; }
+  .gh-item:hover { background: var(--raised); }
+  .gh-item .num { color: var(--faint); font: 12px var(--mono); }
+  .gh-item .title { font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .gh-item .by { display: flex; align-items: center; gap: 6px; color: var(--muted); font-size: 12px; }
+  .gh-item .when { color: var(--faint); font-size: 12px; min-width: 56px; text-align: right; }
+  .gh-empty { color: var(--muted); padding: 32px; text-align: center; }
+
+  /* Shared memory */
+  .memory-form { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 1fr) auto; gap: 8px; }
+  .memory-note { color: var(--faint); font-size: 12px; margin: 8px 0 16px; }
+  .memory { display: grid; grid-template-columns: 1fr auto; gap: 6px 12px; padding: 14px 16px; border-top: 1px solid var(--line); }
+  .memory:first-child { border-top: 0; }
+  .memory-text { line-height: 1.5; user-select: text; }
+  .memory-meta { display: flex; align-items: center; gap: 8px; color: var(--faint); font-size: 12px; }
+  .memory-meta .file { font: 11.5px var(--mono); color: var(--muted); padding: 1px 7px; border-radius: 6px; background: var(--raised); border: 1px solid var(--line); }
+  .memory .btn { grid-row: 1 / 3; grid-column: 2; align-self: center; }
+
+  /* Dialogs */
+  dialog {
+    max-height: calc(100vh - 48px); overflow: auto; user-select: none; /* the top layer doesn't pick this up from body */
+    width: 460px; padding: 28px; border-radius: 16px; border: 1px solid var(--line-strong);
+    background: var(--surface); color: var(--text); box-shadow: 0 30px 80px rgba(0, 0, 0, .55);
+  }
+  dialog[open] { animation: rise .18s ease-out; }
+  dialog::backdrop { background: rgba(0, 0, 0, .6); backdrop-filter: blur(6px); }
+  @keyframes rise { from { opacity: 0; transform: translateY(6px) scale(.98); } }
+  dialog h2 { font-size: 20px; font-weight: 650; letter-spacing: -0.02em; }
+  dialog h3 { font-size: 13px; font-weight: 600; }
+  .lede { color: var(--muted); margin: 6px 0 22px; }
+  .sheet .mark { width: 30px; height: 30px; margin-bottom: 16px; }
+  .cell-art { display: block; width: calc(100% + 56px); height: 170px; margin: -28px -28px 18px; border-radius: 16px 16px 0 0;
+    background: radial-gradient(120% 90% at 50% 40%, var(--canvas), var(--surface)); border-bottom: 1px solid var(--line); }
+  .sheet-head { display: flex; align-items: center; justify-content: space-between; }
+  .me { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 12px; }
+  .code { font: 600 30px/1 var(--mono); letter-spacing: .12em; text-align: center; padding: 22px; border-radius: 12px; background: var(--canvas); border: 1px solid var(--line-strong); user-select: all; }
+  .waiting { display: flex; align-items: center; justify-content: center; gap: 10px; color: var(--muted); margin: 16px 0 4px; }
+  .spinner { width: 14px; height: 14px; border-radius: 50%; border: 2px solid var(--line-strong); border-top-color: var(--text); animation: spin .8s linear infinite; }
+  @keyframes spin { to { transform: rotate(1turn); } }
+  .team-list { display: grid; gap: 8px; max-height: 300px; overflow: auto; }
+  .team {
+    display: flex; align-items: center; gap: 12px; padding: 12px 14px; border-radius: 12px; cursor: pointer; text-align: left;
+    background: var(--canvas); border: 1px solid var(--line);
+  }
+  .team:hover, .team.on { border-color: var(--muted); }
+  .team .name { flex: 1; display: grid; gap: 1px; font-weight: 600; }
+  .team .agents { color: var(--faint); font-size: 12px; }
+  .create { margin-top: 18px; padding-top: 18px; border-top: 1px solid var(--line); display: grid; gap: 10px; }
+  .field { display: grid; gap: 6px; margin: 0 0 16px; padding: 0; border: 0; min-width: 0; }
+  .field > span, .field > legend { color: var(--muted); font-size: 12px; font-weight: 500; padding: 0; margin-bottom: 6px; }
+  .repo-picker { height: 150px; overflow: auto; border: 1px solid var(--line-strong); border-radius: 8px; background: var(--canvas); }
+  .repo-group { padding: 7px 10px 3px; color: var(--faint); font-size: 11.5px; position: sticky; top: 0; background: var(--canvas); }
+  .repo-row { display: grid; grid-template-columns: 1fr auto; gap: 1px 10px; width: 100%; padding: 6px 10px; border: 0; background: none; text-align: left; cursor: pointer; }
+  .repo-row:hover { background: var(--surface); }
+  .repo-row.on { background: var(--raised); box-shadow: inset 2px 0 0 var(--text); }
+  .repo-row .repo-name { font: 12px var(--mono); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .repo-row .repo-tag { color: var(--faint); font-size: 11.5px; }
+  .repo-row .repo-desc { grid-column: 1 / -1; color: var(--faint); font-size: 11.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .repo-note { color: var(--muted); font-size: 12px; padding: 12px 10px; margin: 0; }
+  .behind { color: var(--needs); font: 11.5px var(--mono); white-space: nowrap; }
+  .segmented { display: grid; grid-auto-flow: column; grid-auto-columns: 1fr; padding: 3px; border-radius: 9px; background: var(--canvas); border: 1px solid var(--line-strong); }
+  .segmented label { position: relative; }
+  .segmented input { position: absolute; opacity: 0; }
+  .segmented span { display: block; text-align: center; padding: 6px; border-radius: 6px; color: var(--muted); cursor: pointer; font-weight: 500; }
+  .segmented input:checked + span { background: var(--raised); color: var(--text); box-shadow: inset 0 0 0 1px var(--line-strong); }
+  .segmented input:disabled + span { opacity: .4; cursor: default; }
+  .segmented input:focus-visible + span { outline: 2px solid color-mix(in srgb, var(--text) 55%, transparent); }
+  .toggle { display: flex; align-items: center; gap: 10px; color: var(--muted); cursor: pointer; }
+  .toggle input { width: 16px; height: 16px; accent-color: var(--primary); }
+  .actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 22px; }
+  .members { list-style: none; margin: 18px 0 0; padding: 0; display: grid; gap: 2px; }
+  .members li { display: flex; align-items: center; gap: 10px; padding: 6px 0; }
+  .members .login { flex: 1; font-weight: 500; }
+  .error { color: var(--overlap); font-size: 12px; margin-top: 12px; }
+  .error:empty { display: none; }
+  /* The New session form's footer stays in view when the window is short, and keeps a line for errors so nothing jumps. */
+  .foot { position: sticky; bottom: -28px; margin: 4px -28px -28px; padding: 0 28px 28px; background: var(--surface); }
+  .foot .error, .foot .error:empty { display: block; min-height: 18px; margin-top: 6px; }
+  .foot .actions { margin-top: 8px; }
+
+  /* Settings */
+  .icon-btn { display: grid; place-items: center; width: 28px; height: 28px; padding: 0; border: 0; border-radius: 7px; background: none; color: var(--muted); cursor: pointer; }
+  .icon-btn:hover { background: var(--raised); color: var(--text); }
+  .icon-btn svg { width: 16px; height: 16px; }
+  .settings {
+    position: fixed; inset: 48px 0 0 var(--side); z-index: 5; width: auto; height: auto; max-width: none; max-height: none; margin: 0; padding: 0;
+    border: 0; border-radius: 0; box-shadow: none; background: var(--main); overflow: hidden;
+  }
+  .settings[open] { display: grid; grid-template-columns: 212px 1fr; animation: none; }
+  .settings:focus { outline: none; }
+  .settings-nav { display: flex; flex-direction: column; gap: 2px; padding: 22px 12px; background: var(--canvas); border-right: 1px solid var(--line); }
+  .settings-nav span { padding: 14px 10px 4px; color: var(--faint); font-size: 11.5px; }
+  .settings-nav h2 { font-size: 15px; padding: 0 10px 12px; }
+  .settings-nav button { height: 30px; padding: 0 10px; border: 0; border-radius: 7px; background: none; color: var(--muted); text-align: left; cursor: pointer; font-weight: 500; }
+  .settings-nav button:hover { color: var(--text); }
+  .settings-nav button.on { background: var(--raised); color: var(--text); }
+  .settings-body { position: relative; overflow: auto; padding: 26px 32px 28px; }
+  .settings-body section { max-width: 760px; }
+  .settings-body .done { position: absolute; top: 20px; right: 22px; }
+  .settings-body h3 { font-size: 16px; font-weight: 650; letter-spacing: -0.01em; margin: 0 0 16px; }
+  .settings-body h4 { margin: 22px 0 8px; color: var(--muted); font-size: 12px; font-weight: 500; }
+  .group { border: 1px solid var(--line); border-radius: 12px; background: var(--surface); }
+  .setting { display: flex; align-items: center; justify-content: space-between; gap: 20px; padding: 13px 16px; border-top: 1px solid var(--line); }
+  .setting:first-child { border-top: 0; }
+  .setting b { font-weight: 500; }
+  .setting p { color: var(--muted); font-size: 12px; margin-top: 2px; line-height: 1.45; }
+  .setting .segmented { min-width: 240px; background: var(--canvas); }
+  .theme-tiles { display: flex; gap: 10px; }
+  .theme-tiles label { display: grid; justify-items: center; gap: 6px; color: var(--muted); font-size: 12px; cursor: pointer; }
+  .theme-tiles input { position: absolute; opacity: 0; }
+  .tile { position: relative; width: 66px; height: 44px; border-radius: 8px; border: 1px solid var(--line-strong); overflow: hidden; background: #141416; }
+  .tile i { position: absolute; inset: 0 auto 0 0; width: 18px; background: #0e0e10; border-right: 1px solid #2a2a2f; }
+  .tile.light { background: #ffffff; }
+  .tile.light i { background: #f3f3f5; border-color: #e3e3e8; }
+  .tile.system { background: linear-gradient(135deg, #ffffff 50%, #141416 50%); }
+  .tile.system i { background: #f3f3f5; border-color: #e3e3e8; }
+  .theme-tiles input:checked + .tile { outline: 2px solid var(--text); outline-offset: 2px; }
+  .theme-tiles input:checked ~ span:last-child { color: var(--text); }
+  .theme-tiles input:focus-visible + .tile { outline: 2px solid color-mix(in srgb, var(--text) 55%, transparent); outline-offset: 2px; }
+  .setting select { height: 30px; border-radius: 8px; border: 1px solid var(--line-strong); background: var(--canvas); color: var(--text); padding: 0 8px; font: inherit; }
+  .setting .btn { flex: none; }
+  .switch { appearance: none; flex: none; width: 36px; height: 22px; margin: 0; border-radius: 999px; background: var(--line-strong); position: relative; cursor: pointer; transition: background .15s; }
+  .switch::after { content: ''; position: absolute; top: 2px; left: 2px; width: 18px; height: 18px; border-radius: 50%; background: #fff; box-shadow: 0 1px 2px rgba(0, 0, 0, .3); transition: transform .15s; }
+  .switch:checked { background: var(--live); }
+  .switch:checked::after { transform: translateX(14px); }
+  .stepper { display: flex; align-items: center; gap: 4px; }
+  .stepper button { width: 28px; height: 28px; padding: 0; border-radius: 7px; }
+  .stepper output { min-width: 44px; text-align: center; font: 12px var(--mono); }
+  .keys { display: grid; grid-template-columns: 1fr auto; }
+  kbd { font: 12px var(--mono); padding: 2px 7px; border-radius: 6px; background: var(--raised); border: 1px solid var(--line); }
+  .profile { display: flex; align-items: center; gap: 12px; }
+  .profile .avatar { width: 36px; height: 36px; font-size: 14px; }
+  .settings-body .members { margin: 0; padding: 4px 16px; }
+  .about { display: grid; justify-items: start; gap: 6px; }
+  .about .mark { width: 34px; height: 34px; }
+  .linkish { background: none; border: 0; padding: 0; color: var(--text); text-decoration: underline; text-underline-offset: 2px; cursor: pointer; }
+
+  @media (prefers-reduced-motion: reduce) {
+    .switch, .switch::after { transition: none; }
+    .pill.working .dot, .lane-bar .state .dot, dialog[open], .spinner { animation: none; }
+  }
+</style>
+
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="cell" viewBox="0 0 24 24">
+    <path fill="currentColor" fill-rule="evenodd" d="M3.3 13.4C3.3 9.3 6.6 6.2 10.6 6.2c2 0 3.3.4 4.4.2 1-.2 1.8-.8 2.6-.5.5.2.4.9 0 1.4-.5.6 0 1.6.2 2.7.8 4.8-2.2 10.6-7.2 10.6-4 0-7.3-3.1-7.3-7.2zM6 16.6c1.9.6 3.8-.1 5-1.6 1.2-1.5 1.5-3.4 2.6-4.8 1-1.2 2.4-1.8 3.6-1.7.5 0 .6.7.1.8-1.1.2-2 .9-2.6 1.9-.9 1.5-1.2 3.4-2.5 5-1.5 1.8-3.9 2.5-6.4 1.3-.5-.2-.3-1 .2-.9z"/>
+    <circle cx="20" cy="4.1" r="1.7" fill="currentColor"/>
+  </symbol>
+  <symbol id="github" viewBox="0 0 16 16">
+    <path fill="currentColor" d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/>
+  </symbol>
+  <symbol id="branch" viewBox="0 0 16 16"><path fill="currentColor" d="M9.5 3.25a2.25 2.25 0 1 1 3 2.122V6A2.5 2.5 0 0 1 10 8.5H6a1 1 0 0 0-1 1v1.128a2.251 2.251 0 1 1-1.5 0V5.372a2.25 2.25 0 1 1 1.5 0v1.836A2.49 2.49 0 0 1 6 7h4a1 1 0 0 0 1-1v-.628A2.25 2.25 0 0 1 9.5 3.25Zm-6 0a.75.75 0 1 0 1.5 0 .75.75 0 0 0-1.5 0Zm8.25-.75a.75.75 0 1 0 0 1.5.75.75 0 0 0 0-1.5ZM4.25 12a.75.75 0 1 0 0 1.5.75.75 0 0 0 0-1.5Z"/></symbol>
+  <symbol id="gear" viewBox="0 0 16 16"><path fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round" d="M6.6 1.5h2.8l.4 1.9 1.2.7 1.8-.6 1.4 2.4-1.4 1.3v1.6l1.4 1.3-1.4 2.4-1.8-.6-1.2.7-.4 1.9H6.6l-.4-1.9-1.2-.7-1.8.6-1.4-2.4 1.4-1.3V7.2L1.8 5.9l1.4-2.4 1.8.6 1.2-.7z"/><circle cx="8" cy="8" r="2.1" fill="none" stroke="currentColor" stroke-width="1.3"/></symbol>
+  <symbol id="grid" viewBox="0 0 16 16"><path fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round" d="M2 2h5v5H2zM9 2h5v5H9zM2 9h5v5H2zM9 9h5v5H9z"/></symbol>
+  <symbol id="people" viewBox="0 0 16 16"><path fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" d="M1.5 13.5c0-2.2 1.8-3.8 4-3.8s4 1.6 4 3.8M5.5 7.3a2.4 2.4 0 1 0 0-4.8 2.4 2.4 0 0 0 0 4.8ZM10.5 2.8a2.3 2.3 0 0 1 0 4.4M11.8 9.9c1.6.4 2.7 1.8 2.7 3.6"/></symbol>
+  <symbol id="folder" viewBox="0 0 16 16"><path fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round" d="M1.8 4.2c0-.6.5-1 1-1h3l1.4 1.5h5.9c.6 0 1 .4 1 1v6.1c0 .6-.4 1-1 1H2.8c-.5 0-1-.4-1-1z"/></symbol>
+  <symbol id="sidepanel" viewBox="0 0 16 16"><path fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round" d="M2 3h12v10H2zM10 3v10"/></symbol>
+  <symbol id="plus" viewBox="0 0 16 16"><path d="M8 2.5v11M2.5 8h11" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></symbol>
+  <symbol id="sidepanel-left" viewBox="0 0 16 16"><path fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round" d="M2 3h12v10H2zM6 3v10"/></symbol>
+  <symbol id="chevron" viewBox="0 0 12 12"><path d="M3 4.5 6 7.5 9 4.5" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+</svg>
+
+<header class="titlebar">
+  <button id="sidebarToggle" class="icon-btn" aria-label="Toggle the sidebar" title="Toggle the sidebar (⌘B)"><svg><use href="#sidepanel-left"/></svg></button>
+  <div class="brand"><svg class="mark"><use href="#cell"/></svg>Protoplasma</div>
+  <button id="teamSwitch" class="team-switch" hidden><span id="teamLabel"></span><span id="teamWhere" class="where"></span><svg><use href="#chevron"/></svg></button>
+  <div id="conn" class="conn"><span class="dot"></span><span id="connText">Not connected</span></div>
+</header>
+
+<aside class="sidebar">
+  <button id="navSessions" class="side-link on"><svg><use href="#grid"/></svg>Sessions</button>
+  <button id="navPeople" class="side-link"><svg><use href="#people"/></svg>People</button>
+  <div id="alerts" class="alerts" role="status"></div>
+  <div class="side-label">Workspaces<button id="allWorkspaces" class="icon-btn small" aria-label="Show sessions from all workspaces" title="Show sessions from all workspaces"><svg><use href="#grid"/></svg></button></div>
+  <div id="workspaces" class="workspaces"></div>
+  <div class="side-foot">
+    <span id="meAvatar"></span>
+    <div class="me-name"><b id="meLogin"></b><span>signed in</span></div>
+    <button id="settingsBtn" class="icon-btn" aria-label="Settings" title="Settings (⌘,)"><svg><use href="#gear"/></svg></button>
+  </div>
+</aside>
+
+<main class="main">
+  <section id="sessionsPage" class="page">
+    <div class="page-head">
+      <h1>Sessions</h1><span id="filterChip"></span><span class="spacer"></span>
+      <select id="sortBy" aria-label="Sort sessions"><option value="modified">Last modified</option><option value="name">Name</option></select>
+      <input id="search" type="search" placeholder="Search" aria-label="Search sessions" autocomplete="off">
+      <button id="new" class="btn primary"><svg><use href="#plus"/></svg>New</button>
+    </div>
+    <div id="setup" class="setup" hidden></div>
+    <div id="sessions" class="session-grid"></div>
+  </section>
+
+  <section id="peoplePage" class="page" hidden>
+    <div class="page-head"><h1>People</h1><span id="peopleTeam" class="chip"></span><span class="spacer"></span><button id="inviteBtn" class="btn primary" hidden><svg><use href="#plus"/></svg>Invite</button></div>
+    <div class="side-label" style="padding-left: 4px">Members</div>
+    <ul id="memberList" class="people-list"></ul>
+    <p id="peopleErr" class="error" role="alert"></p>
+  </section>
+
+  <section id="room" class="room" hidden>
+    <div class="room-head">
+      <div class="crumbs"><b id="roomTitle"></b><span id="roomTask" class="crumb" hidden></span><span id="roomWho" class="crumb who"></span></div>
+      <button id="myAgent" class="btn small" hidden>My agent</button>
+      <span class="spacer"></span>
+      <button id="newPane" class="btn small">New pane</button>
+      <button id="panelToggle" class="icon-btn" aria-label="Hide the session panel" title="Session panel"><svg><use href="#sidepanel"/></svg></button>
+      <button id="shareBtn" class="btn small primary">Share</button>
+    </div>
+    <div class="room-body">
+      <div class="stage">
+        <div id="backBar" class="back-bar" hidden><button id="backToAgents" class="btn small">Back to the agent</button><b id="stageTitle"></b></div>
+        <div id="lanes" class="lanes">
+          <div id="empty" class="empty">
+            <svg class="mark"><use href="#cell"/></svg>
+            <p id="emptyText">No agents are running in this session.</p>
+            <div class="row"><button id="resumeBtn" class="btn primary" hidden>Resume</button><button id="emptyNew" class="btn primary">Add agent</button></div>
+          </div>
+        </div>
+        <div id="replayPanel" class="replay" hidden><div id="replayScreen"></div><p id="replayGone" class="gh-empty" hidden>That agent's screen isn't kept any more.</p></div>
+        <div id="ghPanel" class="gh-panel" hidden></div>
+        <div id="memoryPanel" class="gh-panel" hidden>
+          <form id="memoryForm" class="memory-form">
+            <input id="memoryText" maxlength="500" placeholder="Something every agent on the team should know" aria-label="Note" autocomplete="off">
+            <input id="memoryFile" list="fileList" placeholder="Pin to a file (optional)" aria-label="File" autocomplete="off">
+            <datalist id="fileList"></datalist>
+            <button class="btn primary">Add note</button>
+          </form>
+          <p class="memory-note">Claude gets repo-wide notes with every prompt, and a file's notes just before it reads or edits that file.</p>
+          <p id="memoryErr" class="error" role="alert"></p>
+          <div id="memoryList"></div>
+        </div>
+      </div>
+      <aside id="panel" class="panel">
+        <div class="panel-tabs"><button data-panel="session" class="on">Session</button><button data-panel="environment">Environment</button></div>
+        <div id="panelBody" class="panel-body"></div>
+        <form id="commentForm" class="comment-form"><input id="commentText" maxlength="500" placeholder="Comment for the people in this session" aria-label="Comment" autocomplete="off"></form>
+        <div id="roomWatching" class="panel-foot"></div>
+      </aside>
+    </div>
+  </section>
+</main>
+
+<dialog id="start" class="sheet" aria-label="Protoplasma">
+  <section id="signinView">
+    <canvas id="cellArt" class="cell-art" width="1032" height="340" aria-hidden="true"></canvas>
+    <h2>Welcome to Protoplasma</h2>
+    <p class="lede">Run your own Claude Code, Codex or OpenCode, and see your team's agents right next to it.</p>
+    <button id="signin" class="btn primary wide"><svg><use href="#github"/></svg>Continue with GitHub</button>
+    <p class="fine" style="margin-top: 14px">Protoplasma only reads your public GitHub profile, so teammates see your name and picture.</p>
+  </section>
+
+  <section id="codeView" hidden>
+    <h2>Enter this code on GitHub</h2>
+    <p class="lede">It's copied, and GitHub is open in your browser.</p>
+    <div id="userCode" class="code"></div>
+    <p class="waiting"><span class="spinner"></span>Waiting for GitHub</p>
+    <div class="actions"><button id="reopen" class="btn ghost">Open GitHub again</button><button id="cancelSignin" class="btn">Cancel</button></div>
+  </section>
+
+  <section id="teamsView" hidden>
+    <div class="sheet-head"><h2>Your teams</h2><div id="me" class="me"></div></div>
+    <p class="lede">Open a team to see everyone's agents.</p>
+    <div id="teamList" class="team-list"></div>
+    <p id="teamsNote" class="fine"></p>
+    <form id="createTeam" class="create">
+      <h3>Create a team</h3>
+      <div class="segmented">
+        <label><input type="radio" name="where" value="online" checked><span>Online</span></label>
+        <label><input type="radio" name="where" value="mac"><span>This Mac</span></label>
+      </div>
+      <p id="whereHint" class="fine"></p>
+      <div class="row"><input id="teamName" placeholder="Team name" aria-label="Team name" autocomplete="off"><button class="btn primary">Create</button></div>
+      <p id="createErr" class="error" role="alert" style="margin-top: 0"></p>
+    </form>
+    <div class="actions"><button id="signout" class="btn ghost">Sign out</button><button id="closeStart" class="btn" hidden>Close</button></div>
+  </section>
+  <p id="err" class="error" role="alert"></p>
+</dialog>
+
+<dialog id="inviteDlg" class="sheet" aria-labelledby="inviteTitle">
+  <form id="inviteForm">
+    <h2 id="inviteTitle">Invite to <span id="inviteTeam"></span></h2>
+    <p class="lede">They sign in with GitHub, and the team shows up in their app.</p>
+    <label class="field"><span>GitHub username</span><input id="inviteLogin" placeholder="octocat" autocomplete="off"></label>
+    <p class="fine">Anyone you invite also needs access to the team's repositories on GitHub, or their Protoplasma can't clone them.</p>
+    <p id="inviteErr" class="error" role="alert"></p>
+    <div class="actions"><button type="button" id="inviteDone" class="btn ghost">Cancel</button><button class="btn primary">Send invite</button></div>
+  </form>
+</dialog>
+
+<dialog id="renameDlg" class="sheet" aria-labelledby="renameTitle">
+  <form id="renameForm">
+    <h2 id="renameTitle">Rename session</h2>
+    <p class="lede">Its branch and folders keep their original name, so nothing on GitHub changes.</p>
+    <input id="renameInput" maxlength="60" aria-label="Session name" autocomplete="off">
+    <p id="renameErr" class="error" role="alert"></p>
+    <div class="actions"><button type="button" id="renameCancel" class="btn ghost">Cancel</button><button class="btn primary">Rename</button></div>
+  </form>
+</dialog>
+
+<dialog id="switcher" class="sheet switcher" aria-label="Go to">
+  <input id="switcherInput" placeholder="Go to a session, page or action" aria-label="Go to" autocomplete="off">
+  <div id="switcherList" class="switcher-list" role="listbox"></div>
+</dialog>
+
+<dialog id="agent" class="sheet" aria-labelledby="agentTitle">
+  <form id="agentForm">
+    <h2 id="agentTitle">New session</h2>
+    <p id="agentLede" class="lede"></p>
+    <label class="field"><span>What are you working on?</span><input id="session" list="sessionList" maxlength="60" placeholder="fix-login-bug" autocomplete="off"></label>
+    <datalist id="sessionList"></datalist>
+    <label class="field"><span>Goal for its agents <span class="where">Optional</span></span><input id="task" maxlength="300" placeholder="Fix the double-booking race in the lobby" autocomplete="off"></label>
+    <fieldset class="field"><legend>Code</legend>
+      <div class="segmented">
+        <label><input type="radio" name="source" value="repo" checked><span>GitHub repo</span></label>
+        <label><input type="radio" name="source" value="folder"><span>Folder</span></label>
+      </div>
+    </fieldset>
+    <div id="repoField" class="field"><span id="repoLabel">Repository</span>
+      <input id="repo" placeholder="Search your repos, or type owner/name" aria-labelledby="repoLabel" aria-controls="repoPicker" autocomplete="off">
+      <div id="repoPicker" class="repo-picker" role="listbox" aria-labelledby="repoLabel"></div>
+      <p id="repoHint" class="fine">The session gets its own branch (session/…) and folder under ~/Protoplasma, so main only changes through a push or pull request.</p>
+    </div>
+    <div id="folderField" class="field" hidden><span id="cwdLabel">Folder</span>
+      <div class="row"><input id="cwd" readonly placeholder="Choose the folder it works in" aria-labelledby="cwdLabel"><button type="button" id="pick" class="btn">Choose…</button></div>
+    </div>
+    <fieldset class="field"><legend>Agent</legend>
+      <div class="segmented">
+        <label><input type="radio" name="cmd" value="claude" checked><span>Claude Code</span></label>
+        <label><input type="radio" name="cmd" value="codex"><span>Codex</span></label>
+        <label><input type="radio" name="cmd" value="opencode"><span>OpenCode</span></label>
+      </div>
+    </fieldset>
+    <label class="toggle"><input id="open" type="checkbox">Let teammates type into it</label>
+    <div class="foot">
+      <p id="agentErr" class="error" role="alert"></p>
+      <div class="actions"><button type="button" id="cancel" class="btn ghost">Cancel</button><button id="startAgent" class="btn primary">Start the session</button></div>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="settings" class="settings" aria-labelledby="settingsTitle" tabindex="-1">
+  <nav class="settings-nav" aria-label="Settings sections">
+    <h2 id="settingsTitle">Settings</h2>
+    <span>Personal</span>
+    <button data-pane="general" class="on">General</button>
+    <button data-pane="agents">Agents</button>
+    <button data-pane="notifications">Notifications</button>
+    <button data-pane="keyboard">Keyboard</button>
+    <span>Protoplasma</span>
+    <button data-pane="team">Team</button>
+    <button data-pane="account">Account</button>
+    <button data-pane="data">Data &amp; privacy</button>
+    <button data-pane="about">About</button>
+  </nav>
+  <div class="settings-body">
+    <button id="settingsDone" class="btn small done">Done</button>
+
+    <section data-pane="general">
+      <h3>General</h3>
+      <div class="group">
+        <div class="setting"><div><b>Theme</b><p>Applies to the app and its terminals. Claude Code has its own colours: use /theme inside it.</p></div>
+          <div class="theme-tiles">
+            <label><input type="radio" name="prefTheme" data-pref="theme" value="dark"><span class="tile dark"><i></i></span><span>Dark</span></label>
+            <label><input type="radio" name="prefTheme" data-pref="theme" value="light"><span class="tile light"><i></i></span><span>Light</span></label>
+            <label><input type="radio" name="prefTheme" data-pref="theme" value="system"><span class="tile system"><i></i></span><span>System</span></label>
+          </div></div>
+        <div class="setting"><div><b>Terminal text size</b><p>For your own agents. Teammates' panes scale to fit beside yours.</p></div>
+          <div class="stepper"><button class="btn" data-step="-0.5" aria-label="Smaller">−</button><output id="fontSize"></output><button class="btn" data-step="0.5" aria-label="Larger">+</button></div></div>
+        <div class="setting"><div><b>Terminal font</b><p>A font that isn't installed falls back to SF Mono.</p></div>
+          <select data-pref="fontFamily" aria-label="Terminal font">
+            <option value="SF Mono">SF Mono</option><option value="Menlo">Menlo</option><option value="Monaco">Monaco</option>
+            <option value="JetBrains Mono">JetBrains Mono</option><option value="Fira Code">Fira Code</option><option value="IBM Plex Mono">IBM Plex Mono</option>
+          </select></div>
+        <div class="setting"><div><b>Line height</b><p>Space between terminal lines.</p></div>
+          <div class="stepper"><button class="btn" data-line="-0.1" aria-label="Tighter">−</button><output id="lineHeight"></output><button class="btn" data-line="0.1" aria-label="Looser">+</button></div></div>
+      </div>
+    </section>
+
+    <section data-pane="agents" hidden>
+      <h3>Agents</h3>
+      <div id="providers" class="group" style="margin-bottom: 14px"></div>
+      <div class="group">
+        <div class="setting"><div><b>Default agent</b><p>Preselected when you start a session or add an agent.</p></div>
+          <div class="segmented" style="min-width: 330px">
+            <label><input type="radio" name="prefAgent" data-pref="agent" value="claude"><span>Claude Code</span></label>
+            <label><input type="radio" name="prefAgent" data-pref="agent" value="codex"><span>Codex</span></label>
+            <label><input type="radio" name="prefAgent" data-pref="agent" value="opencode"><span>OpenCode</span></label>
+          </div></div>
+        <div class="setting"><div><b>Let teammates type by default</b><p>They can run commands on this Mac through your agent. Off is safer; you can still allow it per agent.</p></div>
+          <input type="checkbox" class="switch" data-pref="open" aria-label="Let teammates type by default"></div>
+        <div class="setting"><div><b>A branch for every session</b><p>Sessions started from a GitHub repo get their own branch (session/…) and folder, so main only changes through a push or pull request. Off works on the repo's current branch.</p></div>
+          <input type="checkbox" class="switch" data-pref="sessionBranches" aria-label="A branch for every session"></div>
+        <div class="setting"><div><b>Repos folder</b><p>Where repos picked from GitHub are cloned.</p></div><kbd>~/Protoplasma</kbd></div>
+      </div>
+    </section>
+
+    <section data-pane="notifications" hidden>
+      <h3>Notifications</h3>
+      <div class="group">
+        <div class="setting"><div><b>An agent needs you</b><p>When your agent, or one you can type into, is waiting for an answer.</p></div>
+          <input type="checkbox" class="switch" data-pref="notifyNeeds" aria-label="Notify when an agent needs you"></div>
+        <div class="setting"><div><b>Your agent finished</b><p>When one of your agents goes from working to idle.</p></div>
+          <input type="checkbox" class="switch" data-pref="notifyDone" aria-label="Notify when your agent finishes"></div>
+        <div class="setting"><div><b>Dock badge</b><p>Shows how many agents are waiting on someone.</p></div>
+          <input type="checkbox" class="switch" data-pref="badge" aria-label="Dock badge"></div>
+      </div>
+      <p class="fine" style="margin-top: 12px">Nothing fires for the session you're already looking at. macOS may ask once whether Protoplasma can send notifications.</p>
+    </section>
+
+    <section data-pane="team" hidden><h3>Team</h3><div id="teamPane"></div></section>
+    <section data-pane="account" hidden><h3>Account</h3><div id="accountPane"></div></section>
+
+    <section data-pane="keyboard" hidden>
+      <h3>Keyboard</h3>
+      <div class="group">
+        <div class="setting"><b>New session</b><kbd>⌘N</kbd></div>
+        <div class="setting"><b>Go to a session, page or action</b><kbd>⌘K</kbd></div>
+        <div class="setting"><b>Add an agent to the open session</b><kbd>⇧⌘L</kbd></div>
+        <div class="setting"><b>Toggle the sidebar</b><kbd>⌘B</kbd></div>
+        <div class="setting"><b>Toggle the session panel</b><kbd>⌘J</kbd></div>
+        <div class="setting"><b>Invite to team</b><kbd>⌘I</kbd></div>
+        <div class="setting"><b>Switch team</b><kbd>⇧⌘T</kbd></div>
+        <div class="setting"><b>Settings</b><kbd>⌘,</kbd></div>
+        <div class="setting"><b>Close a dialog or Settings</b><kbd>Esc</kbd></div>
+      </div>
+      <p class="fine" style="margin-top: 12px">Inside a terminal, keys go to the agent, so its own shortcuts work as usual: Shift+Tab for permission modes, / for commands.</p>
+    </section>
+
+    <section data-pane="data" hidden>
+      <h3>Data &amp; privacy</h3>
+      <div class="group">
+        <div class="setting"><div><b>Kept on the hub</b><p>Team names and members, notes, and sessions with their goals, repos and comments.</p></div></div>
+        <div class="setting"><div><b>Passed through the hub</b><p>Terminal output and Claude Code's hook events, live. The last 256 KB of each running agent's output is held in memory so someone joining sees the current screen; it isn't written to disk.</p></div></div>
+        <div class="setting"><div><b>Never sent to the hub</b><p>Your code and repos. Agents and git run on your Mac, and the GitHub CLI's login stays here too.</p></div></div>
+        <div class="setting"><div><b>Your GitHub sign-in</b><p>Read-only access to your public profile, used to check who you are. Stored encrypted on this Mac; the hub never saves it.</p></div></div>
+        <div class="setting"><div><b>Training or analytics</b></div><span class="where">Never</span></div>
+      </div>
+      <div class="actions" style="justify-content: flex-start; margin-top: 14px"><button class="btn" data-url="https://github.com/dw8-ro/protoplasma-ide/issues/new">Report a problem</button></div>
+    </section>
+
+    <section data-pane="about" hidden><h3>About</h3><div id="aboutPane"></div></section>
+  </div>
+</dialog>
+
+<script src="../node_modules/@xterm/xterm/lib/xterm.js"></script>
+<script src="../node_modules/@xterm/addon-fit/lib/addon-fit.js"></script>
+<script src="renderer.js"></script>
+</html>

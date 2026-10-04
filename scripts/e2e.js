@@ -1,0 +1,322 @@
+// End-to-end check of the real app: drives the window through its main flows and prints PASS/FAIL per step.
+// GitHub is replaced by a local hub with two made-up people, so it runs on any network. David's agents are real
+// Claude Code processes (they are never sent a prompt); Max's is a script.
+// Usage: npm run e2e
+const { app, safeStorage } = require('electron');
+const { spawn, execFileSync } = require('child_process');
+const fs = require('fs');
+const os = require('os');
+const path = require('path');
+const hubModule = require('../src/hub');
+
+const root = path.join(__dirname, '..');
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+const people = { 'tok-david': { login: 'david', name: 'David', avatar: '' }, 'tok-max': { login: 'max', name: 'Max', avatar: '' } };
+const verifyUser = async token => people[token] || null;
+const results = [];
+const check = (name, ok, detail = '') => { results.push(!!ok); console.log(`${ok ? 'PASS' : 'FAIL'}  ${name}${detail ? `  (${detail})` : ''}`); };
+const git = (cwd, ...args) => execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'],
+  env: { ...process.env, GIT_AUTHOR_NAME: 'T', GIT_AUTHOR_EMAIL: 't@example.com', GIT_COMMITTER_NAME: 'T', GIT_COMMITTER_EMAIL: 't@example.com' } }).trim();
+
+// A local "GitHub repo": a bare remote plus the clone the app expects at ~/Protoplasma/<owner>/<name>.
+const demoOwner = path.join(os.homedir(), 'Protoplasma', 'protoplasma-e2e');
+const hadProtoplasmaDir = fs.existsSync(path.join(os.homedir(), 'Protoplasma'));
+function makeDemoRepo() {
+  fs.rmSync(demoOwner, { recursive: true, force: true });
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'protoplasma-e2e-remote-'));
+  git(tmp, 'init', '-q', '--bare', '-b', 'main', path.join(tmp, 'demo.git'));
+  fs.mkdirSync(demoOwner, { recursive: true });
+  const clone = path.join(demoOwner, 'demo');
+  git(demoOwner, 'clone', '-q', path.join(tmp, 'demo.git'), clone);
+  git(clone, 'checkout', '-q', '-B', 'main');
+  fs.writeFileSync(path.join(clone, 'README.md'), 'demo\n');
+  git(clone, 'add', '.');
+  git(clone, 'commit', '-qm', 'first');
+  git(clone, 'push', '-q', '-u', 'origin', 'main');
+  git(clone, 'remote', 'set-head', 'origin', 'main');
+  return clone;
+}
+
+(async () => {
+  hubModule.githubUser = verifyUser;
+  const hub = `http://127.0.0.1:${(await hubModule.startHub({ port: 0, host: '127.0.0.1', verifyUser })).port}`;
+  process.env.PROTO_ONLINE_HUB = hub;
+  app.setPath('userData', fs.mkdtempSync(path.join(os.tmpdir(), 'protoplasma-e2e-')));
+  await app.whenReady();
+  fs.writeFileSync(path.join(app.getPath('userData'), 'github-token'), safeStorage.encryptString(JSON.stringify({ token: 'tok-david', user: people['tok-david'] })));
+  app.on('browser-window-created', (_, win) => win.webContents.once('did-finish-load', () => run(win, hub)));
+  require('../app/main');
+})();
+
+async function run(win, hub) {
+  const js = s => win.webContents.executeJavaScript(s);
+  const until = async (expr, ms = 8000) => { const end = Date.now() + ms; while (Date.now() < end) { if (await js(expr)) return true; await sleep(100); } return false; };
+  const secretOf = pid => { try { return /PROTO_HOOK_SECRET=(\w+)/.exec(execFileSync('ps', ['eww', '-o', 'command=', '-p', String(pid)], { encoding: 'utf8' }))?.[1]; } catch { return undefined; } };
+  const claudePids = () => execFileSync('ps', ['-Ao', 'pid=,command='], { encoding: 'utf8' }).split('\n')
+    .filter(l => l.includes('claude --settings') && !l.includes('protoplasma-teammate')).map(l => l.trim().split(' ')[0]).filter(pid => secretOf(pid)); // only this run's agents
+  const hook = async (lane, secret, body) => {
+    const res = await fetch(`${hub}/hooks/${lane}`, { method: 'POST', headers: { authorization: `Bearer ${secret}` }, body: JSON.stringify({ cwd: root, ...body }) });
+    return (await res.json().catch(() => null))?.hookSpecificOutput ?? null;
+  };
+  const secretFile = path.join(os.tmpdir(), `protoplasma-e2e-${process.pid}`);
+  let teammate;
+  try {
+    check('signs in from the saved profile', await until('!!me && me.login === "david"'));
+    check('own avatar falls back to an initial', await js(`$('#meAvatar').textContent.trim() === 'D'`));
+
+    await js(`showTeams(me); $('#teamName').value = 'E2E'; $('#createTeam').requestSubmit()`);
+    check('creates an online team and connects', await until('!!currentTeam && currentTeam.where === "Online" && $("#conn").className.includes("live")'));
+    const team = await js('currentTeam.id');
+    check('a new team opens on an empty Sessions page', await until(`!$('#sessionsPage').hidden && /No sessions yet/.test($('#sessions').textContent)`));
+    await js(`$('#navPeople').click(); $('#inviteBtn').click(); $('#inviteLogin').value = 'max'; $('#inviteForm').requestSubmit()`);
+    check('invites Max from the People page', await until(`currentTeam.members.includes('max') && !$('#inviteDlg').open && /max/.test($('#memberList').textContent) && /Owner/.test($('#memberList').textContent)`));
+    await js(`$('#inviteBtn').click(); $('#inviteLogin').value = 'MAX'; $('#inviteForm').requestSubmit()`);
+    check('inviting someone twice says so', await until(`/already on the team/.test($('#inviteErr').textContent)`), await js(`$('#inviteErr').textContent`));
+    await js(`$('#inviteDlg').close(); $('#navSessions').click()`);
+
+    const fake = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'protoplasma-teammate-')), 'claude');
+    fs.writeFileSync(fake, `#!/bin/sh\necho "$PROTO_HOOK_SECRET" > ${secretFile}\nprintf 'teammate ready\\r\\n'\nexec cat\n`, { mode: 0o755 });
+    teammate = spawn('node', [path.join(root, 'src/lane.js'), hub, team, 's1', fake], { cwd: root, env: { ...process.env, PROTO_TOKEN: 'tok-max' }, stdio: 'ignore' });
+    check('Max\'s agent appears under his name', await until('hubLanes.length === 1 && hubLanes[0].name === "Max"'));
+
+    // ---- repo picker
+    await js(`openNewAgent('s1')`);
+    const loaded = await until('!!repos || !!reposError', 20000);
+    const online = await js('!!repos');
+    check(online ? 'repo list loads from GitHub' : 'repo list explains that GitHub is unreachable', loaded && (online || await js(`/reach GitHub/.test($('#repoPicker').textContent)`)),
+      online ? `${await js('repos.length')} repos` : await js(`$('#repoPicker').textContent.trim()`));
+    await js(`reposError = ''; repos = [{ name: 'david/lobby', description: 'Game lobby service', private: true, mine: true }, { name: 'david/site', description: '', private: false, mine: true }, { name: 'max/engine', description: 'Shared engine', private: true, mine: false }];
+      $('input[name=source][value=repo]').checked = true; syncSource(); $('#repo').value = ''; renderRepoPicker()`);
+    check('picker lists your repos and shared ones in groups', await js(`[...$('#repoPicker').querySelectorAll('.repo-group')].map(g => g.textContent).join('|') === 'Yours|Shared with you' && $('#repoPicker').querySelectorAll('.repo-row').length === 3`));
+    await js(`$('#repo').value = 'eng'; renderRepoPicker()`);
+    check('typing filters the list', await js(`$('#repoPicker').querySelectorAll('.repo-row').length === 1 && $('#repoPicker').textContent.includes('max/engine')`));
+    await js(`$('#repoPicker .repo-row').click()`);
+    check('clicking a repo selects it', await js(`$('#repo').value === 'max/engine' && $('#repoPicker .repo-row.on')?.dataset.repo === 'max/engine' && $('#repoPicker').querySelectorAll('.repo-row').length === 3`));
+    const height = await js(`$('#agent').getBoundingClientRect().height`);
+    await js(`$('#session').value = ''; $('#agentForm').requestSubmit()`);
+    check('a form error shows without moving the dialog', await js(`$('#agentErr').textContent === 'Name the session.' && $('#agent').getBoundingClientRect().height === ${height}`));
+    await js(`$('#session').value = 's1'`);
+
+    // ---- an agent in a folder
+    await js(`$('input[name=source][value=folder]').checked = true; syncSource(); $('#cwd').value = ${JSON.stringify(root)}; $('#task').value = 'E2E goal'; $('#agentForm').requestSubmit()`);
+    check('starts a real Claude Code agent', await until('local.size === 1 && hubLanes.length === 2', 15000));
+    const mine = await js('[...local.keys()][0]');
+    const theirs = await js(`hubLanes.find(l => l.id !== ${JSON.stringify(mine)}).id`);
+    check('teammate output reaches the window', await until(`(terms.get(${JSON.stringify(theirs)})?.term.buffer.active.getLine(0)?.translateToString() || '').includes('teammate ready')`));
+    check('the session opens on your own agent, with its goal', await until(`view === 'session' && current === 's1' && focus === ${JSON.stringify(mine)} && !terms.get(${JSON.stringify(mine)}).el.hidden && terms.get(${JSON.stringify(theirs)}).el.hidden && $('#roomTask').textContent === 'E2E goal' && $('#roomWho').textContent === 'Your agent'`));
+    check('the session panel lists both people and their agents', await until(`$('#panelBody').querySelectorAll('.person').length === 2 && $('#panelBody').querySelectorAll('.agent-card').length === 2 && !!$('#panelBody [data-add]')`));
+    check('the sidebar lists the workspace with its session', await js(`!!$('#workspaces .ws') && $('#workspaces .ws-session.on')?.textContent.trim() === 's1'`), await js(`$('#workspaces').textContent.replace(/\\s+/g, ' ')`));
+    check('live git diff shows on your lane', await until(`!!terms.get(${JSON.stringify(mine)}).bar.querySelector('.diff')`, 12000));
+    await js(`$('#panelBody [data-focus="${theirs}"]').click()`);
+    check('clicking a teammate\'s agent shows it full size', await until(`focus === ${JSON.stringify(theirs)} && terms.get(${JSON.stringify(mine)}).el.hidden && !terms.get(${JSON.stringify(theirs)}).el.hidden && $('#roomWho').textContent === "Max's agent" && !$('#myAgent').hidden`));
+    const large = await js(`terms.get(${JSON.stringify(theirs)}).term.options.fontSize`);
+    await js(`$('#myAgent').click(); $('#newPane').click()`);
+    check('New pane shows a teammate beside your agent', await until(`focus === ${JSON.stringify(mine)} && split === ${JSON.stringify(theirs)} && !terms.get(${JSON.stringify(mine)}).el.hidden && !terms.get(${JSON.stringify(theirs)}).el.hidden && terms.get(${JSON.stringify(theirs)}).term.options.fontSize <= ${large} && $('#newPane').textContent === 'Close pane'`));
+    check('Stop button is fully visible on your pane', await js(`(() => { const t = terms.get(${JSON.stringify(mine)}); return t.bar.querySelector('[data-stop]').getBoundingClientRect().right <= t.el.getBoundingClientRect().right; })()`));
+    await js(`$('#newPane').click(); panelTab = 'environment'; render()`);
+    check('the Environment tab shows the branch and changes', await js(`/Changes/.test($('#panelBody').textContent) && /Branch/.test($('#panelBody').textContent) && !/Mark done/.test($('#panelBody').textContent)`), await js(`$('#panelBody').textContent.replace(/\\s+/g, ' ')`));
+    await js(`panelTab = 'session'; render()`);
+
+    for (const cli of ['codex', 'opencode']) { // either starts, or says it isn't installed
+      await js(`openNewAgent('s1'); $('input[name=cmd][value=${cli}]').checked = true; $('#agentForm').requestSubmit()`);
+      const started = await until(`local.size === 2 || /isn't installed/.test($('#agentErr').textContent)`, 15000) && await js('local.size === 2');
+      check(started ? `starts a ${cli} agent` : `a missing ${cli} CLI is reported, not silently dropped`, started || await js(`$('#agent').open && local.size === 1`), await js(`$('#agentErr').textContent`));
+      if (started) { await js(`proto.kill([...local.keys()].find(id => id !== ${JSON.stringify(mine)})); 0`); await until('local.size === 1'); }
+    }
+    await js(`$('#agent').close(); showTeams(me)`);
+    await until('listedTeams.size > 0');
+    check('team list marks the open team and its size', await js(`/Open/.test($('.team.on .agents').textContent) && /2 people/.test($('.team.on .where').textContent)`), await js(`$('#teamList').textContent.replace(/\\s+/g, ' ')`));
+    await js(`openTeam(listedTeams.get(currentTeam.key)); 0`);
+    check('opening a team shows its Sessions page', await until(`view === 'sessions' && !$('#sessionsPage').hidden && $('#room').hidden && !!$('#sessions [data-session="s1"]')`));
+    await js(`$('#search').value = 'zzz'; $('#search').oninput()`);
+    check('search narrows the sessions', await js(`!$('#sessions [data-session]') && /No sessions match/.test($('#sessions').textContent)`));
+    await js(`$('#search').value = ''; $('#search').oninput(); $('#sessions [data-session="s1"]').click()`);
+    check('clicking a session card opens it', await until(`view === 'session' && current === 's1' && !$('#room').hidden`));
+
+    // ---- settings
+    await js(`$('#settingsBtn').click()`);
+    check('Settings opens as a page from the gear', await until(`$('#settings').open && !$('#settings').matches(':modal') && !$('.settings-body [data-pane=general]').hidden`));
+    await js(`showPane('agents')`);
+    check('Settings shows which agents are installed', await until(`/Claude Code/.test($('#providers').textContent) && /Installed/.test($('#providers').textContent)`), await js(`$('#providers').textContent.replace(/\\s+/g, ' ')`));
+    await js(`$('input[data-pref=theme][value=light]').click()`);
+    check('light theme applies to the app and terminals', await js(`document.documentElement.dataset.theme === 'light' && terms.get(${JSON.stringify(mine)}).term.options.theme.background === '#ffffff' && getComputedStyle(document.body).backgroundColor === 'rgb(243, 243, 245)'`));
+    await js(`$('[data-step="0.5"]').click(); $('[data-step="0.5"]').click()`);
+    check('terminal text size changes your pane', await js(`terms.get(${JSON.stringify(mine)}).term.options.fontSize === 13.5 && $('#fontSize').textContent === '13.5px'`));
+    await js(`(() => { const select = $('select[data-pref=fontFamily]'); select.value = 'Menlo'; select.dispatchEvent(new Event('change', { bubbles: true })); $('[data-line="0.1"]').click(); })()`);
+    check('terminal font and line height apply', await js(`terms.get(${JSON.stringify(mine)}).term.options.fontFamily.startsWith('"Menlo"') && terms.get(${JSON.stringify(mine)}).term.options.lineHeight === 1.3 && $('#lineHeight').textContent === '1.3'`));
+    await js(`showPane('data')`);
+    check('Data & privacy explains what the hub keeps', await js(`/Kept on the hub/.test($('.settings-body [data-pane=data]').textContent) && !$('.settings-body [data-pane=data]').hidden`));
+    await js(`$('input[data-pref=notifyNeeds]').click(); $('input[data-pref=agent][value=codex]').click(); $('input[data-pref=open]').click()`);
+    check('preferences are saved', await js(`(() => { const p = JSON.parse(localStorage.getItem('prefs')); return p.theme === 'light' && p.fontSize === 13.5 && p.notifyNeeds === false && p.agent === 'codex' && p.open === true; })()`));
+    await js(`showPane('about')`);
+    check('About shows the app version', await until(`/Protoplasma \\d+\\.\\d+\\.\\d+/.test($('#aboutPane').textContent)`), await js(`$('#aboutPane b')?.textContent`));
+    await js(`showPane('account')`);
+    check('Account shows the profile and GitHub CLI status', await until(`/David/.test($('#accountPane').textContent) && /Signed in as|Not installed|not signed in/.test($('#ghStatus')?.textContent || '')`, 12000), await js(`$('#ghStatus')?.textContent`));
+    await js(`showPane('team')`);
+    check('Team lists the members', await js(`/E2E/.test($('#teamPane').textContent) && /max/.test($('#teamPane').textContent)`));
+    await js(`$('#settingsDone').click(); openNewAgent('s1')`);
+    check('the New session form uses the saved defaults', await js(`$('input[name=cmd]:checked').value === (isInstalled('codex') ? 'codex' : 'claude') && $('#open').checked === true`));
+    await js(`$('#agent').close(); $('#settingsBtn').click(); $('input[data-pref=theme][value=dark]').click(); $('input[data-pref=agent][value=claude]').click(); $('input[data-pref=open]').click(); $('input[data-pref=notifyNeeds]').click(); $('[data-step="-0.5"]').click(); $('[data-step="-0.5"]').click(); $('#settingsDone').click()`);
+    check('switching back to dark works', await js(`document.documentElement.dataset.theme === 'dark' && terms.get(${JSON.stringify(mine)}).term.options.fontSize === 12.5`));
+
+    // ---- guard rails, driven by the hook events Claude Code would send
+    await sleep(3000);
+    const mySecret = secretOf(claudePids().pop());
+    const theirSecret = fs.readFileSync(secretFile, 'utf8').trim();
+    const editFile = { tool_name: 'Edit', tool_input: { file_path: path.join(root, 'src/x.ts') } };
+    await hook(theirs, theirSecret, { hook_event_name: 'PostToolUse', ...editFile });
+    check('asks before editing a file Max\'s agent changed', (await hook(mine, mySecret, { hook_event_name: 'PreToolUse', ...editFile }))?.permissionDecision === 'ask');
+    await hook(mine, mySecret, { hook_event_name: 'PostToolUse', ...editFile });
+    check('overlap alert names both people', await until(`/Max & David edited|David & Max edited/.test($('#alerts').textContent)`));
+    const push = await hook(mine, mySecret, { hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_input: { command: 'git push origin main' } });
+    check('pushing to main asks first', push?.permissionDecision === 'ask' && /straight to main/.test(push.permissionDecisionReason));
+    const force = await hook(mine, mySecret, { hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_input: { command: 'git push --force origin session/x' } });
+    check('force-pushing asks first', /force-push/.test(force?.permissionDecisionReason || ''));
+    check('an ordinary branch push is not interrupted', await hook(mine, mySecret, { hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_input: { command: 'git push -u origin session/x' } }) === null);
+
+    await js(`go('sessions')`);
+    await hook(mine, mySecret, { hook_event_name: 'PermissionRequest', tool_name: 'Bash' });
+    check('"needs you" alert shows', await until(`$('#alerts').textContent.includes('Your agent needs you')`));
+    await hook(mine, mySecret, { hook_event_name: 'Stop' });
+    check('status returns to idle', await until(`hubLanes.find(l => l.id === ${JSON.stringify(mine)}).status === 'idle'`));
+    await js(`openSession('s1')`);
+    await hook(mine, mySecret, { hook_event_name: 'UserPromptSubmit', prompt: 'make the lobby faster' });
+    check('an agent card shows its latest prompt', await until(`$('#panelBody').textContent.includes('make the lobby faster')`));
+    await hook(mine, mySecret, { hook_event_name: 'Stop' });
+    await js(`$('#commentText').value = 'I take the auth part'; $('#commentForm').requestSubmit()`);
+    check('comments appear in the session panel', await until(`/I take the auth part/.test($('#panelBody').textContent) && $('#commentText').value === ''`));
+    await js(`$('#panelBody [data-uncomment]').click()`);
+    check('and can be removed', await until(`!/I take the auth part/.test($('#panelBody').textContent)`));
+    await js(`toggleSidebar(true)`);
+    check('the sidebar can be hidden', await js(`document.body.classList.contains('sidebar-hidden') && getComputedStyle($('.sidebar')).display === 'none'`));
+    await js(`toggleSidebar(false); $('#workspaces [data-ws-menu]').click()`);
+    check('a workspace has its own menu', await js(`/Hide from sidebar/.test($('.menu')?.textContent || '')`));
+    await js(`[...document.querySelectorAll('.menu button')].find(b => /Hide from sidebar/.test(b.textContent)).click()`);
+    check('hiding a workspace tucks it away, with a way back', await until(`!$('#workspaces .ws') && /Show 1 hidden workspace/.test($('#workspaces').textContent)`));
+    await js(`$('#workspaces [data-unhide]').click()`);
+    check('showing it again', await until(`!!$('#workspaces .ws')`));
+
+    await js(`proto.addMemory(currentTeam.key, { text: 'Never cache totals', file: 'src/x.ts' }); 0`);
+    check('memory note appears', await until('memories.length === 1'));
+    check('Claude gets the note before reading the file', /Never cache totals/.test((await hook(mine, mySecret, { hook_event_name: 'PreToolUse', tool_name: 'Read', tool_input: { file_path: path.join(root, 'src/x.ts') } }))?.additionalContext || ''));
+
+    // ---- an agent from a GitHub repo: its own branch and folder
+    const clone = makeDemoRepo();
+    await js(`openNewAgent('Fix Login'); $('input[name=source][value=repo]').checked = true; syncSource(); $('#repo').value = 'protoplasma-e2e/demo'; $('#task').value = ''; $('#agentForm').requestSubmit()`);
+    check('starts an agent from a repo', await until('local.size === 2', 15000), await js(`$('#agentErr').textContent`));
+    const second = await js(`[...local.keys()].find(id => id !== ${JSON.stringify(mine)})`);
+    check('the session works on its own branch', await until(`hubLanes.find(l => l.id === ${JSON.stringify(second)})?.branch === 'session/fix-login'`, 12000),
+      await js(`hubLanes.find(l => l.id === ${JSON.stringify(second)})?.branch`));
+    check('in its own folder, leaving the clone on main', fs.existsSync(path.join(demoOwner, 'demo@fix-login', 'README.md')) && git(clone, 'branch', '--show-current') === 'main');
+    check('the clone gets the push guard', /Added by Protoplasma/.test(fs.readFileSync(path.join(clone, '.git/hooks/pre-push'), 'utf8')));
+
+    // main moves on the remote: the lane notices it's behind and its agent is told
+    const other = fs.mkdtempSync(path.join(os.tmpdir(), 'protoplasma-e2e-other-'));
+    git(other, 'clone', '-q', git(clone, 'remote', 'get-url', 'origin'), 'c');
+    fs.writeFileSync(path.join(other, 'c', 'new.txt'), 'x\n');
+    git(path.join(other, 'c'), 'add', '.');
+    git(path.join(other, 'c'), 'commit', '-qm', 'teammate work');
+    git(path.join(other, 'c'), 'push', '-q', 'origin', 'HEAD:main');
+    check('shows when the branch falls behind', await until(`hubLanes.find(l => l.id === ${JSON.stringify(second)})?.git?.behind === 1 && !!terms.get(${JSON.stringify(second)}).bar.querySelector('.behind')`, 75000));
+    const secondSecret = secretOf(claudePids().find(pid => secretOf(pid) !== mySecret));
+    check('its agent is told to pull first', /1 commit behind/.test((await hook(second, secondSecret, { hook_event_name: 'UserPromptSubmit', prompt: 'hi' }))?.additionalContext || ''));
+
+    // ---- with session branches off, a repo session works on the clone's own branch
+    await js(`$('#settingsBtn').click(); $('input[data-pref=sessionBranches]').click(); $('#settingsDone').click();
+      openNewAgent('Plain'); $('input[name=source][value=repo]').checked = true; syncSource(); $('#repo').value = 'protoplasma-e2e/demo'; $('#agentForm').requestSubmit()`);
+    check('starts a third agent with session branches off', await until('local.size === 3', 15000), await js(`$('#agentErr').textContent`));
+    const third = await js(`[...local.keys()].find(id => id !== ${JSON.stringify(mine)} && id !== ${JSON.stringify(second)})`);
+    check('it stays on the repo\'s own branch', await until(`hubLanes.find(l => l.id === ${JSON.stringify(third)})?.branch === 'main'`, 12000), await js(`hubLanes.find(l => l.id === ${JSON.stringify(third)})?.branch`));
+    await js(`proto.kill(${JSON.stringify(third)}); $('#settingsBtn').click(); $('input[data-pref=sessionBranches]').click(); $('#settingsDone').click()`);
+
+    // ---- sessions after their agents stop
+    await js(`proto.kill(${JSON.stringify(second)}); proto.kill(${JSON.stringify(mine)}); 0`);
+    teammate.kill();
+    await js(`go('sessions')`);
+    check('sessions stay on the board after their agents stop', await until(`hubLanes.length === 0 && local.size === 0 && $('#sessions').textContent.includes('No agents running') && $('#sessions').textContent.includes('E2E goal')`));
+    await js(`openSession('s1')`);
+    check('a stopped agent is listed in its session', await until(`$('#panelBody [data-replay]') && /Stopped agents/.test($('#panelBody').textContent)`));
+    await js(`[...document.querySelectorAll('#panelBody [data-replay]')].find(b => /Max/.test(b.textContent)).click()`);
+    check("its last screen can be looked at", await until(`tab === 'replay' && !$('#replayPanel').hidden && (() => { const b = replayTerm.buffer.active; for (let y = 0; y < b.length; y++) if (b.getLine(y).translateToString().includes('teammate ready')) return true; return false; })()`, 10000));
+    await js(`$('#backToAgents').click()`);
+    check('Resume offers the last agent', await js(`!$('#resumeBtn').hidden && $('#resumeBtn').textContent === 'Resume Claude Code'`), await js(`$('#resumeBtn').textContent`));
+    await js(`$('#resumeBtn').click(); 0`);
+    const resumed = await (async () => {
+      for (let i = 0; i < 60; i++) {
+        if (execFileSync('ps', ['-Ao', 'command='], { encoding: 'utf8' }).split('\n').some(l => l.includes('claude --settings') && l.includes('--continue'))) return true;
+        await sleep(100);
+      }
+      return false;
+    })();
+    check('and starts it with --continue', resumed);
+    await js(`for (const id of local.keys()) proto.kill(id); 0`);
+    await until('local.size === 0', 10000);
+    await js(`go('sessions')`);
+    // The demo remote is a local path, so the hub has no GitHub repo for it; test/hub.test.js covers recording one.
+    check('a stopped session with a repo keeps its GitHub links', await js(`recordFor('Fix Login').repo = 'david/lobby'; openSession('Fix Login'); panelTab = 'environment'; render();
+      /david\\/lobby/.test($('#panelBody').textContent) && !!$('#panelBody [data-tab=pulls]') && /Mark done/.test($('#panelBody').textContent)`));
+    await js(`openSession('s1'); $('#panelBody [data-act=done]').click()`);
+    check('Mark done', await until(`recordFor('s1')?.done === true`));
+    check('a finished session leaves the sidebar but stays on the Sessions page', await js(`go('sessions'); !$('#workspaces [data-session="s1"]') && /Done/.test($('#sessions [data-session="s1"]').textContent)`));
+    await js(`window.confirm = () => true; openSession('s1'); tab = 'memory'; render(); $('#panelBody [data-act=delete]').click()`);
+    check('Delete removes it', await until(`!recordFor('s1')`));
+    check('and you land back on the Sessions page', await until(`view === 'sessions' && !$('#sessionsPage').hidden && $('#room').hidden && !$('#sessions [data-session="s1"]')`));
+    await js(`$('#sessions [data-menu="Fix Login"]').click()`);
+    check('a session card has its own menu', await js(`/Mark done/.test($('.menu')?.textContent || '') && /Delete session/.test($('.menu').textContent)`));
+    await js(`closeMenu(); openRename('Fix Login'); $('#renameInput').value = 'Login flow'; $('#renameForm').requestSubmit()`);
+    check('a stopped session can be renamed, keeping its branch', await until(`recordFor('Login flow')?.key === 'fix-login' && !recordFor('Fix Login') && !$('#renameDlg').open`), await js(`JSON.stringify(sessionRecords.map(x => [x.name, x.key]))`));
+    await js(`recordFor('Login flow').repo = 'protoplasma-e2e/demo'; deleteSession('Login flow'); 0`);
+    check('deleting a repo session can remove its folder too', await until(`!recordFor('Login flow')`) && await (async () => { for (let i = 0; i < 50 && fs.existsSync(path.join(demoOwner, 'demo@fix-login')); i++) await sleep(100); return !fs.existsSync(path.join(demoOwner, 'demo@fix-login')); })());
+
+    // ---- quick switcher and setup checklist
+    await js(`openSwitcher(); $('#switcherInput').value = 'peo'; $('#switcherInput').oninput()`);
+    check('⌘K finds pages by name', await js(`$('#switcher').open && /People/.test($('#switcherList').textContent)`));
+    await js(`$('#switcherInput').onkeydown(new KeyboardEvent('keydown', { key: 'Enter' }))`);
+    check('and goes there', await until(`!$('#switcher').open && view === 'people'`));
+    await js(`go('sessions'); renderSetup([{ cmd: 'claude', installed: false }], { ok: false, detail: 'Not installed. Run "brew install gh", then "gh auth login".' })`);
+    check('the setup checklist lists what is missing', await js(`!$('#setup').hidden && $('#setup').querySelectorAll('.setup-item').length === 2`));
+    await js(`checkSetup(); 0`);
+    check('and disappears once this Mac is set up', await until(`$('#setup').hidden`, 15000));
+
+    // ---- deleting a team
+    const mainTeam = await js('currentTeam.key');
+    await js(`showTeams(me); $('#teamName').value = 'Spare'; $('#createTeam').requestSubmit()`);
+    await until(`currentTeam?.name === 'Spare'`);
+    await js(`window.confirm = () => false; openSettings('team'); $('#teamPane [data-drop-team]').click()`);
+    check('cancelling Delete team leaves Settings open on the same team', await js(`$('#settings').open && !$('#start').open && currentTeam?.name === 'Spare'`));
+    check('the team list has no delete buttons', await js(`!document.querySelector('#teamList [data-drop]')`));
+    await js(`window.confirm = () => true; $('#teamPane [data-drop-team]').click()`);
+    check('the owner can delete the open team from Settings', await until(`currentTeam === null && !$('#settings').open && $('#start').open && listedTeams.size === 1 && !$('#teamList').textContent.includes('Spare')`, 12000), await js(`$('#teamList').textContent.replace(/\\s+/g, ' ')`));
+    await js(`openTeam(listedTeams.get(${JSON.stringify(mainTeam)})); 0`);
+    await until(`currentTeam?.key === ${JSON.stringify(mainTeam)}`);
+
+    // ---- an agent waiting on Claude's folder trust prompt needs you
+    const untrusted = fs.mkdtempSync(path.join(os.tmpdir(), 'protoplasma-e2e-trust-'));
+    await js(`openNewAgent('trust-check'); $('input[name=source][value=folder]').checked = true; syncSource(); $('#cwd').value = ${JSON.stringify(untrusted)}; $('#agentForm').requestSubmit()`);
+    const asked = await until(`hubLanes.some(l => l.session === 'trust-check' && l.status === 'needs you')`, 20000);
+    check('a folder trust prompt shows as Needs you', asked && await js(`$('#alerts').textContent.includes('Your agent needs you') || view === 'session'`),
+      await js(`hubLanes.find(l => l.session === 'trust-check')?.status`));
+    await js(`proto.write([...local.keys()][0], '\\x1b'); 0`); // Esc: "No, exit"
+    check('answering it clears Needs you', await until(`!hubLanes.some(l => l.session === 'trust-check' && l.status === 'needs you')`, 10000));
+    await until('local.size === 0', 10000);
+    check('a differently written name joins the existing session', await js(`existingSession('TRUST CHECK') === 'trust-check'`));
+    fs.rmSync(untrusted, { recursive: true, force: true });
+
+    // ---- signing out stops your agents and clears the board
+    await js(`openNewAgent('bye'); $('input[name=source][value=folder]').checked = true; syncSource(); $('#cwd').value = ${JSON.stringify(root)}; $('#agentForm').requestSubmit()`);
+    await until('local.size === 1 && hubLanes.length === 1', 15000);
+    await js(`$('#signout').click()`);
+    check('signing out stops your agents and returns to sign-in', await until(`local.size === 0 && me === null && currentTeam === null && $('#start').open && !$('#signinView').hidden && terms.size === 0`, 10000),
+      await js(`JSON.stringify({ local: local.size, terms: terms.size, me: !!me })`));
+  } catch (e) {
+    check('no unexpected errors', false, e.message);
+  } finally {
+    console.log(`\n${results.filter(Boolean).length}/${results.length} passed`);
+    if (results.includes(false)) process.exitCode = 1;
+    teammate?.kill();
+    fs.rmSync(secretFile, { force: true });
+    fs.rmSync(demoOwner, { recursive: true, force: true });
+    if (!hadProtoplasmaDir) try { fs.rmdirSync(path.join(os.homedir(), 'Protoplasma')); } catch {}
+    win.destroy(); // skips the "agents are still running" prompt; the app quits once its window is gone
+  }
+}

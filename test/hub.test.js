@@ -303,11 +303,10 @@ test('uncommitted changes count as edits, whoever or whatever made them', async 
 
   // Agents sharing one checkout share its changes, so they don't overlap with each other.
   const twin = await rawLane('git-twin', { repo: 'acme/git', root: '/one' });
-  const lanes = await nextState(ls => ls.some(l => l.id === 'git-twin'));
   twin.socket.send(JSON.stringify(git(['src/b.ts'])));
   one.socket.send(JSON.stringify(git(['src/a.ts', 'src/b.ts'])));
   const after = await nextState(ls => ls.find(l => l.id === 'git-one')?.files.includes('src/b.ts') && ls.find(l => l.id === 'git-twin')?.files.includes('src/b.ts'));
-  assert.ok(lanes && !after.find(l => l.id === 'git-one').overlaps.includes('src/b.ts'));
+  assert.ok(!after.find(l => l.id === 'git-one').overlaps.includes('src/b.ts'));
   const twinEdit = { hook_event_name: 'PreToolUse', tool_name: 'Edit', tool_input: { file_path: '/one/src/b.ts' }, cwd: '/one' };
   const twinRes = await fetch(`${url}/hooks/git-twin`, { method: 'POST', headers: { authorization: 'Bearer x' }, body: JSON.stringify(twinEdit) });
   assert.equal((await twinRes.json().catch(() => null))?.hookSpecificOutput?.permissionDecision, undefined,

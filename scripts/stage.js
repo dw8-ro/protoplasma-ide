@@ -261,4 +261,4 @@ const claudeBanner = where => [
 ];
 const accepting = c.dim('  ⏵⏵ accept edits on (shift+tab to cycle)');
 
-module.exports = { boot, stageRepo, applyEdits, ownAgent, teammate, hook, sleep, c, light, claudeBanner, accepting };
+module.exports = { files, boot, stageRepo, applyEdits, ownAgent, teammate, hook, sleep, c, light, claudeBanner, accepting };

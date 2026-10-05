@@ -164,6 +164,7 @@ npm test            # hub, lane and worktree tests (node:test)
 npm run e2e         # drives the real app through every main flow, the code view included
 npm run screenshot  # regenerates the images in docs/
 npm run demo        # records docs/demo.gif
+npm run playground  # two copies of the app, David and Max, on one shared team and repo, each with a control API
 npm run icon        # renders the app icon from app/icon.svg
 ```
 

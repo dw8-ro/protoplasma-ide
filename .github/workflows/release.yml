@@ -1,0 +1,33 @@
+name: Release
+
+# Pushing a version tag (npm run release does it) builds the Mac app and publishes it as a GitHub release.
+# Installed copies of Protoplasma find it within a few hours and update themselves.
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  mac:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: npm
+      - name: Check the tag matches package.json
+        run: test "v$(node -p "require('./package.json').version")" = "$GITHUB_REF_NAME"
+      - run: npm ci
+      - run: npm test
+      - run: npm run dist
+      - name: Sign (ad hoc, no Apple account needed) and zip
+        run: |
+          codesign --force --deep --sign - dist/Protoplasma-darwin-arm64/Protoplasma.app
+          ditto -c -k --keepParent dist/Protoplasma-darwin-arm64/Protoplasma.app "Protoplasma-${GITHUB_REF_NAME#v}-mac-arm64.zip"
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" Protoplasma-*-mac-arm64.zip --title "Protoplasma ${GITHUB_REF_NAME#v}" --generate-notes

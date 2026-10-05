@@ -1272,11 +1272,18 @@ async function openSettings(pane = 'general') {
     <div class="about"><svg class="mark"><use href="#cell"/></svg><b>Protoplasma ${esc(info.version)}</b>
       <p class="fine">A multiplayer workspace for AI coding agents.</p>
       <button class="linkish" data-url="https://github.com/dw8-ro/protoplasma-ide">github.com/dw8-ro/protoplasma-ide</button></div>
+    <h4>Updates</h4>
+    <div class="group"><div class="setting"><div><b id="updateStatus">Checking…</b><p>New versions come from GitHub releases and install themselves, so there's nothing to download again.</p></div>
+      <button class="btn" data-check-updates>Check now</button></div></div>
     <h4>Online hub</h4>
     <div class="group"><div class="setting"><div><b>${esc(info.onlineHub ? new URL(info.onlineHub).host : 'Not set up')}</b>
-      <p>Relays terminals and coordination between teammates. It has no access to your repos and stores only team names, members, notes and session goals.</p></div></div></div>`;
+      <p>Relays terminals and coordination between teammates. It never sees your repos, and keeps only team names, members, notes, and sessions with their goals and comments.</p></div></div></div>`;
+  checkUpdates().then(showUpdateStatus);
 }
 $('#settingsBtn').onclick = () => openSettings();
+const showUpdateStatus = u => {
+  if ($('#updateStatus')) $('#updateStatus').textContent = !u ? 'Couldn\'t reach GitHub' : u.available ? `${u.latest} is available` : u.latest ? 'Up to date' : 'No releases yet';
+};
 $('#settingsDone').onclick = () => $('#settings').close();
 $('#settings').addEventListener('close', () => render());
 $('#settings').onchange = e => {
@@ -1291,12 +1298,41 @@ $('#settings').onclick = e => {
   if (step) { prefs.fontSize = Math.max(10, Math.min(18, prefs.fontSize + Number(step))); savePrefs(); }
   if (line) { prefs.lineHeight = Math.round(Math.max(1, Math.min(1.6, prefs.lineHeight + Number(line))) * 10) / 10; savePrefs(); }
   if (url) proto.openExternal(url);
+  if ('checkUpdates' in e.target.dataset) { $('#updateStatus').textContent = 'Checking…'; checkUpdates().then(showUpdateStatus); }
   // These two ask first and close Settings themselves, so cancelling leaves you where you were.
   if ('dropTeam' in e.target.dataset) return leaveOrDeleteTeam(currentTeam);
   if (open === 'signout') return $('#signout').click();
   if (open === 'people') go('people');
   if (open === 'teams') { $('#settings').close(); showTeams(me); }
 };
+
+// ---- Updates: a newer release on GitHub replaces the app in place (see app/updates.js) ----
+
+let update = null; // the last check's answer: { current, latest, available, canInstall, url }
+async function checkUpdates() {
+  try { update = await proto.checkUpdates(); } catch { return null; }
+  $('#updateBar').hidden = !update.available;
+  if (update.available) {
+    $('#updateText').textContent = `A Protoplasma update is available (${update.latest}).`;
+    $('#updateNow').textContent = update.canInstall ? 'Update now' : 'Download';
+    $('#updateNow').disabled = false;
+  }
+  return update;
+}
+$('#updateLater').onclick = () => { $('#updateBar').hidden = true; };
+$('#updateNow').onclick = async () => {
+  if (!update.canInstall) return proto.openExternal(update.url);
+  $('#updateNow').disabled = true;
+  $('#updateText').textContent = `Downloading ${update.latest}…`;
+  try {
+    await proto.installUpdate();
+    $('#updateText').textContent = `${update.latest} is ready. It goes in as soon as Protoplasma quits.`;
+  } catch (err) {
+    $('#updateText').textContent = errorText(err);
+    $('#updateNow').disabled = false;
+  }
+};
+setInterval(checkUpdates, 6 * 60 * 60_000);
 
 // ---- Quick switcher (⌘K): sessions, workspaces, pages and actions by name ----
 
@@ -1370,6 +1406,7 @@ $('#setup').onclick = e => {
 
 proto.onMenu(action => {
   if (action === 'settings') return openSettings();
+  if (action === 'updates') return openSettings('about');
   if (action === 'sidebar') return toggleSidebar();
   if (!me || document.querySelector('dialog[open]:not(#start, #settings)')) return;
   if (action === 'teams') return showTeams(me);
@@ -1389,4 +1426,5 @@ applyPrefs();
 showView('signinView');
 $('#start').showModal();
 refreshAgents();
+setTimeout(checkUpdates, 5000); // after startup, then every few hours
 proto.savedUser().then(user => { if (user) { reopenLast = true; showTeams(user); } });

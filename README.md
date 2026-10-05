@@ -80,9 +80,19 @@ flowchart LR
 
 Work then reaches `main` the usual way, through a pull request. These layers make collisions visible early; they don't replace review.
 
-## Getting started
+## Install
 
-You'll need macOS on Apple silicon, Node 20 or later, and at least one of [Claude Code](https://code.claude.com), Codex or OpenCode. The [GitHub CLI](https://cli.github.com) is optional and powers the repo list, pull requests and issues. On first run the app checks for the agents and the GitHub CLI and tells you what's missing.
+You'll need a Mac with Apple silicon and at least one of [Claude Code](https://code.claude.com), Codex or OpenCode. The [GitHub CLI](https://cli.github.com) is optional and powers the repo list, pull requests and issues. On first run the app checks for both and tells you what's missing.
+
+```bash
+gh api repos/dw8-ro/protoplasma-ide/contents/install.sh -H "Accept: application/vnd.github.raw" | sh
+```
+
+That installs the latest release into Applications, with no "can't be verified" warning (files fetched from Terminal aren't quarantined). You can also download the zip from [Releases](https://github.com/dw8-ro/protoplasma-ide/releases); the first time you open it, macOS asks you to allow it under System Settings → Privacy & Security → Open Anyway.
+
+**Updates install themselves.** The app checks GitHub every few hours and shows a bar when a new version is out: Update now, and it relaunches on the new one.
+
+### From source
 
 ```bash
 git clone https://github.com/dw8-ro/protoplasma-ide.git
@@ -91,7 +101,7 @@ npm install
 npm start
 ```
 
-`npm run dist` builds the app into `dist/Protoplasma-darwin-arm64/`.
+`npm run dist` builds the app into `dist/Protoplasma-darwin-arm64/`, and `npm run release` publishes a new version: it bumps the version and pushes a tag, and GitHub Actions builds the app and attaches it to a release that everyone's copy picks up.
 
 <details>
 <summary>Configuration and hosting a hub</summary>
@@ -146,7 +156,7 @@ scripts/  end-to-end check, screenshots, demo and icon tooling
 
 ## Roadmap
 
-- [ ] Signed and notarised builds with automatic updates
+- [ ] Notarised builds, so browser downloads open without the first-launch prompt
 - [ ] Plans with owners and step status
 - [ ] Coordination tools over MCP, so agents can leave notes and message each other
 - [ ] Viewer role

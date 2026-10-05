@@ -7,6 +7,7 @@ const { startLane, installed } = require('../src/lane');
 const github = require('./github');
 const teams = require('./teams');
 const config = require('./config.json');
+const updates = require('./updates');
 
 const AGENTS = ['claude', 'codex', 'opencode'];
 // How each agent CLI picks up its most recent conversation in the folder it starts in.
@@ -101,6 +102,23 @@ ipcMain.handle('gh:status', async () => github.ghStatus(await agentEnv));
 ipcMain.on('focus', () => { win?.show(); app.focus({ steal: true }); });
 ipcMain.on('badge', (_, count) => app.dock?.setBadge(count > 0 ? String(count) : ''));
 ipcMain.on('clipboard', (_, text) => clipboard.writeText(String(text)));
+
+// ---- Updates (see updates.js) ----
+let release = null; // a newer release found by the last check
+ipcMain.handle('updates:check', async () => {
+  const current = require('../package.json').version;
+  if (!app.isPackaged) return { current, available: false }; // running from source: git pull instead
+  const latest = await updates.latestRelease(await agentEnv);
+  release = latest && updates.isNewer(latest.version, current) ? latest : null;
+  return { current, latest: latest?.version ?? null, available: !!release, canInstall: !!updates.ownBundle(app.getPath('exe')),
+    url: latest?.url || `https://github.com/${updates.REPO}/releases` };
+});
+ipcMain.handle('updates:install', async () => {
+  const bundle = updates.ownBundle(app.getPath('exe'));
+  if (!release || !bundle) throw new Error('There\'s no update this copy of Protoplasma can install itself. Download it from GitHub instead.');
+  await updates.stage(release, bundle, process.pid, await agentEnv);
+  app.quit(); // asks first if agents are running; if that's cancelled, the update goes in at the next quit
+});
 ipcMain.handle('pickFolder', async (_, from) => (await dialog.showOpenDialog(win,
   { defaultPath: String(from || '') || undefined, properties: ['openDirectory', 'createDirectory'] })).filePaths[0]);
 
@@ -132,7 +150,8 @@ ipcMain.on('lane:kill', (_, id) => lanes.get(id)?.term.kill());
 const menuAction = action => () => toWindow('menu', action);
 Menu.setApplicationMenu(Menu.buildFromTemplate([
   { label: app.name, submenu: [
-    { role: 'about' }, { type: 'separator' },
+    { role: 'about' },
+    { label: 'Check for Updates…', click: menuAction('updates') }, { type: 'separator' },
     { label: 'Settings…', accelerator: 'CmdOrCtrl+,', click: menuAction('settings') }, { type: 'separator' },
     { role: 'services' }, { type: 'separator' }, { role: 'hide' }, { role: 'hideOthers' }, { role: 'unhide' }, { type: 'separator' }, { role: 'quit' },
   ] },

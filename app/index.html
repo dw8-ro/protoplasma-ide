@@ -51,7 +51,7 @@
   [hidden] { display: none !important; }
   html, body { height: 100%; }
   body {
-    --side: 248px; margin: 0; display: grid; grid-template: 48px minmax(0, 1fr) / var(--side) minmax(0, 1fr);
+    --side: 248px; margin: 0; display: grid; grid-template: 48px auto minmax(0, 1fr) / var(--side) minmax(0, 1fr);
     background: var(--canvas); color: var(--text); font: 13px/1.45 var(--ui);
     -webkit-font-smoothing: antialiased; user-select: none;
   }
@@ -114,7 +114,7 @@
 
   /* Title bar */
   .titlebar {
-    grid-column: 1 / -1; display: flex; align-items: center; gap: 14px; padding: 0 16px 0 82px;
+    grid-row: 1; grid-column: 1 / -1; display: flex; align-items: center; gap: 14px; padding: 0 16px 0 82px;
     border-bottom: 1px solid var(--line); -webkit-app-region: drag;
   }
   .titlebar button { -webkit-app-region: no-drag; }
@@ -132,7 +132,10 @@
   .conn.retrying .dot { background: var(--needs); }
 
   /* Sidebar: where you are, the team's workspaces (repos) with their sessions, and your account */
-  .sidebar { display: flex; flex-direction: column; min-height: 0; border-right: 1px solid var(--line); padding: 12px 8px 0; }
+  .sidebar { grid-row: 3; grid-column: 1; display: flex; flex-direction: column; min-height: 0; border-right: 1px solid var(--line); padding: 12px 8px 0; }
+  /* Like Amoeba's: a bar under the title bar when an update is ready */
+  .update-bar { grid-row: 2; grid-column: 1 / -1; display: flex; align-items: center; gap: 8px; padding: 7px 12px 7px 16px; border-bottom: 1px solid var(--line); background: var(--canvas); font-size: 12.5px; }
+  .update-bar span { flex: 1; color: var(--muted); }
   .side-link, .ws, .ws-session {
     display: flex; align-items: center; gap: 9px; width: 100%; height: 30px; padding: 0 9px; border: 0; border-radius: 7px;
     background: none; color: var(--muted); text-align: left; cursor: pointer; font-weight: 500; white-space: nowrap;
@@ -164,7 +167,7 @@
   .me-name span { color: var(--faint); font-size: 11.5px; }
 
   /* Pages: Sessions and People */
-  .main { display: flex; flex-direction: column; min-width: 0; min-height: 0; background: var(--main); }
+  .main { grid-row: 3; grid-column: 2; display: flex; flex-direction: column; min-width: 0; min-height: 0; background: var(--main); }
   .page { flex: 1; min-height: 0; overflow: auto; padding: 22px 28px 28px; }
   .page-head { display: flex; align-items: center; gap: 10px; margin-bottom: 18px; }
   .page-head h1 { font-size: 18px; font-weight: 600; letter-spacing: -0.015em; }
@@ -515,6 +518,8 @@
   <button id="teamSwitch" class="team-switch" hidden><span id="teamLabel"></span><span id="teamWhere" class="where"></span><svg><use href="#chevron"/></svg></button>
   <div id="conn" class="conn"><span class="dot"></span><span id="connText">Not connected</span></div>
 </header>
+
+<div id="updateBar" class="update-bar" hidden><span id="updateText"></span><button id="updateLater" class="btn small">Later</button><button id="updateNow" class="btn small primary">Update now</button></div>
 
 <aside class="sidebar">
   <button id="navSessions" class="side-link on"><svg><use href="#grid"/></svg>Sessions</button>

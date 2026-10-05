@@ -65,6 +65,7 @@ async function stage(release, bundle, pid, env) {
 while kill -0 ${pid} 2>/dev/null; do sleep 0.3; done
 if mv "$1" "$1.old" && mv "$2" "$1"; then rm -rf "$1.old"; elif [ -d "$1.old" ] && [ ! -d "$1" ]; then mv "$1.old" "$1"; fi
 open "$1"
+rm -rf ${JSON.stringify(dir)} # the download, about 150 MB
 `, { mode: 0o755 });
   spawn('/bin/sh', [script, bundle, fresh], { detached: true, stdio: 'ignore' }).unref();
 }

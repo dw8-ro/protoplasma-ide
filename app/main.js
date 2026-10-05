@@ -8,6 +8,8 @@ const github = require('./github');
 const teams = require('./teams');
 const config = require('./config.json');
 const updates = require('./updates');
+const files = require('./files');
+const pty = require('node-pty');
 
 const AGENTS = ['claude', 'codex', 'opencode'];
 // How each agent CLI picks up its most recent conversation in the folder it starts in.
@@ -136,6 +138,8 @@ ipcMain.handle('startLane', signedIn(async o => {
   const lane = startLane({ hub: team.hub, team: team.id, token: session.token, session: String(o.session), cmd: o.cmd, cwd, args: o.resume ? RESUME[o.cmd] : [],
     open: !!o.open, env: shared ? { ...env, PROTO_SHARED_TEAM: '1' } : env, onRefused: reason => toWindow('lane:refused', lane.id, reason) });
   lanes.set(lane.id, lane);
+  folders.add(cwd);
+  lane.cwd = cwd;
   lane.term.onData(d => toWindow('lane:data', lane.id, d));
   lane.term.onExit(() => { lanes.delete(lane.id); toWindow('lane:exit', lane.id); });
   return { id: lane.id, repo: lane.repo };
@@ -145,6 +149,45 @@ ipcMain.handle('sessions:folder', (_, repo, name) => github.sessionFolderPath(St
 ipcMain.handle('sessions:removeFolder', signedIn(async (repo, name) => github.removeSessionFolder(String(repo), String(name), await agentEnv)));
 ipcMain.on('lane:resize', (_, id, cols, rows) => lanes.get(id)?.resize(cols, rows));
 ipcMain.on('lane:kill', (_, id) => lanes.get(id)?.term.kill());
+
+// ---- Code (see files.js) ----
+// The code view opens a session's folder on this Mac: where your agent runs, or the checkout the app made for it.
+// Nothing else can be read or written through it.
+const folders = new Set();
+let stopWatching = () => {};
+ipcMain.handle('code:root', (_, o) => {
+  const root = o.lane ? lanes.get(o.lane)?.cwd : o.repo ? github.sessionFolderPath(String(o.repo), String(o.name)) : null;
+  if (root) folders.add(root);
+  return root || null;
+});
+const inFolder = fn => async (_, root, ...args) => {
+  if (!folders.has(root)) throw new Error('That folder isn\'t open here.');
+  return fn(root, await agentEnv, ...args);
+};
+ipcMain.handle('code:list', inFolder((root, env) => files.list(root, env)));
+ipcMain.handle('code:status', inFolder((root, env) => files.status(root, env)));
+ipcMain.handle('code:read', inFolder((root, env, rel) => files.read(root, rel)));
+ipcMain.handle('code:committed', inFolder((root, env, rel) => files.committed(root, rel, env)));
+ipcMain.handle('code:write', inFolder((root, env, rel, text) => files.write(root, rel, text)));
+ipcMain.handle('code:search', inFolder((root, env, query) => files.search(root, query, env)));
+ipcMain.handle('code:commit', inFolder((root, env, message) => files.commitAndPush(root, message, env)));
+ipcMain.handle('code:watch', inFolder(root => {
+  stopWatching();
+  stopWatching = files.watch(root, paths => toWindow('code:changed', root, paths));
+}));
+
+// The Terminal tab: a plain shell in the session's folder, only on this Mac (never shared with the team).
+const shells = new Map();
+ipcMain.handle('shell:start', inFolder((root, env, cols, rows) => {
+  const term = pty.spawn(env.SHELL || '/bin/zsh', ['-l'], { name: 'xterm-256color', cwd: root, cols, rows, env: { ...env, COLORTERM: 'truecolor' } });
+  const id = String(term.pid);
+  shells.set(id, term);
+  term.onData(d => toWindow('shell:data', id, d));
+  term.onExit(() => { shells.delete(id); toWindow('shell:exit', id); });
+  return id;
+}));
+ipcMain.on('shell:write', (_, id, d) => shells.get(id)?.write(d));
+ipcMain.on('shell:resize', (_, id, cols, rows) => shells.get(id)?.resize(cols, rows));
 
 // Shortcuts live in the native menu so they work while a terminal has focus.
 const menuAction = action => () => toWindow('menu', action);
@@ -159,6 +202,8 @@ Menu.setApplicationMenu(Menu.buildFromTemplate([
     { label: 'New Session…', accelerator: 'CmdOrCtrl+N', click: menuAction('new-agent') },
     { label: 'Add an Agent', accelerator: 'CmdOrCtrl+Shift+L', click: menuAction('add-agent') },
     { label: 'Go to…', accelerator: 'CmdOrCtrl+K', click: menuAction('switcher') },
+    { label: 'Go to File…', accelerator: 'CmdOrCtrl+P', click: menuAction('go-to-file') },
+    { label: 'Save', accelerator: 'CmdOrCtrl+S', click: menuAction('save') },
     { label: 'Invite to Team…', accelerator: 'CmdOrCtrl+I', click: menuAction('invite') },
     { label: 'Switch Team…', accelerator: 'CmdOrCtrl+Shift+T', click: menuAction('teams') },
     { type: 'separator' },
@@ -170,7 +215,8 @@ Menu.setApplicationMenu(Menu.buildFromTemplate([
   { label: 'View', submenu: [
     ...(app.isPackaged ? [] : [{ role: 'reload' }, { role: 'toggleDevTools' }, { type: 'separator' }]),
     { label: 'Toggle Sidebar', accelerator: 'CmdOrCtrl+B', click: menuAction('sidebar') },
-    { label: 'Toggle Session Panel', accelerator: 'CmdOrCtrl+J', click: menuAction('panel') },
+    { label: 'Show Code', accelerator: 'CmdOrCtrl+Shift+E', click: menuAction('code') },
+    { label: 'Toggle Panel', accelerator: 'CmdOrCtrl+J', click: menuAction('panel') },
     { type: 'separator' },
     { role: 'resetZoom' }, { role: 'zoomIn' }, { role: 'zoomOut' },
   ] },
@@ -206,5 +252,6 @@ app.whenReady().then(() => {
 app.on('window-all-closed', () => app.quit());
 app.on('will-quit', () => {
   for (const lane of lanes.values()) lane.term.kill();
+  for (const term of shells.values()) term.kill();
   teams.stopAnnouncing();
 });

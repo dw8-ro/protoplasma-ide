@@ -52,4 +52,25 @@ contextBridge.exposeInMainWorld('proto', {
   onData: listen('lane:data'),
   onExit: listen('lane:exit'),
   onRefused: listen('lane:refused'),
+
+  // The code view: a session's folder on this Mac, and a plain shell in it.
+  code: {
+    root: o => ipcRenderer.invoke('code:root', o),
+    list: root => ipcRenderer.invoke('code:list', root),
+    status: root => ipcRenderer.invoke('code:status', root),
+    read: (root, path) => ipcRenderer.invoke('code:read', root, path),
+    committed: (root, path) => ipcRenderer.invoke('code:committed', root, path),
+    write: (root, path, text) => ipcRenderer.invoke('code:write', root, path, text),
+    search: (root, query) => ipcRenderer.invoke('code:search', root, query),
+    commit: (root, message) => ipcRenderer.invoke('code:commit', root, message),
+    watch: root => ipcRenderer.invoke('code:watch', root),
+    onChanged: listen('code:changed'),
+  },
+  shell: {
+    start: (root, cols, rows) => ipcRenderer.invoke('shell:start', root, cols, rows),
+    write: (id, d) => ipcRenderer.send('shell:write', id, d),
+    resize: (id, cols, rows) => ipcRenderer.send('shell:resize', id, cols, rows),
+    onData: listen('shell:data'),
+    onExit: listen('shell:exit'),
+  },
 });

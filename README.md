@@ -17,31 +17,59 @@
 </p>
 
 <p align="center">
-  <img src="docs/demo.gif" width="100%" alt="A session: Claude Code's / menu, a teammate's agent at work, an overlap warning and a comment">
+  <img src="docs/code.png" width="100%" alt="A session in Protoplasma: the repo's files in an editor, with your Claude Code agent and the session panel underneath">
 </p>
 
 ## Why
 
 Shared spaces for coding agents, like [Amoeba](https://useamoeba.com), drive the agents headlessly, so the CLI you know (its `/goal`, `/compact`, custom commands and skills) isn't there. Protoplasma runs the real interactive CLI in a real terminal and puts the team layer around it: who is working on what, which files are about to collide, and what each agent was last asked. It's laid out the way Amoeba is, so anyone coming from it already knows where things are.
 
+## How you use it
+
+1. **Sign in with GitHub** and create a team. Invite people by their GitHub username.
+2. **Start a session** with **New** (⌘N). Say what you're working on, pick one of your GitHub repos (or a folder on your Mac) and an agent: Claude Code, Codex or OpenCode. Protoplasma clones the repo, gives the session its own branch and folder, and opens your agent.
+3. **Talk to your agent.** It's the real CLI in a terminal, so you type to it exactly as you would in Terminal, slash commands included.
+4. **Open the code.** Click **Code**, or any file the session has changed, or press ⌘P. The repo opens in an editor with its files, search and source control, and your agent moves to a panel underneath. As the agent edits a file you have open, you see the change straight away. A **Terminal** tab beside the agent gives you a plain shell in the same folder.
+5. **Work alongside your team.** Everyone's agents in the session are listed on the right with what they were last asked. Open any of them full size or beside yours, leave comments, and keep notes the agents read. A file changed in two places is flagged for everyone, and Claude asks before touching it.
+6. **Ship it.** Write a message under source control and **Commit & Push**, then open a pull request.
+
+<p align="center">
+  <img src="docs/demo.gif" width="100%" alt="Asking an agent for a test, watching it being written in the editor, and a teammate's change to the same file being flagged">
+</p>
+
+<details>
+<summary>Keyboard shortcuts</summary>
+
+| Keys | Does |
+| --- | --- |
+| ⌘N | New session |
+| ⇧⌘L | Add an agent to this session |
+| ⌘K | Go to a session, page or action |
+| ⌘P | Go to a file |
+| ⇧⌘E | Show or hide the code |
+| ⌘S | Save the open file |
+| ⌘J | Hide the panel (under the code, or beside the agents) |
+| ⌘B | Hide the sidebar |
+| ⌘, | Settings |
+</details>
+
 ## What it does
 
-**The real agent, not a wrapper.** Each agent is the actual `claude`, `codex` or `opencode` process in a terminal on your Mac, running under your own account. Slash commands, permission modes and your settings all work as usual.
+**The real agent, not a wrapper.** Each agent is the actual `claude`, `codex` or `opencode` process on your Mac, under your own account. Your settings, permission modes and custom commands all work.
 
-**Sessions for every piece of work.** Pick a repo, say what you're working on, and the session gets its own branch and folder. It stays on the board after its agents stop, with **Resume** to pick the conversation back up and the last screen of every stopped agent one click away.
+**The code beside it.** An editor built on Monaco (the editor inside VS Code), with an Explorer that marks what changed since the last commit and which files teammates' agents are changing.
 
-**See the whole team.** The session panel lists everyone's agents with their status and latest prompt. Watch any of them full size, put one beside yours, and leave comments for the people in the session.
+**Sessions for every piece of work.** Each one keeps its goal, branch and comments, and stays on the board after its agents stop, with **Resume** to pick the conversation back up and the last screen of every stopped agent one click away.
 
-**Collisions caught early.** Every checkout reports the files it has changed, whether Claude, a shell command, Codex or a person changed them. A file changed in two places shows as an overlap for everyone, and Claude stops to ask before touching it.
+**Collisions caught early.** Every checkout reports the files it has changed, whoever or whatever changed them. A file changed in two places is an overlap for everyone, before anyone pushes.
 
 **Shared memory.** Notes for a repo or a single file. Claude gets them at the right moment: repo notes with every prompt, a file's notes just before it reads or edits it.
 
-**Built around GitHub.** Sign in with GitHub, invite people by username, pick from your repos and the ones shared with you, and see each session's pull requests and issues.
-
-**Quick to drive.** `⌘K` jumps to any session, page or action. `⌘B` and `⌘J` tuck away the sidebar and session panel. Dark, light or system theme, with your choice of terminal font.
-
 <p align="center">
-  <img src="docs/sessions.png" width="49%" alt="The Sessions page">
+  <img src="docs/session.png" width="100%" alt="Your Claude Code agent with its slash-command menu open, beside a teammate's agent, with the session panel">
+</p>
+<p align="center">
+  <img src="docs/sessions.png" width="49%" alt="The Sessions page, with sessions on Claude Code, Codex and OpenCode">
   <img src="docs/new-session.png" width="49%" alt="Starting a session from a GitHub repo">
 </p>
 <p align="center">
@@ -69,7 +97,7 @@ flowchart LR
 
 - **Lanes** (`src/lane.js`) run an agent in a pseudo-terminal and stream it to the hub, with its branch, uncommitted changes and status. Claude Code also gets per-run [HTTP hooks](https://code.claude.com/docs/en/hooks) through `--settings`; Codex and OpenCode report working or idle from their terminal activity.
 - **The hub** (`src/hub.js`) relays terminals, tracks who changed what, keeps sessions, notes and comments, and answers Claude's hooks with the session's goal, the team's notes and an `ask` before a conflicting edit or a risky push. It never runs agents and never sees your code.
-- **The app** (`app/`) is Electron. The renderer has no Node access, the main process only launches the three agent CLIs, and agents get a clean login-shell environment.
+- **The app** (`app/`) is Electron. The renderer has no Node access. The main process launches the agent CLIs (in a clean login-shell environment) and a shell for the Terminal tab, and the code view can only read and write inside a session's own folder.
 
 ## Working on the same code
 
@@ -133,7 +161,7 @@ The first message on every WebSocket carries a GitHub token and a team id; nothi
 
 ```bash
 npm test            # hub, lane and worktree tests (node:test)
-npm run e2e         # drives the real app through every main flow
+npm run e2e         # drives the real app through every main flow, the code view included
 npm run screenshot  # regenerates the images in docs/
 npm run demo        # records docs/demo.gif
 npm run icon        # renders the app icon from app/icon.svg
@@ -150,6 +178,7 @@ scripts/  end-to-end check, screenshots, demo and icon tooling
 
 - Sign-in asks for read-only access to your public GitHub profile, and nothing else. Repo access stays with the GitHub CLI on your Mac.
 - The hub keeps team names, members, notes, and sessions with their goals and comments. Terminal output passes through it and is held in memory only.
+- The code view reads and writes files on your Mac only. The hub never sees your code: teammates see which files changed, not what's in them.
 - Teams are invite-only, and removing someone disconnects them at once.
 - Letting teammates type into your agent lets them run commands on your Mac, so it's off unless you turn it on.
 - Teams hosted on your own Mac use plain HTTP; on a shared network, use an online team.

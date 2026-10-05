@@ -646,6 +646,7 @@ function go(next, repo = null) {
   render();
 }
 function openSession(name, laneId = null) {
+  if (name !== current) code.on = false; // a session opens on its agents; the code comes up when you open a file
   view = 'session';
   current = name;
   tab = 'agents';
@@ -755,11 +756,16 @@ function renderAlerts(lanes) {
     <button class="alert" data-session="${esc(l.session)}" data-lane="${esc(l.id)}"><b>${local.has(l.id) ? 'Your agent needs you' : `${esc(l.name)}'s agent needs you`}</b><span>${esc(l.session)}</span></button>`);
   const clashes = [...new Set(lanes.flatMap(l => l.overlaps))].map(file => {
     const who = lanes.filter(l => l.files.includes(file));
-    return `<button class="alert overlap" data-session="${esc(who[0].session)}"><b>${esc(whoEdited(who.map(l => l.name)))} edited</b><span>${esc(file)}</span></button>`;
+    return `<button class="alert overlap" data-session="${esc(who[0].session)}" data-file="${esc(file)}"><b>${esc(whoEdited(who.map(l => l.name)))} edited</b><span>${esc(file)}</span></button>`;
   });
   setHTML($('#alerts'), [...waiting, ...clashes].slice(0, 4).join(''));
 }
-$('#alerts').onclick = e => { const a = e.target.closest('[data-session]'); if (a) openSession(a.dataset.session, a.dataset.lane || null); };
+$('#alerts').onclick = e => {
+  const a = e.target.closest('[data-session]');
+  if (!a) return;
+  openSession(a.dataset.session, a.dataset.lane || null);
+  if (a.dataset.file) openFile(a.dataset.file);
+};
 
 // Notify when an agent we can answer needs input, or one of ours finishes, unless that session is already in view.
 // The Dock badge counts agents waiting on input.
@@ -892,7 +898,7 @@ function fileList(lanes, max = 4) {
   const files = [...editors.keys()].sort((a, b) => clash(b) - clash(a));
   if (!files.length) return '';
   return `<ul class="files">${files.slice(0, max).map(f => `
-    <li class="${clash(f) ? 'overlap' : ''}"><span class="path" title="${esc(f)}">${esc(f)}</span>${clash(f) ? `<span class="who">${esc(whoEdited(editors.get(f)))}</span>` : ''}</li>`).join('')}
+    <li class="${clash(f) ? 'overlap' : ''}" data-open-file="${esc(f)}" title="Open ${esc(f)}"><span class="path" title="${esc(f)}">${esc(f)}</span>${clash(f) ? `<span class="who">${esc(whoEdited(editors.get(f)))}</span>` : ''}</li>`).join('')}
     ${files.length > max ? `<li class="more">${files.length - max} more</li>` : ''}</ul>`;
 }
 
@@ -915,6 +921,7 @@ function renderRoom(lanes) {
     const t = terms.get(l.id) || createTerminal(l);
     const mine = local.has(l.id);
     t.el.hidden = !onStage.includes(l.id);
+    gpu(t, !t.el.hidden);
     t.el.style.setProperty('--c', colorFor(l.login));
     if (!mine && (t.term.cols !== l.cols || t.term.rows !== l.rows)) t.term.resize(l.cols, l.rows);
     const access = mine ? (l.open ? 'Teammates can type' : 'Only you can type') : (l.open ? 'You can type' : 'View only');
@@ -925,7 +932,7 @@ function renderRoom(lanes) {
       `${diffStat([l])}${behindChip(l)}${l.branch ? `<span class="branch" title="${esc(l.branch)}">${esc(l.branch)}</span>` : ''}` +
       `<span class="access" title="${access}">${access}</span>${mine && !stopping.has(l.id) ? `<button class="btn ghost small" data-stop="${esc(l.id)}">Stop</button>` : ''}`);
   }
-  if (!showing) return;
+  if (!showing) return renderCode();
 
   const shown = inRoom.find(l => l.id === focus);
   $('#roomTitle').textContent = current;
@@ -960,6 +967,7 @@ function renderRoom(lanes) {
   const watching = teamWatchers.filter(w => w.session === current && w.login !== me?.login);
   setHTML($('#roomWatching'), watching.length ? `<span class="stack">${watching.map(avatar).join('')}</span>watching` : '');
   fitTeammates();
+  renderCode();
 }
 
 // The panel beside the stage. Session: everyone here and their agents. Environment: the code they're working in.
@@ -997,6 +1005,7 @@ function openReplay(id) {
     replayTerm = new Terminal({ fontSize: prefs.fontSize, lineHeight: prefs.lineHeight, fontFamily: terminalFont(), theme: terminalTheme(),
       minimumContrastRatio: contrastFloor(), disableStdin: true, scrollback: 5000 });
     replayTerm.open($('#replayScreen'));
+    gpu({ term: replayTerm }, true);
   }
   replayTerm.reset();
   if (ws?.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ t: 'replay', id }));
@@ -1071,6 +1080,8 @@ function environment(inRoom, rec) {
 
 $('.panel-tabs').onclick = e => { if (e.target.dataset.panel) { panelTab = e.target.dataset.panel; render(); } };
 $('#panelBody').onclick = e => {
+  const file = e.target.closest('[data-open-file]');
+  if (file) return openFile(file.dataset.openFile);
   if (e.target.dataset.stop) return stopAgent(e.target.dataset.stop);
   if (e.target.dataset.uncomment) return sessionAction(() => proto.removeComment(currentTeam.key, current, e.target.dataset.uncomment));
   const replay = e.target.closest('[data-replay]');
@@ -1098,19 +1109,21 @@ $('#panelToggle').onclick = () => { panelHidden = !panelHidden; render(); };
 $('#backToAgents').onclick = () => { tab = 'agents'; render(); };
 $('#ghPanel').onclick = e => { const item = e.target.closest('[data-url]'); if (item) proto.openExternal(item.dataset.url); };
 
-// Remote terminals keep their owner's dimensions, so scale their font to fit next to ours.
-const CHAR_WIDTH = 0.61; // monospace advance width relative to font size
+// Remote terminals keep their owner's dimensions, so scale their font to fit their pane.
+const CHAR_WIDTH = 0.61, LINE_HEIGHT = 1.2; // monospace advance width, and line height at 1.0 spacing, relative to font size
+const fitFont = (term, box) => Math.max(8, Math.min(prefs.fontSize, Math.floor(Math.min(box.clientWidth / (term.cols * CHAR_WIDTH),
+  box.clientHeight / (term.rows * prefs.lineHeight * LINE_HEIGHT)) * 2) / 2));
 function fitTeammates() {
-  const shown = [...terms].filter(([, t]) => !t.el.hidden);
-  const theirs = shown.filter(([id]) => !local.has(id));
-  if (!theirs.length || $('#lanes').hidden || $('#room').hidden) return;
-  const room = $('#lanes').clientWidth - 40 - 12 * (shown.length - 1) - (shown.length > theirs.length ? 560 : 0);
-  for (const [, t] of theirs) {
-    const size = Math.max(8, Math.min(prefs.fontSize, Math.floor((room / theirs.length - 24) / (t.term.cols * CHAR_WIDTH) * 2) / 2));
+  for (const [id, t] of terms) {
+    if (t.el.hidden || local.has(id)) continue;
+    const size = fitFont(t.term, t.el.querySelector('.screen'));
     if (t.term.options.fontSize !== size) t.term.options.fontSize = size;
   }
 }
-addEventListener('resize', () => { fitTeammates(); fitReplay(); });
+// Window resizes, ⌘B, ⌘J and opening a second pane all change the room for terminals.
+const refit = new ResizeObserver(() => { fitTeammates(); fitReplay(); });
+refit.observe($('#lanes'));
+refit.observe($('#replayPanel'));
 setInterval(() => render(), 30_000); // keeps "2m ago" labels current between updates
 
 // ---- Shared memory ----
@@ -1163,6 +1176,18 @@ async function loadPanel() {
       </button>`).join('')}</div>` : `<p class="gh-empty">No open ${noun} in ${esc(roomRepo)}.</p>`;
   } catch (e) { html = `<p class="gh-empty">${esc(errorText(e))}</p>`; }
   if (tab === want.tab && roomRepo === want.repo) $('#ghPanel').innerHTML = html;
+}
+
+// Block characters (Claude's mascot, box drawing) only join up across line spacing with the WebGL renderer. A page
+// gets about 16 WebGL contexts, so only the terminals on screen have one; a lost context falls back to the DOM renderer.
+function gpu(t, on) {
+  if (on === !!t.webgl) return;
+  if (!on) { t.webgl.dispose(); t.webgl = null; return; }
+  try {
+    t.webgl = new WebglAddon.WebglAddon();
+    t.webgl.onContextLoss(() => gpu(t, false));
+    t.term.loadAddon(t.webgl);
+  } catch { t.webgl = null; }
 }
 
 function dropTerminal(id) {
@@ -1336,7 +1361,7 @@ setInterval(checkUpdates, 6 * 60 * 60_000);
 
 // ---- Quick switcher (⌘K): sessions, workspaces, pages and actions by name ----
 
-let switcherItems = [], switcherIndex = 0;
+let switcherItems = [], switcherIndex = 0, switcherSource;
 function switcherCandidates() {
   const list = sessionList(board);
   return [
@@ -1353,14 +1378,16 @@ function switcherCandidates() {
 }
 function renderSwitcher() {
   const query = $('#switcherInput').value.trim().toLowerCase();
-  switcherItems = switcherCandidates().filter(it => !query || it.text.toLowerCase().includes(query)).slice(0, 30);
+  switcherItems = switcherSource().filter(it => !query || it.text.toLowerCase().includes(query)).slice(0, 30);
   switcherIndex = Math.min(switcherIndex, Math.max(0, switcherItems.length - 1));
   $('#switcherList').innerHTML = switcherItems.map((it, i) => `
     <button class="switch-row ${i === switcherIndex ? 'on' : ''}" data-i="${i}" role="option" aria-selected="${i === switcherIndex}"><span>${esc(it.text)}</span><small>${esc(it.kind)}</small></button>`).join('')
     || '<p class="panel-empty">Nothing matches.</p>';
   $('#switcherList .on')?.scrollIntoView({ block: 'nearest' });
 }
-function openSwitcher() {
+function openSwitcher(source = switcherCandidates, placeholder = 'Go to a session, page or action') {
+  switcherSource = source;
+  $('#switcherInput').placeholder = placeholder;
   $('#switcherInput').value = '';
   switcherIndex = 0;
   renderSwitcher();
@@ -1414,7 +1441,10 @@ proto.onMenu(action => {
   if (action === 'switcher') return openSwitcher();
   if (action === 'new-agent') openNewAgent(view === 'session' ? current : undefined);
   if (action === 'add-agent') view === 'session' ? addAgent(prefs.agent) : openNewAgent();
-  if (action === 'panel' && view === 'session') $('#panelToggle').click();
+  if (action === 'panel' && view === 'session') code.on ? toggleDock() : $('#panelToggle').click();
+  if (action === 'code' && view === 'session') showCode(!code.on);
+  if (action === 'go-to-file') goToFile();
+  if (action === 'save') saveActive();
   if (action === 'invite' && ownsTeam(currentTeam)) $('#inviteBtn').click();
 });
 // Settings is a page, so Esc closes it the way it closes a dialog.

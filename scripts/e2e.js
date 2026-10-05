@@ -221,6 +221,44 @@ async function run(win, hub) {
     const secondSecret = secretOf(claudePids().find(pid => secretOf(pid) !== mySecret));
     check('its agent is told to pull first', /1 commit behind/.test((await hook(second, secondSecret, { hook_event_name: 'UserPromptSubmit', prompt: 'hi' }))?.additionalContext || ''));
 
+    // ---- the code view, the way Amoeba does it: the session's files in an editor, the agents in a panel underneath
+    const work = path.join(demoOwner, 'demo@fix-login');
+    const inShell = text => `(() => { const b = shells.get(code.root)?.term.buffer.active; if (!b) return false; for (let y = 0; y < b.length; y++) if (b.getLine(y).translateToString().includes(${JSON.stringify(text)})) return true; return false; })()`;
+    await js(`openSession('Fix Login'); showCode(); 0`);
+    check('Code opens the session\'s folder in an editor', await until(`code.on && code.root === ${JSON.stringify(work)} && !!editor && $('#room').classList.contains('coding') && /README\.md/.test($('#codeTree').textContent)`, 20000), await js('code.root'));
+    check('with the agents in a panel underneath', await js(`!$('#dockTabs').hidden && !$('#lanes').hidden && $('.stage').getBoundingClientRect().top > $('#code').getBoundingClientRect().top`));
+    await js(`goToFile(); 0`);
+    check('⌘P lists the folder\'s files', await until(`$('#switcher').open && /README\.md/.test($('#switcherList').textContent)`));
+    await js(`$('#switcher').close(); $('#codeTree [data-file="README.md"]').click(); 0`);
+    check('clicking a file opens it in a tab', await until(`code.active === 'README.md' && editor.getModel()?.getValue() === 'demo\\n' && /README\.md/.test($('#codeTabs').textContent)`));
+    await js(`editor.getModel().setValue('demo, edited here\\n'); 0`);
+    check('an edit marks the tab unsaved', await until(`$('#codeTabs .code-tab.on').classList.contains('dirty')`));
+    await js(`saveActive(); 0`);
+    check('saving writes it to disk', await until(`!$('#codeTabs .code-tab.on').classList.contains('dirty')`) && /edited here/.test(fs.readFileSync(path.join(work, 'README.md'), 'utf8')));
+    check('and the Explorer marks it changed', await until(`code.changes.get('README.md') === 'M' && $('#codeTree [data-file="README.md"] .state')?.textContent === 'M'`));
+    fs.writeFileSync(path.join(work, 'README.md'), 'demo, edited by the agent\n');
+    check('an agent\'s edit shows up in the open file', await until(`editor.getModel().getValue() === 'demo, edited by the agent\\n'`, 5000));
+    fs.writeFileSync(path.join(work, 'notes.txt'), 'new file from the agent\n');
+    check('and a new file appears in the Explorer', await until(`/notes\.txt/.test($('#codeTree').textContent) && code.changes.get('notes.txt') === 'U'`, 5000));
+    await js(`$('[data-code-view="search"]').click(); $('#codeQuery').value = 'FROM THE AGENT'; $('#codeQuery').dispatchEvent(new Event('input')); 0`);
+    check('Find in files finds text in any case', await until(`/notes\.txt/.test($('#codeHits').textContent) && !!$('#codeHits .hit')`));
+    await js(`$('#codeHits .hit').click(); 0`);
+    check('and opens the hit', await until(`code.active === 'notes.txt'`));
+    await js(`$('[data-code-view="changes"]').click(); 0`);
+    check('Source control lists the changes', await until(`/README\.md/.test($('#codeChanges').textContent) && /notes\.txt/.test($('#codeChanges').textContent) && $('#changeCount').textContent === '2'`));
+    await js(`$('#codeChanges [data-file="README.md"]').click(); 0`);
+    check('and shows a file\'s changes since the last commit', await until(`code.diff === 'README.md' && diffEditor.getModel()?.original.getValue() === 'demo\\n'`));
+    await js(`$('#dockTabs [data-dock="terminal"]').click(); 0`);
+    check('the Terminal tab opens a shell in the session\'s folder', await until(`shells.has(code.root) && !$('#shellPane').hidden && $('#lanes').hidden`));
+    await js(`proto.shell.write(shells.get(code.root).id, 'echo shell-$((6*7))\\r'); 0`);
+    check('and it runs commands', await until(inShell('shell-42'), 10000));
+    await js(`$('#dockTabs [data-dock="agent"]').click(); $('#commitMessage').value = 'Edit the readme'; $('#commitBtn').click(); 0`);
+    check('Commit & Push commits and pushes the session branch', await until(`/Committed and pushed/.test($('#commitNote').textContent)`, 20000), await js(`$('#commitNote').textContent`));
+    check('the branch is on the remote', git(clone, 'ls-remote', 'origin', 'session/fix-login').includes('session/fix-login'));
+    check('and nothing is left to commit', await until(`code.changes.size === 0 && $('#changeCount').hidden`, 5000));
+    await js(`showCode(false); 0`);
+    check('Code again goes back to just the agents', await until(`!$('#room').classList.contains('coding') && $('#code').hidden && $('#dockTabs').hidden`));
+
     // ---- with session branches off, a repo session works on the clone's own branch
     await js(`$('#settingsBtn').click(); $('input[data-pref=sessionBranches]').click(); $('#settingsDone').click();
       openNewAgent('Plain'); $('input[name=source][value=repo]').checked = true; syncSource(); $('#repo').value = 'protoplasma-e2e/demo'; $('#agentForm').requestSubmit()`);

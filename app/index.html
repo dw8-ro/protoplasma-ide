@@ -205,7 +205,9 @@
   }
   .card:hover { border-color: var(--line-strong); }
   .card-top { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
-  .card-title { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .card-title { flex: 1; min-width: 0; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .card { min-width: 0; }
+  .card-top .icon-btn { flex: none; }
   .card-people { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 12px; }
   .files { list-style: none; margin: 0; padding: 8px 0 0; border-top: 1px solid var(--line); display: grid; gap: 4px; }
   .files li { display: flex; justify-content: space-between; gap: 8px; font-size: 11.5px; color: var(--muted); }
@@ -347,7 +349,8 @@
   .code-side > div { overflow-y: auto; }
   .code-side > div > :not(.tree, .code-hits) { flex: none; }
   .code-side .tree, .code-side .code-hits { min-height: 120px; }
-  .code-input { margin: 0 12px 8px; width: calc(100% - 24px); }
+  .code-side .code-input { margin: 0 12px 8px; width: calc(100% - 24px); }
+  .code-side > div { overflow-x: hidden; }
   .hit mark { background: color-mix(in srgb, var(--needs) 30%, transparent); color: var(--text); border-radius: 2px; }
   .code-editor .ed { height: 100%; }
   .code-editor .ed[hidden] { display: none; }
@@ -749,6 +752,7 @@
   <section id="teamsView" hidden>
     <div class="sheet-head"><h2>Your teams</h2><div id="me" class="me"></div></div>
     <p class="lede">Open a team to see everyone's agents.</p>
+    <p id="removedNote" class="error" role="status" hidden></p>
     <div id="teamList" class="team-list"></div>
     <p id="teamsNote" class="fine"></p>
     <form id="createTeam" class="create">

@@ -116,4 +116,15 @@ test('pushed work still counts as changed until it reaches main, and main moving
   assert.equal(status.behind, 1, "main's new commit, although the branch's own upstream is up to date");
   assert.equal(status.ahead, 1);
   assert.equal(status.unpushed, 0);
+  assert.deepEqual(status.local, [], 'everything here is pushed');
+
+  // A teammate pushes to the same branch: that's behind, not a change of ours.
+  const mate = fs.mkdtempSync(path.join(os.tmpdir(), 'protoplasma-mate-'));
+  execFileSync('git', ['clone', '-q', '-b', 'session/ranked', git(alice, 'remote', 'get-url', 'origin'), mate], { env });
+  commit(mate, 'matchmaking.js', 'export const mm = 1;\n');
+  git(mate, 'push', '-q');
+  fs.writeFileSync(path.join(dir, 'mine.js'), 'export const mine = 1;\n');
+  const after = await gitStatus(dir, { env, fetch: true });
+  assert.deepEqual(after.local, ['mine.js'], "the teammate's new file isn't counted as ours");
+  assert.equal(after.behind, 2, "main's commit and the teammate's");
 });

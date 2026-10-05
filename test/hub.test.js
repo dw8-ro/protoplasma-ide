@@ -448,11 +448,23 @@ test('a session can be renamed while nothing runs in it, keeping its branch name
   assert.equal((await api('tok-bob', 'POST', `${route}/New%20Name`, { rename: 'x' })).status, 403);
 });
 
-test('removing someone from the team disconnects their agents', async () => {
+test('removing someone from the team disconnects their agents, and inviting them back lets the agents rejoin', async () => {
+  let refused = '';
+  const joined = nextState(lanes => lanes.some(l => l.session === 'comeback'));
+  const lane = startLaneHere({ hub: url, team: team.id, token: 'tok-bob', session: 'comeback', cmd: 'sh', onRefused: reason => { refused = reason; } });
+  await joined;
   const gone = nextState(lanes => !lanes.some(l => l.login === 'bob'));
   assert.equal((await api('tok-alice', 'DELETE', `/teams/${team.id}/members/bob`)).status, 200);
   await gone;
   assert.deepEqual((await api('tok-bob', 'GET', '/teams')).body, []);
+  await sleep(200);
+  assert.equal(refused, 'Removed from the team.');
+
+  const back = nextState(lanes => lanes.some(l => l.id === lane.id));
+  assert.equal((await api('tok-alice', 'POST', `/teams/${team.id}/members`, { login: 'bob' })).status, 200);
+  lane.rejoin(); // what the app does when it reconnects; otherwise it tries again on its own every 30 seconds
+  await back;
+  lane.term.kill();
 });
 
 test('members can leave, and the owner deletes a team once its agents have stopped', async () => {

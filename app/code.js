@@ -110,7 +110,8 @@ async function refreshFiles() {
   if (root !== code.root) return;
   code.files = files;
   code.tree = treeOf(files);
-  if (changes.length > code.changes.size) $('#commitNote').textContent = ''; // new changes since: the last result no longer applies
+  // New changes since, or a rebase that has ended: the note on screen no longer applies.
+  if (changes.length > code.changes.size || (code.underWay && !underWay)) $('#commitNote').textContent = '';
   code.branch = branch;
   code.unpushed = unpushed;
   code.underWay = underWay;
@@ -126,12 +127,12 @@ proto.code.onChanged((root, paths) => {
   clearTimeout(refreshTimer);
   refreshTimer = setTimeout(refreshFiles, 250);
 });
-async function reload(path) {
+async function reload(path, { force = false } = {}) {
   const entry = models.get(path);
   if (!entry?.model) return;
   const file = await proto.code.read(code.root, path);
   if (file.text == null || file.text === entry.model.getValue()) return;
-  if (isDirty(entry)) { entry.stale = true; return render(); }
+  if (isDirty(entry) && !force) { entry.stale = true; return render(); }
   entry.model.pushEditOperations([], [{ range: entry.model.getFullModelRange(), text: file.text }], () => null);
   entry.saved = entry.model.getAlternativeVersionId();
 }
@@ -293,7 +294,8 @@ function teammatesFiles() {
   const theirs = new Map();
   for (const l of hubLanes) {
     if (local.has(l.id) || same(l.login, me.login) || !(roomRepo ? l.repo === roomRepo : l.session === current)) continue;
-    for (const f of l.files) theirs.set(f, [...(theirs.get(f) || []), l]);
+    // On your branch, only what they haven't pushed: the rest is in your checkout too.
+    for (const f of l.branch && l.branch === code.branch ? l.local || l.files : l.files) theirs.set(f, [...(theirs.get(f) || []), l]);
   }
   return theirs;
 }
@@ -426,7 +428,7 @@ $('#codeTabs').onclick = e => {
 $('#codeTabs').onauxclick = e => { const tab = e.target.closest('[data-tab-file]'); if (e.button === 1 && tab) closeFile(tab.dataset.tabFile); };
 $('#codeBanner').onclick = async e => {
   const entry = models.get(code.active);
-  if ('reload' in e.target.dataset) { entry.saved = -1; entry.stale = false; await reload(code.active); }
+  if ('reload' in e.target.dataset) { entry.stale = false; await reload(code.active, { force: true }); }
   if ('keep' in e.target.dataset) entry.stale = false;
   render();
 };

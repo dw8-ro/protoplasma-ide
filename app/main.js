@@ -149,6 +149,7 @@ ipcMain.handle('sessions:folder', (_, repo, name) => github.sessionFolderPath(St
 ipcMain.handle('sessions:removeFolder', signedIn(async (repo, name) => github.removeSessionFolder(String(repo), String(name), await agentEnv)));
 ipcMain.on('lane:resize', (_, id, cols, rows) => lanes.get(id)?.resize(cols, rows));
 ipcMain.on('lane:kill', (_, id) => lanes.get(id)?.term.kill());
+ipcMain.on('lanes:rejoin', () => { for (const lane of lanes.values()) lane.rejoin(); }); // e.g. after being invited back
 
 // ---- Code (see files.js) ----
 // The code view opens a session's folder on this Mac: where your agent runs, or the checkout the app made for it.

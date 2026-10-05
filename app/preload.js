@@ -49,6 +49,7 @@ contextBridge.exposeInMainWorld('proto', {
   write: (id, d) => ipcRenderer.send('lane:write', id, d),
   resize: (id, cols, rows) => ipcRenderer.send('lane:resize', id, cols, rows),
   kill: id => ipcRenderer.send('lane:kill', id),
+  rejoin: () => ipcRenderer.send('lanes:rejoin'),
   onData: listen('lane:data'),
   onExit: listen('lane:exit'),
   onRefused: listen('lane:refused'),

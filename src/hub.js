@@ -120,7 +120,7 @@ function startHub({ port = 7681, host = '0.0.0.0', dataDir, owners, verifyUser =
       && touchedBy(o, l).has(f) && touchedBy(l, o).has(f)));
     return ls.map(l => ({ id: l.id, login: l.login, name: l.name, avatar: l.avatar, session: l.session, cmd: l.cmd, repo: l.repo, branch: l.branch,
       git: l.git, tree: l.tree, cols: l.cols, rows: l.rows, open: l.open, status: l.status, lastActive: l.lastActive, prompt: l.prompt || '',
-      typedBy: l.typedBy || '', typedAt: l.typedAt || null,
+      typedBy: l.typedBy || '', typedAt: l.typedAt || null, startedAt: l.startedAt, local: [...l.local],
       files: [...filesOf(l)], overlaps: overlaps(l) }));
   }
   const toTeam = (teamId, msg) => {
@@ -179,7 +179,8 @@ function startHub({ port = 7681, host = '0.0.0.0', dataDir, owners, verifyUser =
     const target = targets.find(t => PROTECTED_BRANCHES.includes(t));
     if (target && (deleting || refspecs.some(r => r.startsWith(':')))) return `this deletes ${target} on the remote, which your team shares. Confirm it's intended.`;
     const theirs = (deleting || refspecs.some(r => r.startsWith(':'))) && inSameRepo(lane).filter(o => targets.includes(o.branch));
-    if (theirs?.length) return `this deletes ${theirs[0].branch} on the remote, which ${[...new Set(theirs.map(o => o.name))].join(' and ')} also work on. Confirm it's intended.`;
+    const names = theirs && [...new Set(theirs.map(o => o.name))];
+    if (names?.length) return `this deletes ${theirs[0].branch} on the remote, which ${names.join(' and ')} also ${names.length === 1 ? 'works' : 'work'} on. Confirm it's intended.`;
     return target ? `this pushes straight to ${target}, which your team shares. Push a branch and open a pull request instead, or confirm.` : null;
   }
 
@@ -420,7 +421,7 @@ function startHub({ port = 7681, host = '0.0.0.0', dataDir, owners, verifyUser =
     const lane = { id: hello.id, team: team.id, login: user.login, name: user.name, avatar: user.avatar,
       session: str(hello.session, 60), cmd: str(hello.cmd, 40), root: str(hello.root, 1000), repo: str(hello.repo, 200), branch: str(hello.branch, 100),
       roots: (Array.isArray(hello.roots) ? hello.roots.slice(0, 4) : []).map(r => str(r, 1000)).filter(Boolean),
-      cols: hello.cols | 0 || 120, rows: hello.rows | 0 || 36, open: !!hello.open, status: str(hello.cmd, 40) === 'claude' ? 'idle' : 'running', lastActive: new Date().toISOString(), files: new Set(), changed: changedFiles(hello.git), local: changedFiles(hello.git?.local ? { changed: hello.git.local } : hello.git),
+      cols: hello.cols | 0 || 120, rows: hello.rows | 0 || 36, open: !!hello.open, status: str(hello.cmd, 40) === 'claude' ? 'idle' : 'running', lastActive: new Date().toISOString(), startedAt: existing?.startedAt || new Date().toISOString(), files: new Set(), changed: changedFiles(hello.git), local: changedFiles(hello.git?.local ? { changed: hello.git.local } : hello.git),
       git: gitStats(hello.git), history: typeof hello.history === 'string' ? hello.history.slice(-SCROLLBACK) : '', hookSecret: hello.hookSecret, ws };
     lane.tree = crypto.createHash('sha256').update(`${lane.login}\n${lane.root}`).digest('hex').slice(0, 12); // one per checkout
     lanes.set(lane.id, lane);

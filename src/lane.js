@@ -9,6 +9,7 @@ const WebSocket = require('ws');
 const { EDIT_TOOLS, appendScrollback } = require('./shared');
 
 const RECONNECT_MS = 3000;
+const REJOIN_MS = 30_000; // after being removed from a team: an invite back lets the agent rejoin
 const FLUSH_MS = 16; // TUIs redraw in many tiny writes; batch them into one message per frame
 const GIT_POLL_MS = 5000;
 const FETCH_EVERY = 12; // polls, so about once a minute
@@ -68,7 +69,7 @@ async function gitStatus(cwd, { env = process.env, fetch = false } = {}) {
   const [numstat, untracked, behind, ahead, unpushed, sinceUpstream] = await Promise.all([
     run('diff', '--numstat', base || 'HEAD'), run('ls-files', '--others', '--exclude-standard', '--full-name'),
     count('^HEAD', ...[main, upstream].filter(Boolean)), main ? count(`${main}..HEAD`) : 0, count(`${upstream || main || 'HEAD'}..HEAD`),
-    upstream ? run('diff', '--name-only', upstream) : null]);
+    upstream ? run('merge-base', 'HEAD', upstream).then(at => run('diff', '--name-only', at || upstream)) : null]);
   const changed = untracked ? untracked.split('\n') : [];
   const stats = { branch, added: 0, removed: 0, files: changed.length, behind: main || upstream ? behind : 0, ahead, unpushed };
   for (const line of numstat.split('\n').filter(Boolean)) {
@@ -126,8 +127,10 @@ function startLane({ hub, team, token, session, cmd = 'claude', args = [], cwd =
   const send = msg => ws?.readyState === WebSocket.OPEN && ws.send(JSON.stringify(msg));
 
   let lastGit = null; // last reported git stats
-  (function connect() {
-    if (exited) return;
+  let retry = null;
+  function connect() {
+    clearTimeout(retry);
+    if (exited || (ws && ws.readyState !== WebSocket.CLOSED)) return;
     ws = new WebSocket(`${hub.replace(/^http/, 'ws')}/lane`);
     ws.on('open', () => {
       unsent = ''; // history covers anything unsent
@@ -139,11 +142,14 @@ function startLane({ hub, team, token, session, cmd = 'claude', args = [], cwd =
       try { const m = JSON.parse(raw); if (m.t === 'in' && typeof m.d === 'string') write(m.d); } catch {}
     });
     ws.on('close', (code, reason) => {
-      if (code >= 4000) return onRefused?.(String(reason)); // auth failures: retrying won't help
-      setTimeout(connect, RECONNECT_MS); // keep working offline and rejoin when the hub is back
+      if (code >= 4000) onRefused?.(String(reason));
+      // Keep working offline and rejoin when the hub is back. Being removed from a team (4003) can be undone by an invite,
+      // so that's retried now and then; a failed sign-in (4000, 4001) won't fix itself.
+      if (code < 4000 || code === 4003) retry = setTimeout(connect, code === 4003 ? REJOIN_MS : RECONNECT_MS);
     });
     ws.on('error', () => {});
-  })();
+  }
+  connect();
 
   const flush = () => {
     flushTimer = null;
@@ -181,7 +187,7 @@ function startLane({ hub, team, token, session, cmd = 'claude', args = [], cwd =
 
   term.onExit(() => { exited = true; clearInterval(pollGit); clearTimeout(quiet); flush(); ws.close(); });
 
-  return { id, term, repo: hello.repo, write, resize(c, r) { term.resize(c, r); send({ t: 'size', cols: c, rows: r }); } };
+  return { id, term, repo: hello.repo, write, rejoin: connect, resize(c, r) { term.resize(c, r); send({ t: 'size', cols: c, rows: r }); } };
 }
 
 module.exports = { startLane, repoFromRemote, gitStatus, installed };

@@ -204,6 +204,15 @@ function clearTeamView() {
 }
 
 // Disconnects from the open team and empties the board.
+// Removed from the team (or it was deleted) while it was open: back to your teams, saying what happened.
+function removedFromTeam(reason) {
+  const team = currentTeam, running = [...local.values()].filter(l => l.teamKey === team?.key).length;
+  closeTeam();
+  showTeams(me);
+  $('#removedNote').hidden = false;
+  $('#removedNote').textContent = `${team ? `${team.name}: ` : ''}${reason}`
+    + (running ? ` Your agents there keep running on this Mac without being shared, and rejoin if you're invited back.` : '');
+}
 function closeTeam() {
   watchGeneration++;
   ws?.close();
@@ -231,8 +240,10 @@ $('#signout').onclick = async () => {
 const ownsTeam = team => team.owner.toLowerCase() === me.login.toLowerCase();
 async function leaveOrDeleteTeam(team) {
   const deleting = ownsTeam(team);
-  if (!confirm(deleting ? `Delete the team "${team.name}"? Its sessions and notes go with it, for everyone on it.`
-    : `Leave "${team.name}"? Your agents in it stop, and you'd need a new invite to come back.`)) return;
+  const unpushed = hubLanes.filter(l => local.get(l.id)?.teamKey === team.key && (l.git?.unpushed || l.local?.length)).length;
+  const work = unpushed ? ` Some of your agents' folders have work that isn't pushed; it stays on this Mac.` : '';
+  if (!confirm(deleting ? `Delete the team "${team.name}"? Its sessions and notes go with it, for everyone on it.${work}`
+    : `Leave "${team.name}"? Your agents in it stop, and you'd need a new invite to come back.${work}`)) return;
   try { await (deleting ? proto.deleteTeam(team.key) : proto.leaveTeam(team.key)); }
   catch (e) { return alert(errorText(e)); }
   for (const [id, o] of local) if (o.teamKey === team.key) proto.kill(id);
@@ -316,6 +327,7 @@ $('#createTeam').onsubmit = async e => {
 async function openTeam(team) {
   try {
     const conn = await proto.openTeam(team.key);
+    $('#removedNote').hidden = true;
     currentTeam = team;
     store.set('team', team.key);
     clearTeamView();
@@ -389,9 +401,11 @@ function watch(conn) {
         lookedAt = undefined;
         setConnection('live', 'Connected');
         for (const [id, t] of terms) if (!local.has(id)) t.term.reset();
+        if ([...local.values()].some(l => l.refused)) proto.rejoin(); // invited back: agents that were turned away try now
       }
       if (m.t === 'state') {
         hubLanes = m.lanes;
+        for (const l of hubLanes) if (local.get(l.id)?.refused) delete local.get(l.id).refused;
         teamWatchers = m.watchers || [];
         memories = m.memories || [];
         sessionRecords = m.sessions || [];
@@ -403,6 +417,7 @@ function watch(conn) {
     };
     socket.onclose = e => {
       if (generation !== watchGeneration) return;
+      if (e.code === 4003) return removedFromTeam(e.reason);
       if (e.code >= 4000) return setConnection('retrying', e.reason);
       setConnection('retrying', 'Hub unreachable, retrying');
       setTimeout(connect, 3000);
@@ -473,7 +488,9 @@ async function startAgent({ session, cmd, open, source, task, resume = false }) 
   openSession(session, id);
 }
 // The agent this Mac last ran in a session, if it can pick that conversation back up.
-const resumable = session => (sourceFor(session) && store.get(lastAgentKey(session))) || '';
+// Your agent that stopped most recently in this session, or else the last kind you started here.
+const resumable = session => (sourceFor(session) && (stoppedAgents.find(s => s.session === session && same(s.login, me.login))?.cmd
+  || store.get(lastAgentKey(session)))) || '';
 async function resumeAgent() {
   const cmd = resumable(current);
   if (!cmd) return openNewAgent(current);
@@ -656,6 +673,7 @@ toggleSidebar(store.get('sidebarHidden') === '1');
 $('#allWorkspaces').onclick = () => go('sessions');
 
 function go(next, repo = null) {
+  closeMenu();
   view = next;
   filterRepo = repo;
   current = null;
@@ -663,6 +681,7 @@ function go(next, repo = null) {
   render();
 }
 function openSession(name, laneId = null) {
+  closeMenu();
   if (name !== current) code.on = false; // a session opens on its agents; the code comes up when you open a file
   if (laneId) Object.assign(code, { dock: 'agent', dockHidden: false }); // and an agent asked for by name is brought forward
   view = 'session';
@@ -739,7 +758,7 @@ function stopAgent(id) {
 const statusOf = l => (stopping.has(l.id) ? 'stopping' : l.status);
 // "Claude Code", or "Claude Code 2" for a person's second agent of the same kind in a session.
 const agentLabel = (l, inRoom) => {
-  const nth = inRoom.filter(o => o.login === l.login && o.cmd === l.cmd).indexOf(l);
+  const nth = inRoom.filter(o => o.login === l.login && o.cmd === l.cmd).sort((a, b) => (a.startedAt || '~').localeCompare(b.startedAt || '~')).indexOf(l);
   return agentName(l.cmd) + (nth > 0 ? ` ${nth + 1}` : '');
 };
 
@@ -773,7 +792,7 @@ function renderAlerts(lanes) {
   const waiting = lanes.filter(l => l.status === 'needs you' && canAnswer(l)).map(l => `
     <button class="alert" data-session="${esc(l.session)}" data-lane="${esc(l.id)}"><b>${local.has(l.id) ? 'Your agent needs you' : `${esc(l.name)}'s agent is waiting for an answer`}</b><span>${esc(l.session)}</span></button>`);
   const clashes = [...new Set(lanes.flatMap(l => l.overlaps))].map(file => {
-    const who = lanes.filter(l => l.files.includes(file));
+    const who = lanes.filter(l => l.overlaps.includes(file));
     return `<button class="alert overlap" data-session="${esc(who[0].session)}" data-file="${esc(file)}"><b>${esc(whoEdited(who.map(l => l.name)))} edited</b><span>${esc(file)}</span></button>`;
   });
   setHTML($('#alerts'), [...waiting, ...clashes].slice(0, 4).join(''));
@@ -912,11 +931,11 @@ const lastActive = lanes => {
 function fileList(lanes, max = 4) {
   const editors = new Map();
   for (const l of lanes) for (const f of l.files) editors.set(f, [...(editors.get(f) || []), l.name]);
-  const clash = f => editors.get(f).length > 1 || lanes.some(l => l.overlaps.includes(f));
+  const clash = f => lanes.some(l => l.overlaps.includes(f));
   const files = [...editors.keys()].sort((a, b) => clash(b) - clash(a));
   if (!files.length) return '';
   return `<ul class="files">${files.slice(0, max).map(f => `
-    <li class="${clash(f) ? 'overlap' : ''}" data-open-file="${esc(f)}" title="Open ${esc(f)}"><span class="path" title="${esc(f)}">${esc(f)}</span>${clash(f) ? `<span class="who">${esc(whoEdited(editors.get(f)))}</span>` : ''}</li>`).join('')}
+    <li class="${clash(f) ? 'overlap' : ''}" data-open-file="${esc(f)}" title="Open ${esc(f)}"><span class="path" title="${esc(f)}">${esc(f)}</span>${clash(f) ? `<span class="who">${esc(whoEdited(lanes.filter(l => l.overlaps.includes(f)).map(l => l.name)))}</span>` : ''}</li>`).join('')}
     ${files.length > max ? `<li class="more">${files.length - max} more</li>` : ''}</ul>`;
 }
 
@@ -959,16 +978,17 @@ function renderRoom(lanes) {
   $('#roomTitle').textContent = current;
   $('#roomTask').hidden = !rec?.task;
   $('#roomTask').textContent = $('#roomTask').title = rec?.task || '';
-  $('#roomWho').hidden = !shown;
+  const ended = tab === 'replay' && stoppedAgents.find(s => s.id === replaying);
+  $('#roomWho').hidden = !shown && !ended;
   const several = shown && inRoom.filter(l => l.login === shown.login).length > 1;
-  $('#roomWho').textContent = !shown ? '' : (local.has(shown.id) ? 'Your agent' : `${shown.name}'s agent`) + (several ? `, ${agentLabel(shown, inRoom)}` : '');
+  $('#roomWho').textContent = ended ? `${whose(ended)} ${agentName(ended.cmd)}, stopped`
+    : !shown ? '' : (local.has(shown.id) ? 'Your agent' : `${shown.name}'s agent`) + (several ? `, ${agentLabel(shown, inRoom)}` : '');
   $('#myAgent').hidden = !shown || local.has(shown.id) || !inRoom.some(l => local.has(l.id));
   $('#newPane').hidden = tab !== 'agents' || inRoom.length < 2;
   $('#newPane').textContent = split ? 'Close pane' : 'New pane';
   $('#shareBtn').hidden = !ownsTeam(currentTeam);
   $('#panel').hidden = panelHidden;
   $('#backBar').hidden = tab === 'agents';
-  const ended = tab === 'replay' && stoppedAgents.find(s => s.id === replaying);
   $('#stageTitle').textContent = { memory: 'Memory', pulls: 'Pull requests', issues: 'Issues' }[tab]
     || (ended ? `${whose(ended)} ${agentName(ended.cmd)}, stopped ${ago(ended.endedAt)}` : tab === 'replay' ? 'Stopped agent' : '');
   $('#replayPanel').hidden = tab !== 'replay';
@@ -1070,7 +1090,8 @@ function agentCard(l, name) {
   const mine = local.has(l.id), [cls, label] = STATUS[statusOf(l)] || ['idle', l.status];
   // Like Amoeba's agent cards: the latest prompt, with an overlap flagged above it.
   const overlap = l.overlaps.length ? `Overlap in ${l.overlaps[0]}` : '';
-  const detail = l.prompt ? `“${l.prompt}”` : l.files.length ? `Edited ${l.files.slice(-2).join(', ')}`
+  const own = l.local || l.files; // not what it shares with a teammate's pushed branch
+  const detail = l.prompt ? `“${l.prompt}”` : own.length ? `Edited ${own.slice(-2).join(', ')}`
     : mine ? (l.open ? 'Teammates can type' : 'Only you can type') : (l.open ? 'You can type' : 'View only');
   return `
   <div class="agent-card ${[focus, split].includes(l.id) ? 'on' : ''}" data-focus="${esc(l.id)}" style="--c:${colorFor(l.login)}" role="button" tabindex="0">
@@ -1488,7 +1509,11 @@ proto.onMenu(action => {
   if (action === 'invite') ownsTeam(currentTeam) ? $('#inviteBtn').click() : alert(`Only the team's owner, ${currentTeam.owner}, can invite people.`);
 });
 // Settings is a page, so Esc closes it the way it closes a dialog.
-addEventListener('keydown', e => { if (e.key === 'Escape' && $('#settings').open && !document.querySelector('dialog:modal')) $('#settings').close(); });
+addEventListener('keydown', e => {
+  if (e.key !== 'Escape') return;
+  if (document.querySelector('.menu')) return closeMenu();
+  if ($('#settings').open && !document.querySelector('dialog:modal')) $('#settings').close();
+});
 
 // ---- Start ----
 

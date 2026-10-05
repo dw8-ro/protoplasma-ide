@@ -82,6 +82,7 @@ function gh(args, env) {
     if (!err) return resolve(out);
     const detail = errOut.trim().split('\n').pop() || err.message;
     reject(new Error(err.code === 'ENOENT' ? 'Install the GitHub CLI to use repos here: run "brew install gh", then "gh auth login".'
+      : /gh auth login|not logged in|GH_TOKEN/i.test(errOut) ? 'Sign in to the GitHub CLI to see your repos here: run "gh auth login" in Terminal. You can still type owner/name.'
       : /api\.github\.com|dial tcp|EOF|timed? ?out|connection/i.test(detail) ? 'Couldn\'t reach GitHub. Check your connection, or choose a folder instead.'
       : detail));
   }));

@@ -16,6 +16,7 @@ const code = {
   diff: null,           // the open path shown as changes since the last commit
   pane: 'explorer',     // explorer | search | changes
   expanded: new Set(),
+  unpushed: 0,          // commits on the branch that aren't pushed
   dock: 'agent',        // what the panel underneath shows: agent | terminal
   dockHidden: false,
 };
@@ -95,11 +96,12 @@ async function openRoot() {
 }
 async function refreshFiles() {
   const root = code.root;
-  const [files, { branch, changes }] = await Promise.all([proto.code.list(root), proto.code.status(root)]);
+  const [files, { branch, unpushed, changes }] = await Promise.all([proto.code.list(root), proto.code.status(root)]);
   if (root !== code.root) return;
   code.files = files;
   code.tree = treeOf(files);
   code.branch = branch;
+  code.unpushed = unpushed;
   code.changes = new Map(changes.map(c => [c.path, c.state]));
   code.changedDirs = new Set(changes.flatMap(c => c.path.split('/').slice(0, -1).map((_, i, parts) => parts.slice(0, i + 1).join('/'))));
   render();
@@ -137,7 +139,7 @@ async function modelFor(path) {
   return entry;
 }
 /** Opens a file in the code view, at `line`, or as its changes since the last commit with `diff`. */
-async function openFile(path, { line, diff = false } = {}) {
+async function openFile(path, { line, match, diff = false } = {}) {
   if (!await showCode()) return;
   if (!code.open.includes(path)) code.open.push(path);
   rememberView();
@@ -146,13 +148,13 @@ async function openFile(path, { line, diff = false } = {}) {
   for (const dir of path.split('/').slice(0, -1).map((_, i, parts) => parts.slice(0, i + 1).join('/'))) code.expanded.add(dir);
   await modelFor(path);
   render();
-  await showActive(line);
+  await showActive(line, match);
 }
 function rememberView() {
   const entry = models.get(code.active);
   if (entry?.model && code.diff !== code.active) entry.view = editor.saveViewState();
 }
-async function showActive(line) {
+async function showActive(line, match) {
   const entry = code.active && models.get(code.active);
   const [plain, changes] = $('#codeEditor').children;
   if (entry?.model && code.diff === code.active) {
@@ -166,7 +168,11 @@ async function showActive(line) {
     editor.setModel(entry?.model || null);
     if (entry?.view) editor.restoreViewState(entry.view);
     [plain.hidden, changes.hidden] = [false, true];
-    if (line) { editor.revealLineInCenter(line); editor.setPosition({ lineNumber: line, column: 1 }); }
+    if (line) {
+      const at = match ? entry.model.getLineContent(line).toLowerCase().indexOf(match.toLowerCase()) : -1;
+      editor.setSelection(at < 0 ? new monaco.Selection(line, 1, line, 1) : new monaco.Selection(line, at + 1, line, at + 1 + match.length));
+      editor.revealLineInCenter(line);
+    }
     if (entry?.model) editor.focus();
   }
   renderBanner();
@@ -186,6 +192,7 @@ function closeFile(path) {
 async function saveActive() {
   const path = code.active, entry = models.get(path);
   if (!code.on || !entry?.model) return;
+  if (entry.stale && !confirm(`${base(path)} changed on disk while you were editing it, probably by an agent. Save yours over that change?`)) return;
   try {
     await proto.code.write(code.root, path, entry.model.getValue());
     entry.saved = entry.model.getAlternativeVersionId();
@@ -218,6 +225,10 @@ function renderCode() {
   $('#changeCount').hidden = !code.changes.size;
   $('#changeCount').textContent = code.changes.size;
   $('#codeBranch').textContent = code.branch;
+  $('#codeBranch').title = code.branch;
+  const pushOnly = !code.changes.size && code.unpushed > 0;
+  $('#commitBtn').textContent = pushOnly ? `Push ${code.unpushed} commit${code.unpushed === 1 ? '' : 's'}` : 'Commit & Push';
+  $('#commitMessage').hidden = pushOnly;
   $('#codeWelcomeText').textContent = code.root ? 'Start working in this repository'
     : 'This session\'s code isn\'t on this Mac yet. Add an agent and its folder opens here.';
   $('#codeWelcome').hidden = !!code.active;
@@ -294,10 +305,17 @@ $('#codeQuery').oninput = () => {
     const byFile = new Map();
     for (const hit of hits) byFile.set(hit.path, [...(byFile.get(hit.path) || []), hit]);
     setHTML($('#codeHits'), [...byFile].map(([path, list]) => `<div class="hit-file" title="${esc(path)}">${esc(path)}</div>`
-      + list.map(h => `<button class="hit" data-file="${esc(path)}" data-line="${h.line}"><b>${h.line}</b>${esc(h.text)}</button>`).join('')).join('')
+      + list.map(h => `<button class="hit" data-file="${esc(path)}" data-line="${h.line}"><b>${h.line}</b>${snippet(h.text, query)}</button>`).join('')).join('')
       || (query.trim() ? '<p class="panel-empty">Nothing found.</p>' : ''));
   }, 200);
 };
+// The line from just before the match, with the match marked.
+function snippet(text, query) {
+  const at = text.toLowerCase().indexOf(query.toLowerCase());
+  if (at < 0) return esc(text);
+  const from = Math.max(0, at - 16);
+  return `${from ? '…' : ''}${esc(text.slice(from, at))}<mark>${esc(text.slice(at, at + query.length))}</mark>${esc(text.slice(at + query.length))}`;
+}
 // ⌘P: the Go to list, with the folder's files.
 function goToFile() {
   if (view !== 'session') return;
@@ -307,9 +325,10 @@ function goToFile() {
 // ---- Commit & Push ----
 
 async function commit() {
-  const message = $('#commitMessage').value.trim(), note = $('#commitNote');
-  if (!message) return $('#commitMessage').focus();
-  if (!code.changes.size) { note.textContent = 'There\'s nothing to commit.'; return; }
+  const pushOnly = !code.changes.size && code.unpushed > 0;
+  const message = pushOnly ? '' : $('#commitMessage').value.trim(), note = $('#commitNote');
+  if (!pushOnly && !message) return $('#commitMessage').focus();
+  if (!pushOnly && !code.changes.size) { note.textContent = 'There\'s nothing to commit.'; return; }
   if ([...models.values()].some(isDirty)) { note.textContent = 'Save your open files first (⌘S).'; return; }
   if (/^(main|master)$/.test(code.branch) && !confirm(`Commit and push straight to ${code.branch}?`)) return;
   $('#commitBtn').disabled = true;
@@ -321,7 +340,8 @@ async function commit() {
     note.textContent = errorText(e);
   } finally {
     $('#commitBtn').disabled = false;
-    refreshFiles();
+    await refreshFiles();
+    if (code.diff) { code.diff = null; render(); showActive(); } // its changes are committed now
   }
 }
 $('#commitBtn').onclick = commit;
@@ -379,7 +399,7 @@ $('.code-side').onclick = e => {
     code.expanded.has(dir) ? code.expanded.delete(dir) : code.expanded.add(dir);
     return render();
   }
-  openFile(row.dataset.file, { line: Number(row.dataset.line) || undefined, diff: code.pane === 'changes' });
+  openFile(row.dataset.file, { line: Number(row.dataset.line) || undefined, match: row.dataset.line && $('#codeQuery').value, diff: code.pane === 'changes' });
 };
 $('#codeTabs').onclick = e => {
   const close = e.target.closest('[data-close-file]');
@@ -411,7 +431,7 @@ $('#dockTabs').onclick = e => {
 $('#dockGrip').onpointerdown = e => {
   const body = $('.room-body'), top = body.getBoundingClientRect().top, height = body.clientHeight;
   e.preventDefault();
-  const move = ev => body.style.setProperty('--dock', `${Math.round(Math.min(height - 160, Math.max(140, height - (ev.clientY - top))))}px`);
+  const move = ev => body.style.setProperty('--dock', `${Math.round(Math.min(height - 220, Math.max(220, height - (ev.clientY - top))))}px`);
   const up = () => { removeEventListener('pointermove', move); removeEventListener('pointerup', up); store.set('dock', body.style.getPropertyValue('--dock')); };
   addEventListener('pointermove', move);
   addEventListener('pointerup', up);

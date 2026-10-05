@@ -96,6 +96,17 @@ test('teammates can type into open agents only', async () => {
   await sleep(500);
   assert.match(outputOf(alice), /ping/);
   assert.doesNotMatch(outputOf(bob), /nope/);
+  const now = nextState(() => true);
+  watcher.send(JSON.stringify({ t: 'look', session: null })); // any state will do
+  assert.equal((await now).find(l => l.id === alice.id).typedBy, '', 'typing into your own agent isn\'t worth a note');
+
+  // Bob types into Alice's agent: she's told who.
+  const bobs = await connectWatcher('tok-bob', team.id);
+  const told = nextState(lanes => lanes.find(l => l.id === alice.id)?.typedBy === 'Bob');
+  bobs.send(JSON.stringify({ t: 'in', lane: alice.id, d: 'from bob\r' }));
+  const lane = (await told).find(l => l.id === alice.id);
+  assert.ok(Date.now() - Date.parse(lane.typedAt) < 5000);
+  bobs.close();
 });
 
 test('hooks only accept the agent\'s own secret', async () => {
@@ -197,7 +208,7 @@ test('git progress and branch switches reach teammates', async () => {
   const updated = nextState(lanes => lanes.some(l => l.id === 'git-lane' && l.git?.added === 3));
   lane.send(JSON.stringify({ t: 'git', branch: 'fix/lobby', added: 3, removed: 1, files: 2 }));
   const gitLane = (await updated).find(l => l.id === 'git-lane');
-  assert.deepEqual(gitLane.git, { added: 3, removed: 1, files: 2, behind: 0, ahead: 0 });
+  assert.deepEqual(gitLane.git, { added: 3, removed: 1, files: 2, behind: 0, ahead: 0, unpushed: 0 });
   assert.equal(gitLane.branch, 'fix/lobby');
   const gone = nextState(lanes => !lanes.some(l => l.id === 'git-lane'));
   lane.close();
@@ -230,10 +241,17 @@ test('pushing to main or force-pushing needs a person to confirm', async () => {
   for (const command of ['git push origin main', 'git push origin HEAD:main', 'git push origin session/fix:refs/heads/master']) {
     assert.match((await push(onBranch, command)).permissionDecisionReason, /straight to (main|master)/, command);
   }
-  for (const command of ['git push -f origin session/fix', 'git push --force', 'git push origin +session/fix']) {
+  for (const command of ['git push -f origin session/fix', 'git push --force', 'git push origin +session/fix', 'git push --force-with-lease origin session/fix']) {
     assert.match((await push(onBranch, command)).permissionDecisionReason, /force-push/, command);
   }
-  for (const command of ['git push', 'git push -u origin session/fix', 'git push --force-with-lease origin session/fix', 'git status', 'echo push main']) {
+  for (const command of ['git push --all origin', 'git push --mirror']) {
+    assert.match((await push(onBranch, command)).permissionDecisionReason, /every branch/, command);
+  }
+  assert.match((await push(onBranch, "git push origin 'HEAD:refs/heads/main'")).permissionDecisionReason, /straight to main/, 'quoted refspec');
+  for (const command of ['git push origin --delete main', 'git push origin :main']) {
+    assert.match((await push(onBranch, command)).permissionDecisionReason, /deletes main/, command);
+  }
+  for (const command of ['git push', 'git push -u origin session/fix', 'git push origin --delete session/old', 'git status', 'echo push main']) {
     assert.equal(await push(onBranch, command), null, `fine: ${command}`);
   }
   await onMain.close();
@@ -312,6 +330,19 @@ test('uncommitted changes count as edits, whoever or whatever made them', async 
   assert.equal((await twinRes.json().catch(() => null))?.hookSpecificOutput?.permissionDecision, undefined,
     "a change in its own folder isn't blamed on the other agent there");
   await Promise.all([one.close(), two.close(), twin.close()]);
+});
+
+test('a teammate\'s file is recognised whichever way the path to it is written', async () => {
+  // macOS resolves /var to /private/var: git reports one, an agent's shell may use the other.
+  const one = await rawLane('sym-one', { repo: 'acme/sym', root: '/private/var/one', roots: ['/private/var/one', '/var/one'] });
+  const two = await rawLane('sym-two', { repo: 'acme/sym', root: '/private/var/two', roots: ['/private/var/two', '/var/two'] });
+  one.socket.send(JSON.stringify({ t: 'git', branch: 'session/x', added: 1, removed: 0, files: 1, behind: 0, ahead: 0, changed: ['src/a.ts'] }));
+  await nextState(lanes => lanes.find(l => l.id === 'sym-one')?.files.includes('src/a.ts'));
+  for (const file_path of ['/var/two/src/a.ts', '/private/var/two/src/a.ts', 'src/a.ts']) {
+    const out = await two.hook({ hook_event_name: 'PreToolUse', tool_name: 'Edit', tool_input: { file_path }, cwd: '/var/two' });
+    assert.equal(out?.permissionDecision, 'ask', file_path);
+  }
+  await Promise.all([one.close(), two.close()]);
 });
 
 test('a Codex or OpenCode agent is working while it prints and idle once it goes quiet', async () => {

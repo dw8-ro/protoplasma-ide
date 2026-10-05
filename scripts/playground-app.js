@@ -77,7 +77,8 @@ http.createServer(async (req, res) => {
     if (route === '/key') {
       const keyCode = KEYS[String(body.key).toLowerCase()] || body.key;
       wc.sendInputEvent({ type: 'keyDown', keyCode, modifiers: body.modifiers || [] });
-      if (String(keyCode).length === 1 && !(body.modifiers || []).some(m => /meta|cmd|control|ctrl/.test(m))) wc.sendInputEvent({ type: 'char', keyCode, modifiers: body.modifiers || [] });
+      const char = keyCode === 'Return' ? '\r' : String(keyCode).length === 1 ? keyCode : null; // Enter's "char" is what submits a form
+      if (char && !(body.modifiers || []).some(m => /meta|cmd|control|ctrl/.test(m))) wc.sendInputEvent({ type: 'char', keyCode: char, modifiers: body.modifiers || [] });
       wc.sendInputEvent({ type: 'keyUp', keyCode, modifiers: body.modifiers || [] });
       return send(200, { ok: true });
     }

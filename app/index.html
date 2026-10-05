@@ -314,6 +314,7 @@
   .lane-bar .state.needs { color: var(--needs); }
   .lane-bar .state.overlap { color: var(--overlap); }
   .lane-bar .branch { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; color: var(--faint); font: 11.5px var(--mono); }
+  .lane-bar .typed { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; color: var(--needs); }
   .lane-bar .access { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; margin-left: auto; color: var(--faint); }
   /* Side by side, panes are narrow: the branch shortens first, then "Only you can type" goes. */
   .lane { container-type: inline-size; }
@@ -341,9 +342,13 @@
   .code-side { flex: none; width: 248px; display: flex; flex-direction: column; min-height: 0; border-right: 1px solid var(--line); }
   .code-side > div { flex: 1; min-height: 0; display: flex; flex-direction: column; }
   .code-side > div[hidden] { display: none; }
-  .code-side-head { display: flex; gap: 8px; align-items: baseline; padding: 13px 14px 9px; color: var(--muted); font-size: 12px; font-weight: 600; }
-  .code-side-head .mono { overflow: hidden; text-overflow: ellipsis; color: var(--faint); font: 400 11px var(--mono); }
-  .code-input { margin: 0 12px 8px; width: auto; }
+  .code-side-head { display: flex; gap: 8px; align-items: baseline; padding: 13px 14px 9px; color: var(--muted); font-size: 12px; font-weight: 600; white-space: nowrap; }
+  .code-side-head .mono { min-width: 0; overflow: hidden; text-overflow: ellipsis; color: var(--faint); font: 400 11px var(--mono); }
+  .code-side > div { overflow-y: auto; }
+  .code-side > div > :not(.tree, .code-hits) { flex: none; }
+  .code-side .tree, .code-side .code-hits { min-height: 120px; }
+  .code-input { margin: 0 12px 8px; width: calc(100% - 24px); }
+  .hit mark { background: color-mix(in srgb, var(--needs) 30%, transparent); color: var(--text); border-radius: 2px; }
   .code-editor .ed { height: 100%; }
   .code-editor .ed[hidden] { display: none; }
   textarea.code-input { resize: none; padding: 7px 10px; border: 1px solid var(--line-strong); border-radius: 8px; background: var(--canvas); color: var(--text); font: 12.5px/1.45 var(--ui); }

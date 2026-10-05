@@ -172,6 +172,9 @@ const stopCellArt = () => cancelAnimationFrame(cellFrame);
 let signInUrl;
 
 $('#start').oncancel = e => { if (!currentTeam) e.preventDefault(); };
+// Chromium lets Escape close a dialog anyway when there's been no click or key since it opened; without a team the
+// window has nothing to show, so it comes straight back.
+$('#start').addEventListener('close', () => requestAnimationFrame(() => { if (!currentTeam && !$('#start').open) $('#start').showModal(); }));
 $('#closeStart').onclick = () => $('#start').close();
 $('#signin').onclick = async () => {
   try {
@@ -647,6 +650,7 @@ function go(next, repo = null) {
 }
 function openSession(name, laneId = null) {
   if (name !== current) code.on = false; // a session opens on its agents; the code comes up when you open a file
+  if (laneId) Object.assign(code, { dock: 'agent', dockHidden: false }); // and an agent asked for by name is brought forward
   view = 'session';
   current = name;
   tab = 'agents';
@@ -753,7 +757,7 @@ function render() {
 const canAnswer = l => local.has(l.id) || l.open;
 function renderAlerts(lanes) {
   const waiting = lanes.filter(l => l.status === 'needs you' && canAnswer(l)).map(l => `
-    <button class="alert" data-session="${esc(l.session)}" data-lane="${esc(l.id)}"><b>${local.has(l.id) ? 'Your agent needs you' : `${esc(l.name)}'s agent needs you`}</b><span>${esc(l.session)}</span></button>`);
+    <button class="alert" data-session="${esc(l.session)}" data-lane="${esc(l.id)}"><b>${local.has(l.id) ? 'Your agent needs you' : `${esc(l.name)}'s agent is waiting for an answer`}</b><span>${esc(l.session)}</span></button>`);
   const clashes = [...new Set(lanes.flatMap(l => l.overlaps))].map(file => {
     const who = lanes.filter(l => l.files.includes(file));
     return `<button class="alert overlap" data-session="${esc(who[0].session)}" data-file="${esc(file)}"><b>${esc(whoEdited(who.map(l => l.name)))} edited</b><span>${esc(file)}</span></button>`;
@@ -922,6 +926,8 @@ function renderRoom(lanes) {
     const mine = local.has(l.id);
     t.el.hidden = !onStage.includes(l.id);
     gpu(t, !t.el.hidden);
+    if (!t.el.hidden && !t.shown) requestAnimationFrame(() => t.term.scrollToBottom()); // output while hidden can leave it scrolled up
+    t.shown = !t.el.hidden;
     t.el.style.setProperty('--c', colorFor(l.login));
     if (!mine && (t.term.cols !== l.cols || t.term.rows !== l.rows)) t.term.resize(l.cols, l.rows);
     const access = mine ? (l.open ? 'Teammates can type' : 'Only you can type') : (l.open ? 'You can type' : 'View only');
@@ -930,6 +936,7 @@ function renderRoom(lanes) {
     setHTML(t.label, mine ? 'Me' : esc(l.name));
     setHTML(t.bar, `<span class="tag" title="${esc(agent)}">${esc(agent)}</span><span class="state ${cls}"><span class="dot"></span>${esc(label)}</span>` +
       `${diffStat([l])}${behindChip(l)}${l.branch ? `<span class="branch" title="${esc(l.branch)}">${esc(l.branch)}</span>` : ''}` +
+      (mine && l.typedBy && Date.now() - Date.parse(l.typedAt) < 10 * 60_000 ? `<span class="typed" title="${esc(l.typedBy)} typed into this agent">${esc(l.typedBy)} typed, ${ago(l.typedAt)}</span>` : '') +
       `<span class="access" title="${access}">${access}</span>${mine && !stopping.has(l.id) ? `<button class="btn ghost small" data-stop="${esc(l.id)}">Stop</button>` : ''}`);
   }
   if (!showing) return renderCode();
@@ -1063,12 +1070,16 @@ function agentCard(l, name) {
 function environment(inRoom, rec) {
   const branches = [...new Set(inRoom.map(l => l.branch).filter(Boolean))];
   const behind = Math.max(0, ...inRoom.map(l => l.git?.behind || 0));
+  const mine = inRoom.filter(l => local.has(l.id)); // your checkout's commits; teammates' are on their own Macs
+  const ahead = Math.max(0, ...mine.map(l => l.git?.ahead || 0)), unpushed = Math.max(0, ...mine.map(l => l.git?.unpushed || 0));
   const github = roomRepo && `https://github.com/${roomRepo}`;
   const row = (label, value, action = '') => `<${action ? 'button' : 'div'} class="panel-row" ${action}><b>${label}</b><span class="mono">${value}</span></${action ? 'button' : 'div'}>`;
   return [
     row('Changes', diffStat(inRoom) || 'None'),
     branches.length ? row('Branch', esc(branches.join(', '))) : '',
     behind ? row('Behind', `${behind} commit${behind === 1 ? '' : 's'}`) : '',
+    ahead ? row('Ahead of main', `${ahead} commit${ahead === 1 ? '' : 's'}`) : '',
+    unpushed ? row('Not pushed', `${unpushed} commit${unpushed === 1 ? '' : 's'}`) : '',
     fileList(inRoom, 8),
     github ? '<div class="panel-label">GitHub</div>' + row('Repository', esc(roomRepo), `data-url="${esc(github)}"`)
       + row('Pull requests', '', 'data-tab="pulls"') + row('Issues', '', 'data-tab="issues"')
@@ -1228,6 +1239,8 @@ function createTerminal(l) {
     term.onData(d => ws?.readyState === WebSocket.OPEN && ws.send(JSON.stringify({ t: 'in', lane: l.id, d })));
   }
 
+  // A click anywhere in the pane, not just on the text, is a click in the terminal.
+  el.addEventListener('mousedown', e => { if (!e.target.closest('.xterm, .lane-bar')) setTimeout(() => term.focus()); });
   const t = { term, el, label: el.querySelector('.lane-label'), bar: el.querySelector('.lane-bar'), resizer, refit };
   terms.set(l.id, t);
   if (pending.has(l.id)) { term.write(pending.get(l.id)); pending.delete(l.id); }

@@ -61,7 +61,7 @@ Shared spaces for coding agents, like [Amoeba](https://useamoeba.com), drive the
 
 **Sessions for every piece of work.** Each one keeps its goal, branch and comments, and stays on the board after its agents stop, with **Resume** to pick the conversation back up and the last screen of every stopped agent one click away.
 
-**Collisions caught early.** Every checkout reports the files it has changed, whoever or whatever changed them. A file changed in two places is an overlap for everyone, before anyone pushes.
+**Collisions caught early.** Every checkout reports the files it has changed compared with main, committed or not, whoever or whatever changed them. A file changed in two places is an overlap for everyone, before it turns into a merge conflict.
 
 **Shared memory.** Notes for a repo or a single file. Claude gets them at the right moment: repo notes with every prompt, a file's notes just before it reads or edits it.
 
@@ -95,7 +95,7 @@ flowchart LR
   hub -- live state --> appB
 ```
 
-- **Lanes** (`src/lane.js`) run an agent in a pseudo-terminal and stream it to the hub, with its branch, uncommitted changes and status. Claude Code also gets per-run [HTTP hooks](https://code.claude.com/docs/en/hooks) through `--settings`; Codex and OpenCode report working or idle from their terminal activity.
+- **Lanes** (`src/lane.js`) run an agent in a pseudo-terminal and stream it to the hub, with its branch, what it has changed compared with main, and its status. Claude Code also gets per-run [HTTP hooks](https://code.claude.com/docs/en/hooks) through `--settings`; Codex and OpenCode report working or idle from their terminal activity.
 - **The hub** (`src/hub.js`) relays terminals, tracks who changed what, keeps sessions, notes and comments, and answers Claude's hooks with the session's goal, the team's notes and an `ask` before a conflicting edit or a risky push. It never runs agents and never sees your code.
 - **The app** (`app/`) is Electron. The renderer has no Node access. The main process launches the agent CLIs (in a clean login-shell environment) and a shell for the Terminal tab, and the code view can only read and write inside a session's own folder.
 
@@ -104,7 +104,8 @@ flowchart LR
 1. **A branch per session.** A session started from a GitHub repo gets its own git worktree on `session/<name>`, branched from the latest default branch, or continuing a teammate's pushed branch. It has no upstream, so a bare `git push` can't land on `main`. Names that differ only in case or punctuation are the same session.
 2. **Overlap warnings.** A file changed in two checkouts of the same repo is flagged for everyone, and Claude is asked before it edits one.
 3. **Push guard.** Claude is asked before pushing to `main` or `master`, or force-pushing, when the team has other people. Codex and OpenCode can't be asked, so in repos the app cloned a `pre-push` hook stops them instead. People pushing from their own terminal aren't affected.
-4. **Behind notice.** Each lane fetches about once a minute. A branch that has fallen behind shows `↓3`, and Claude is told to pull before changing more.
+4. **Behind notice.** Each lane fetches about once a minute. A branch missing commits from main (or from its own pushed copy) shows `↓3`, and Claude is told to pull before changing more.
+5. **Shared session branches.** Everyone in a session works on `session/<name>`, each in their own checkout. **Commit & Push** puts your commit on top of whatever a teammate pushed first, and stops to let you sort it out if you both changed the same lines.
 
 Work then reaches `main` the usual way, through a pull request. These layers make collisions visible early; they don't replace review.
 
@@ -181,7 +182,7 @@ scripts/  end-to-end check, screenshots, demo and icon tooling
 - The hub keeps team names, members, notes, and sessions with their goals and comments. Terminal output passes through it and is held in memory only.
 - The code view reads and writes files on your Mac only. The hub never sees your code: teammates see which files changed, not what's in them.
 - Teams are invite-only, and removing someone disconnects them at once.
-- Letting teammates type into your agent lets them run commands on your Mac, so it's off unless you turn it on.
+- Letting teammates type into your agent lets them run commands on your Mac, so it's off unless you turn it on, and your agent shows who last typed into it.
 - Teams hosted on your own Mac use plain HTTP; on a shared network, use an online team.
 
 ## Roadmap

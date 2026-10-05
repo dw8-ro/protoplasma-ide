@@ -70,9 +70,11 @@ test('git status reports changes and how far behind the branch is', async () => 
   const status = await gitStatus(aliceTree, { env, fetch: true });
   assert.equal(status.branch, 'session/fix-login');
   assert.equal(status.behind, 1, 'bob pushed one commit');
-  assert.equal(status.added, 1);
-  assert.equal(status.files, 2, 'one modified, one untracked');
+  assert.equal(status.added, 2, 'the committed line and the uncommitted one: neither is on main yet');
+  assert.equal(status.files, 2, 'one changed on the branch, one untracked');
   assert.deepEqual(status.changed.sort(), ['login.js', 'notes.txt'], 'with their paths, for overlap warnings');
+  assert.equal(status.ahead, 1, 'one commit main doesn\'t have');
+  assert.equal(status.unpushed, 0);
 });
 
 test('the push guard stops shared-team agents pushing to main or force-pushing, and nobody else', async () => {
@@ -99,4 +101,19 @@ test('a session folder is removed only when it has nothing uncommitted', async (
   assert.ok(!fs.existsSync(dir));
   assert.ok(git(alice, 'branch', '--list', 'session/throwaway'), 'the branch is kept');
   assert.equal(await removeSessionWorktree(alice, 'Never existed', env), false);
+});
+
+test('pushed work still counts as changed until it reaches main, and main moving on counts as behind', async () => {
+  const { dir } = await sessionWorktree(alice, 'Ranked', env);
+  commit(dir, 'ranked.js', 'export const ranked = 1;\n');
+  git(dir, 'push', '-q', '-u', 'origin', 'session/ranked');
+  const teammate = fs.mkdtempSync(path.join(os.tmpdir(), 'protoplasma-main-'));
+  execFileSync('git', ['clone', '-q', git(alice, 'remote', 'get-url', 'origin'), teammate], { env });
+  commit(teammate, 'hotfix.js', 'export const hotfix = 1;\n');
+  git(teammate, 'push', '-q', 'origin', 'HEAD:main');
+  const status = await gitStatus(dir, { env, fetch: true });
+  assert.deepEqual(status.changed, ['ranked.js'], 'committed and pushed, but not on main yet');
+  assert.equal(status.behind, 1, "main's new commit, although the branch's own upstream is up to date");
+  assert.equal(status.ahead, 1);
+  assert.equal(status.unpushed, 0);
 });

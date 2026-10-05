@@ -40,25 +40,34 @@ function claudeHookSettings(url) {
 const git = (cwd, ...args) => {
   try { return execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim(); } catch { return ''; }
 };
+// The repo root as git reports it (symlinks resolved, e.g. /private/var/...) and as the agent sees it (/var/...), so
+// the hub recognises a file whichever way an agent writes its path.
+function rootsOf(cwd, root) {
+  try { return [...new Set([root, path.join(cwd, path.relative(fs.realpathSync(cwd), root))])]; } catch { return [root]; }
+}
 /** "owner/name" from a GitHub remote URL (https or ssh), or '' for anything else. */
 const repoFromRemote = url => /github\.com[:/]([\w.-]+\/[\w.-]+?)(?:\.git)?\/?$/.exec(url)?.[1] || '';
 const githubRepo = cwd => repoFromRemote(git(cwd, 'remote', 'get-url', 'origin'));
 
 /**
- * Branch, uncommitted changes (lines added/removed in tracked files, plus untracked files, and their paths from the repo
- * root) and how far the branch is behind/ahead of its upstream (or of the remote's default branch if it has none yet).
+ * Branch, and what this checkout has that the repo's main branch doesn't: changed files (committed on the branch or
+ * not, plus new files) with their paths from the repo root, and lines added/removed. Also how far behind it is (commits
+ * on main, or on its own pushed branch, that it doesn't have), how far ahead of main, and how many commits aren't pushed.
  * Never blocks; `fetch` updates the remote refs first, failing quietly when offline or unauthenticated.
  */
 async function gitStatus(cwd, { env = process.env, fetch = false } = {}) {
   const run = (...args) => new Promise(resolve => execFile('git', args,
     { cwd, encoding: 'utf8', maxBuffer: 10e6, timeout: 20_000, env: { ...env, GIT_TERMINAL_PROMPT: '0' } }, (err, out) => resolve(err ? '' : out.trim())));
   if (fetch) await run('fetch', '--quiet');
-  const [branch, numstat, untracked, upstream] = await Promise.all([
-    run('branch', '--show-current'), run('diff', '--numstat', 'HEAD'), run('ls-files', '--others', '--exclude-standard', '--full-name'),
-    run('rev-parse', '--abbrev-ref', '@{upstream}')]);
-  const [behind, ahead] = (await run('rev-list', '--left-right', '--count', `${upstream || 'origin/HEAD'}...HEAD`)).split(/\s+/).map(Number);
+  const [branch, upstream, main] = await Promise.all([run('branch', '--show-current'), run('rev-parse', '--abbrev-ref', '@{upstream}'),
+    run('rev-parse', '--abbrev-ref', 'origin/HEAD')]);
+  const base = main && await run('merge-base', 'HEAD', main); // where this checkout left main
+  const count = async (...args) => Number(await run('rev-list', '--count', ...args)) || 0;
+  const [numstat, untracked, behind, ahead, unpushed] = await Promise.all([
+    run('diff', '--numstat', base || 'HEAD'), run('ls-files', '--others', '--exclude-standard', '--full-name'),
+    count('^HEAD', ...[main, upstream].filter(Boolean)), main ? count(`${main}..HEAD`) : 0, count(`${upstream || main || 'HEAD'}..HEAD`)]);
   const changed = untracked ? untracked.split('\n') : [];
-  const stats = { branch, added: 0, removed: 0, files: changed.length, behind: behind || 0, ahead: ahead || 0 };
+  const stats = { branch, added: 0, removed: 0, files: changed.length, behind: main || upstream ? behind : 0, ahead, unpushed };
   for (const line of numstat.split('\n').filter(Boolean)) {
     const [added, removed, file] = line.split('\t');
     stats.added += +added || 0; // binary files report "-"
@@ -107,8 +116,9 @@ function startLane({ hub, team, token, session, cmd = 'claude', args = [], cwd =
   const byActivity = NO_HOOKS.includes(path.basename(cmd));
   let activity = null, quiet = null, lastInput = 0;
   const report = status => { if (activity !== status) { activity = status; send({ t: 'status', status }); } };
+  const root = git(cwd, 'rev-parse', '--show-toplevel') || cwd;
   const hello = { t: 'hello', token, team, id, hookSecret, session, cmd: path.basename(cmd),
-    root: git(cwd, 'rev-parse', '--show-toplevel') || cwd, repo: githubRepo(cwd), branch: git(cwd, 'branch', '--show-current'), open };
+    root, roots: rootsOf(cwd, root), repo: githubRepo(cwd), branch: git(cwd, 'branch', '--show-current'), open };
   const send = msg => ws?.readyState === WebSocket.OPEN && ws.send(JSON.stringify(msg));
 
   let lastGit = null; // last reported git stats

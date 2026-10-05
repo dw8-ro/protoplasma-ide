@@ -120,6 +120,7 @@ function startHub({ port = 7681, host = '0.0.0.0', dataDir, owners, verifyUser =
     for (const l of ls) for (const f of filesOf(l)) editors.set(key(l, f), (editors.get(key(l, f)) || new Set()).add(l.tree));
     return ls.map(l => ({ id: l.id, login: l.login, name: l.name, avatar: l.avatar, session: l.session, cmd: l.cmd, repo: l.repo, branch: l.branch,
       git: l.git, tree: l.tree, cols: l.cols, rows: l.rows, open: l.open, status: l.status, lastActive: l.lastActive, prompt: l.prompt || '',
+      typedBy: l.typedBy || '', typedAt: l.typedAt || null,
       files: [...filesOf(l)], overlaps: [...filesOf(l)].filter(f => editors.get(key(l, f)).size > 1) }));
   }
   const toTeam = (teamId, msg) => {
@@ -151,8 +152,8 @@ function startHub({ port = 7681, host = '0.0.0.0', dataDir, owners, verifyUser =
     }
     if (general.length) parts.push(`Team notes for this repo (from Protoplasma):\n${notes(general)}`);
     if (lane.git?.behind) {
-      parts.push(`Your branch "${lane.branch}" is ${lane.git.behind} commit${lane.git.behind === 1 ? '' : 's'} behind its upstream (from Protoplasma). ` +
-        'Pull or rebase before making more changes, and before pushing.');
+      parts.push(`Your branch "${lane.branch}" is ${lane.git.behind} commit${lane.git.behind === 1 ? '' : 's'} behind: main or its pushed copy has ` +
+        'commits it doesn\'t (from Protoplasma). Pull or rebase before making more changes, and before pushing.');
     }
     return parts.join('\n\n') || null;
   }
@@ -162,22 +163,30 @@ function startHub({ port = 7681, host = '0.0.0.0', dataDir, owners, verifyUser =
     const team = teams.get(lane.team);
     const push = /\bgit\b[^|;&]*?\bpush\b([^|;&]*)/.exec(command);
     if (!team.members.length || !push) return null;
-    const words = push[1].trim().split(/\s+/).filter(Boolean);
+    const words = push[1].trim().split(/\s+/).filter(Boolean).map(w => w.replace(/^(['"])(.*)\1$/, '$2'));
     const flags = words.filter(w => w.startsWith('-'));
     const refspecs = words.filter(w => !w.startsWith('-')).slice(1); // after the remote
-    if (flags.some(f => f === '--force' || /^-[a-zA-Z]*f/.test(f)) || refspecs.some(r => r.startsWith('+'))) {
+    // --force-with-lease too: lanes fetch in the background, so the lease rarely protects a teammate's commits.
+    if (flags.some(f => /^--force(-with-lease)?(=|$)/.test(f) || /^-[a-zA-Z]*f/.test(f)) || refspecs.some(r => r.startsWith('+'))) {
       return 'this force-push can overwrite commits your teammates pushed. Confirm it\'s intended.';
     }
+    if (flags.some(f => f === '--all' || f === '--mirror')) {
+      return `this pushes every branch, ${PROTECTED_BRANCHES.join(' and ')} included, which your team shares. Push just your branch, or confirm.`;
+    }
     // No refspec pushes the current branch; otherwise the part after ":" (or the name itself) is the destination.
+    const deleting = flags.some(f => f === '--delete' || f === '-d');
     const targets = (refspecs.length ? refspecs : ['HEAD']).map(r => r.split(':').pop().replace(/^refs\/heads\//, '')).map(t => (t === 'HEAD' ? lane.branch : t));
     const target = targets.find(t => PROTECTED_BRANCHES.includes(t));
+    if (target && (deleting || refspecs.some(r => r.startsWith(':')))) return `this deletes ${target} on the remote, which your team shares. Confirm it's intended.`;
     return target ? `this pushes straight to ${target}, which your team shares. Push a branch and open a pull request instead, or confirm.` : null;
   }
 
   // A JSON reply steers the agent; an empty one lets it continue.
   function onHook(lane, ev) {
     const file = ev.tool_input?.file_path || ev.tool_input?.notebook_path;
-    const rel = file && path.relative(lane.root, path.resolve(ev.cwd || lane.root, file));
+    const full = file && path.resolve(ev.cwd || lane.root, file);
+    const root = full && (lane.roots.find(r => full === r || full.startsWith(r + path.sep)) || lane.root);
+    const rel = full && path.relative(root, full);
     lane.lastActive = new Date().toISOString();
     switch (ev.hook_event_name) {
       case 'UserPromptSubmit': {
@@ -383,7 +392,7 @@ function startHub({ port = 7681, host = '0.0.0.0', dataDir, owners, verifyUser =
 
   // ---- WebSockets: agents (/lane) and app windows (/watch) ----
   const gitStats = g => g && typeof g === 'object'
-    ? { added: g.added | 0, removed: g.removed | 0, files: g.files | 0, behind: g.behind | 0, ahead: g.ahead | 0 } : null;
+    ? { added: g.added | 0, removed: g.removed | 0, files: g.files | 0, behind: g.behind | 0, ahead: g.ahead | 0, unpushed: g.unpushed | 0 } : null;
   const changedFiles = g => new Set(Array.isArray(g?.changed) ? g.changed.slice(0, MAX_CHANGED).map(f => str(f, 300)).filter(Boolean) : []);
   function onLane(ws, user, team, hello) {
     const existing = lanes.get(hello.id);
@@ -392,6 +401,7 @@ function startHub({ port = 7681, host = '0.0.0.0', dataDir, owners, verifyUser =
     }
     const lane = { id: hello.id, team: team.id, login: user.login, name: user.name, avatar: user.avatar,
       session: str(hello.session, 60), cmd: str(hello.cmd, 40), root: str(hello.root, 1000), repo: str(hello.repo, 200), branch: str(hello.branch, 100),
+      roots: (Array.isArray(hello.roots) ? hello.roots.slice(0, 4) : []).map(r => str(r, 1000)).filter(Boolean),
       cols: hello.cols | 0 || 120, rows: hello.rows | 0 || 36, open: !!hello.open, status: str(hello.cmd, 40) === 'claude' ? 'idle' : 'running', lastActive: new Date().toISOString(), files: new Set(), changed: changedFiles(hello.git),
       git: gitStats(hello.git), history: typeof hello.history === 'string' ? hello.history.slice(-SCROLLBACK) : '', hookSecret: hello.hookSecret, ws };
     lane.tree = crypto.createHash('sha256').update(`${lane.login}\n${lane.root}`).digest('hex').slice(0, 12); // one per checkout
@@ -448,7 +458,13 @@ function startHub({ port = 7681, host = '0.0.0.0', dataDir, owners, verifyUser =
         return agent && send(ws, { t: 'replay', id: agent.id, d: agent.history });
       }
       const lane = m?.t === 'in' && typeof m.d === 'string' && lanes.get(m.lane);
-      if (lane?.open && lane.team === team.id) send(lane.ws, { t: 'in', d: m.d }); // only open lanes accept remote input
+      if (!lane?.open || lane.team !== team.id) return; // only open lanes accept remote input
+      send(lane.ws, { t: 'in', d: m.d });
+      // The agent's owner sees who typed into it. Kept fresh without a broadcast for every keystroke.
+      if (same(user.login, lane.login)) return;
+      const quiet = !lane.typedAt || Date.now() - Date.parse(lane.typedAt) > 5000 || lane.typedBy !== user.name;
+      Object.assign(lane, { typedBy: user.name || user.login, typedAt: new Date().toISOString() });
+      if (quiet) broadcastState(team.id);
     });
     ws.on('close', () => { watchers.delete(ws); broadcastState(team.id); });
   }

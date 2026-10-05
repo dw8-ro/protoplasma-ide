@@ -60,6 +60,7 @@ async function stage(release, bundle, pid, env) {
   const fresh = path.join(dir, 'new', 'Protoplasma.app');
   if (!fs.existsSync(path.join(fresh, 'Contents', 'Info.plist'))) throw new Error('The update didn\'t contain the app.');
   await run('xattr', ['-dr', 'com.apple.quarantine', fresh], env).catch(() => {}); // usually there's nothing to remove
+  await sameSigner(bundle, fresh, env);
   const script = path.join(dir, 'swap.sh');
   fs.writeFileSync(script, `#!/bin/sh
 while kill -0 ${pid} 2>/dev/null; do sleep 0.3; done
@@ -70,4 +71,14 @@ rm -rf ${JSON.stringify(dir)} # the download, about 150 MB
   spawn('/bin/sh', [script, bundle, fresh], { detached: true, stdio: 'ignore' }).unref();
 }
 
-module.exports = { isNewer, latestRelease, ownBundle, stage, REPO };
+/**
+ * A copy signed with the project's certificate (see scripts/sign.sh) only takes updates signed with that same
+ * certificate. An ad hoc signed copy has nothing to compare with, so it takes any intact update.
+ */
+async function sameSigner(bundle, fresh, env) {
+  const required = /^designated => (.*certificate.*)$/m.exec(await run('codesign', ['-d', '-r-', bundle], env).catch(() => ''))?.[1];
+  await run('codesign', ['--verify', '--deep', '--strict', ...(required ? [`-R=${required}`] : []), fresh], env)
+    .catch(() => { throw new Error('The update isn\'t signed by Protoplasma, so it wasn\'t installed.'); });
+}
+
+module.exports = { isNewer, latestRelease, ownBundle, stage, sameSigner, REPO };

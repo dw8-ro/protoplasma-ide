@@ -23,9 +23,12 @@ jobs:
       - run: npm ci
       - run: npm test
       - run: npm run dist
-      - name: Sign (ad hoc, no Apple account needed) and zip
+      - name: Sign with the project's own certificate (no Apple account needed) and zip
+        env:
+          MAC_CERT_P12: ${{ secrets.MAC_CERT_P12 }}
+          MAC_CERT_PASSWORD: ${{ secrets.MAC_CERT_PASSWORD }}
         run: |
-          codesign --force --deep --sign - dist/Protoplasma-darwin-arm64/Protoplasma.app
+          scripts/sign.sh dist/Protoplasma-darwin-arm64/Protoplasma.app
           ditto -c -k --keepParent dist/Protoplasma-darwin-arm64/Protoplasma.app "Protoplasma-${GITHUB_REF_NAME#v}-mac-arm64.zip"
       - name: Publish
         env:

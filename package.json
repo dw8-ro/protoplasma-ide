@@ -1,7 +1,7 @@
 {
   "name": "protoplasma-ide",
   "productName": "Protoplasma",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Multiplayer AI coding: everyone runs their own Claude Code or Codex, everyone sees every agent, with every / command intact.",
   "private": true,
   "main": "app/main.js",

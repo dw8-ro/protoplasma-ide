@@ -53,6 +53,8 @@ const githubRepo = cwd => repoFromRemote(git(cwd, 'remote', 'get-url', 'origin')
  * Branch, and what this checkout has that the repo's main branch doesn't: changed files (committed on the branch or
  * not, plus new files) with their paths from the repo root, and lines added/removed. Also how far behind it is (commits
  * on main, or on its own pushed branch, that it doesn't have), how far ahead of main, and how many commits aren't pushed.
+ * `local` is the part of `changed` that is only here: not pushed (or not committed). Checkouts sharing a pushed branch
+ * share its commits, so only this part can collide between them.
  * Never blocks; `fetch` updates the remote refs first, failing quietly when offline or unauthenticated.
  */
 async function gitStatus(cwd, { env = process.env, fetch = false } = {}) {
@@ -63,9 +65,10 @@ async function gitStatus(cwd, { env = process.env, fetch = false } = {}) {
     run('rev-parse', '--abbrev-ref', 'origin/HEAD')]);
   const base = main && await run('merge-base', 'HEAD', main); // where this checkout left main
   const count = async (...args) => Number(await run('rev-list', '--count', ...args)) || 0;
-  const [numstat, untracked, behind, ahead, unpushed] = await Promise.all([
+  const [numstat, untracked, behind, ahead, unpushed, sinceUpstream] = await Promise.all([
     run('diff', '--numstat', base || 'HEAD'), run('ls-files', '--others', '--exclude-standard', '--full-name'),
-    count('^HEAD', ...[main, upstream].filter(Boolean)), main ? count(`${main}..HEAD`) : 0, count(`${upstream || main || 'HEAD'}..HEAD`)]);
+    count('^HEAD', ...[main, upstream].filter(Boolean)), main ? count(`${main}..HEAD`) : 0, count(`${upstream || main || 'HEAD'}..HEAD`),
+    upstream ? run('diff', '--name-only', upstream) : null]);
   const changed = untracked ? untracked.split('\n') : [];
   const stats = { branch, added: 0, removed: 0, files: changed.length, behind: main || upstream ? behind : 0, ahead, unpushed };
   for (const line of numstat.split('\n').filter(Boolean)) {
@@ -75,7 +78,8 @@ async function gitStatus(cwd, { env = process.env, fetch = false } = {}) {
     stats.files++;
     changed.push(file.replace(/\{[^}]* => ([^}]*)\}/, '$1').replace(/^.* => /, '')); // a rename counts as its new path
   }
-  return { ...stats, changed: changed.slice(0, MAX_CHANGED) };
+  const local = sinceUpstream === null ? changed : [...new Set([...(sinceUpstream ? sinceUpstream.split('\n') : []), ...(untracked ? untracked.split('\n') : [])])];
+  return { ...stats, changed: changed.slice(0, MAX_CHANGED), local: local.slice(0, MAX_CHANGED) };
 }
 
 /**

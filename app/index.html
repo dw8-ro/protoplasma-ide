@@ -369,6 +369,7 @@
   .tree-row.M .name, .state.M { color: var(--needs); }
   .tree-row:is(.U, .A) .name, .state:is(.U, .A) { color: var(--live); }
   .tree-row.D .name { text-decoration: line-through; } .state.D { color: var(--overlap); }
+  .tree-row.C .name, .state.C { color: var(--overlap); font-weight: 600; }
   .tree-row.overlap .name { color: var(--overlap); }
   .tree-row .theirs { flex: none; width: 7px; height: 7px; border-radius: 50%; background: var(--c); }
   .tree-row .dot { flex: none; width: 5px; height: 5px; border-radius: 50%; background: currentColor; opacity: .7; }
@@ -818,6 +819,7 @@
         <label><input type="radio" name="cmd" value="codex"><span>Codex</span></label>
         <label><input type="radio" name="cmd" value="opencode"><span>OpenCode</span></label>
       </div>
+      <p id="agentHint" class="fine" hidden></p>
     </fieldset>
     <label class="toggle"><input id="open" type="checkbox">Let teammates type into it</label>
     <div class="foot">

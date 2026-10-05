@@ -2,15 +2,19 @@
 // and a watch for changes (so an agent's edits show up as it makes them). main.js decides which folders it may open.
 const fs = require('fs');
 const path = require('path');
-const { execFile } = require('child_process');
+const { execFile, execFileSync } = require('child_process');
 
 const MAX_BYTES = 2_000_000; // bigger files aren't opened in the editor
 const MAX_FILES = 20_000;
 
 // Git's own words for a failure: its error line, not the hints after it.
+// Git's own words for a failure: its error, including the lines it wraps onto, not the hints after it.
 const gitError = (errOut, fallback) => {
   const lines = errOut.trim().split('\n').map(l => l.trim()).filter(l => l && !l.startsWith('hint:'));
-  return (lines.find(l => /^(error|fatal):/.test(l)) || lines.find(l => l.startsWith('!')) || lines.pop() || fallback).replace(/^(error|fatal): /, '');
+  const at = lines.findIndex(l => /^(error|fatal):/.test(l));
+  if (at < 0) return lines.find(l => l.startsWith('!')) || lines.pop() || fallback;
+  const rest = lines.slice(at + 1).findIndex(l => /^(error|fatal|!|To |\w+:)/.test(l));
+  return lines.slice(at, rest < 0 ? at + 4 : at + 1 + rest).join(' ').replace(/^(error|fatal): /, '');
 };
 const git = (root, args, env) => new Promise((resolve, reject) => execFile('git', args, { cwd: root, env, maxBuffer: 64e6 },
   (err, out, errOut) => (err ? reject(Object.assign(new Error(gitError(errOut, err.message)), { code: err.code, stderr: errOut })) : resolve(out))));
@@ -45,9 +49,18 @@ function walk(root, dir = '', out = []) {
   return out;
 }
 
+/** A rebase, merge, cherry-pick or revert that was started and not finished, or null. */
+function underWay(root) {
+  try {
+    const dir = path.resolve(root, execFileSync('git', ['rev-parse', '--git-dir'], { cwd: root, encoding: 'utf8' }).trim());
+    return [['rebase-merge', 'rebase'], ['rebase-apply', 'rebase'], ['MERGE_HEAD', 'merge'], ['CHERRY_PICK_HEAD', 'cherry-pick'], ['REVERT_HEAD', 'revert']]
+      .find(([file]) => fs.existsSync(path.join(dir, file)))?.[1] || null;
+  } catch { return null; }
+}
+
 /**
- * The branch, how many commits aren't pushed yet, and each changed file with its state: M(odified), A(dded),
- * D(eleted), R(enamed) or U(ntracked).
+ * The branch, how many commits aren't pushed yet, any rebase or merge under way, and each changed file with its
+ * state: M(odified), A(dded), D(eleted), R(enamed), U(ntracked) or C(onflicted).
  */
 async function status(root, env) {
   try {
@@ -59,12 +72,12 @@ async function status(root, env) {
       const [xy, file] = [entries[i].slice(0, 2), entries[i].slice(3)];
       if (!file) continue;
       if (/[RC]/.test(xy)) i++; // a rename is followed by the old path
-      const state = xy === '??' ? 'U' : /D/.test(xy) ? 'D' : /R/.test(xy) ? 'R' : /A/.test(xy) ? 'A' : 'M';
+      const state = xy === '??' ? 'U' : /U|AA|DD/.test(xy) ? 'C' : /D/.test(xy) ? 'D' : /R/.test(xy) ? 'R' : /A/.test(xy) ? 'A' : 'M';
       changes.push({ path: file, state });
     }
-    return { branch: branch.trim(), unpushed: Number(unpushed) || 0, changes };
+    return { branch: branch.trim(), unpushed: Number(unpushed) || 0, underWay: underWay(root), changes };
   } catch {
-    return { branch: '', unpushed: 0, changes: [] };
+    return { branch: '', unpushed: 0, underWay: null, changes: [] };
   }
 }
 
@@ -104,6 +117,9 @@ async function search(root, query, env) {
  * first, this work goes on top of theirs and is pushed again. Resolves to what happened, in words.
  */
 async function commitAndPush(root, message, env) {
+  // Committing in the middle of a rebase or merge would commit its conflict markers.
+  const busy = underWay(root);
+  if (busy) throw new Error(`A ${busy} is under way. Finish it (or abort it) in the Terminal tab, then commit.`);
   const done = message ? 'Committed and pushed.' : 'Pushed.';
   if (message) {
     await git(root, ['add', '-A'], env);

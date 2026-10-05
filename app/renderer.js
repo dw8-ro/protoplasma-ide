@@ -490,6 +490,9 @@ function syncAgents() {
     input.nextElementSibling.title = input.disabled ? 'Not installed on this Mac' : '';
   }
   if ($('input[name=cmd]:checked')?.disabled) (document.querySelector('input[name=cmd]:not(:disabled)') || {}).checked = true;
+  const missing = [...document.querySelectorAll('input[name=cmd]:disabled')].map(i => agentName(i.value));
+  $('#agentHint').hidden = !missing.length;
+  $('#agentHint').textContent = missing.length ? `${missing.join(' and ')} ${missing.length === 1 ? 'isn\'t' : 'aren\'t'} installed on this Mac.` : '';
 }
 
 // With `session`, the form adds an agent to that session; without, it starts a new one.
@@ -502,6 +505,7 @@ async function openNewAgent(session) {
     .map(s => `<option value="${esc(s)}">`).join('');
   $('#session').value = session ?? '';
   $('#task').value = recordFor($('#session').value.trim())?.task || '';
+  $('#task').dataset.from = recordFor($('#session').value.trim())?.name || '';
   $('#repo').value = (session && sourceFor(session)?.repo) || $('#repo').value || store.get('repo');
   if (!$('#cwd').value) showFolder(store.get('cwd'));
   const known = session && sourceFor(session); // an existing session keeps the kind of source it already uses
@@ -523,8 +527,7 @@ async function openNewAgent(session) {
     repos = await proto.repos();
   } catch (e) {
     reposError = errorText(e);
-    $('input[name=source][value=folder]').checked = true;
-    syncSource();
+    if (!known?.repo) { $('input[name=source][value=folder]').checked = true; syncSource(); } // a repo session keeps its repo
   }
   renderRepoPicker();
 }
@@ -561,7 +564,18 @@ const syncSource = () => {
   showFolder($('#cwd').value);
 };
 for (const r of document.querySelectorAll('input[name=source]')) r.onchange = syncSource;
-$('#session').oninput = () => { const rec = recordFor(existingSession($('#session').value.trim())); if (rec) $('#task').value = rec.task; };
+// The dialog follows the name typed: an existing session gets an agent added (with its goal), a new name starts one.
+function syncSessionName() {
+  const name = existingSession($('#session').value.trim()), rec = recordFor(name);
+  const adding = !!rec || hubLanes.some(l => l.session === name);
+  if (rec) $('#task').value = rec.task || '';
+  else if ($('#task').dataset.from) $('#task').value = ''; // a goal filled in from another session doesn't carry over
+  $('#task').dataset.from = rec ? rec.name : '';
+  $('#agentTitle').textContent = adding ? 'Add an agent' : 'New session';
+  $('#startAgent').textContent = adding ? 'Start agent' : 'Start the session';
+}
+$('#session').oninput = syncSessionName;
+$('#task').oninput = () => { $('#task').dataset.from = ''; };
 $('#new').onclick = () => openNewAgent();
 $('#cancel').onclick = () => $('#agent').close();
 $('#pick').onclick = async () => {
@@ -1075,7 +1089,7 @@ function environment(inRoom, rec) {
   const github = roomRepo && `https://github.com/${roomRepo}`;
   const row = (label, value, action = '') => `<${action ? 'button' : 'div'} class="panel-row" ${action}><b>${label}</b><span class="mono">${value}</span></${action ? 'button' : 'div'}>`;
   return [
-    row('Changes', diffStat(inRoom) || 'None'),
+    row('Changes', diffStat(mine.length ? mine : inRoom) || 'None'),
     branches.length ? row('Branch', esc(branches.join(', '))) : '',
     behind ? row('Behind', `${behind} commit${behind === 1 ? '' : 's'}`) : '',
     ahead ? row('Ahead of main', `${ahead} commit${ahead === 1 ? '' : 's'}`) : '',
@@ -1140,7 +1154,7 @@ setInterval(() => render(), 30_000); // keeps "2m ago" labels current between up
 // ---- Shared memory ----
 
 // Notes that apply to the open session: its repo's, plus the ones written for every repo.
-const roomNotes = () => memories.filter(m => !m.repo || !roomRepo || m.repo === roomRepo);
+const roomNotes = () => memories.filter(m => !m.repo || (roomRepo && m.repo === roomRepo));
 function renderMemory(lanes) {
   setHTML($('#fileList'), [...new Set(lanes.flatMap(l => l.files))].map(f => `<option value="${esc(f)}">`).join(''));
   const canRemove = m => [m.author, currentTeam.owner].some(l => l.toLowerCase() === me.login.toLowerCase());
@@ -1154,15 +1168,28 @@ function renderMemory(lanes) {
 }
 $('#memoryForm').onsubmit = async e => {
   e.preventDefault();
-  const note = { text: $('#memoryText').value.trim(), file: $('#memoryFile').value.trim(), repo: roomRepo };
+  const note = { text: $('#memoryText').value.trim(), file: $('#memoryFile').value.trim().replace(/^\.?\//, ''), repo: roomRepo };
   if (!note.text) return $('#memoryText').focus();
+  const button = e.submitter || $('#memoryForm button');
+  if (button.disabled) return;
+  button.disabled = true;
   try {
+    const known = note.file && await sessionFiles();
+    if (known && !known.includes(note.file)) {
+      const like = known.filter(f => f.endsWith(`/${note.file}`));
+      if (like.length !== 1) {
+        $('#memoryErr').textContent = like.length ? `More than one file is called ${note.file}. Use its path from the repo root, like ${like[0]}.`
+          : `There's no ${note.file} in this repo. Use the file's path from the repo root, like src/app.ts.`;
+        return;
+      }
+      note.file = like[0];
+    }
     memories = await proto.addMemory(currentTeam.key, note);
     $('#memoryText').value = $('#memoryFile').value = '';
     $('#memoryErr').textContent = '';
     $('#memoryText').focus();
     render();
-  } catch (err) { $('#memoryErr').textContent = errorText(err); }
+  } catch (err) { $('#memoryErr').textContent = errorText(err); } finally { button.disabled = false; }
 };
 $('#memoryList').onclick = async e => {
   const id = e.target.dataset.forget;
@@ -1458,7 +1485,7 @@ proto.onMenu(action => {
   if (action === 'code' && view === 'session') showCode(!code.on);
   if (action === 'go-to-file') goToFile();
   if (action === 'save') saveActive();
-  if (action === 'invite' && ownsTeam(currentTeam)) $('#inviteBtn').click();
+  if (action === 'invite') ownsTeam(currentTeam) ? $('#inviteBtn').click() : alert(`Only the team's owner, ${currentTeam.owner}, can invite people.`);
 });
 // Settings is a page, so Esc closes it the way it closes a dialog.
 addEventListener('keydown', e => { if (e.key === 'Escape' && $('#settings').open && !document.querySelector('dialog:modal')) $('#settings').close(); });

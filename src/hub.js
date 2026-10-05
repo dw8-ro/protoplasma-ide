@@ -103,25 +103,25 @@ function startHub({ port = 7681, host = '0.0.0.0', dataDir, owners, verifyUser =
   // Which codebase a lane works in: its GitHub repo, or its own checkout when the folder has no GitHub remote.
   const repoKey = l => l.repo || l.tree;
   const inSameRepo = lane => teamLanes(lane.team).filter(o => o !== lane && repoKey(o) === repoKey(lane));
-  // Files a lane has touched: edits Claude reported through its hooks, plus whatever its checkout has uncommitted
+  // Files a lane has touched: edits Claude reported through its hooks, plus whatever its checkout has that main doesn't
   // (which also covers shell commands, Codex, OpenCode and people).
   const filesOf = l => new Set([...l.files, ...l.changed]);
-  // What another lane has touched, as `lane` should see it: a lane in the same folder only counts for the edits it
-  // made itself, since that folder's uncommitted changes could just as well be `lane`'s own.
-  const touchedBy = (o, lane) => (o.tree === lane.tree ? o.files : filesOf(o));
+  // What another lane has touched, as `lane` should see it. A lane in the same folder only counts for the edits it made
+  // itself, since that folder's changes could just as well be `lane`'s own. Checkouts of the same branch share its
+  // pushed commits, so between them only what isn't pushed yet counts.
+  const touchedBy = (o, lane) => (o.tree === lane.tree ? o.files
+    : o.branch && o.branch === lane.branch ? new Set([...o.local, ...[...o.files].filter(f => !o.changed.has(f))]) : filesOf(o));
   const othersOn = (lane, file) => inSameRepo(lane).filter(o => touchedBy(o, lane).has(file));
   const notesFor = (lane, file = '') => teams.get(lane.team).memories.filter(m => m.file === file && (!m.repo || m.repo === lane.repo));
   function views(teamId) {
     const ls = teamLanes(teamId);
-    // An overlap is a file changed in more than one checkout of the same repo. Agents sharing a checkout share its
-    // changes, so they don't count against each other.
-    const editors = new Map(); // repo + file -> checkouts that changed it
-    const key = (l, f) => `${repoKey(l)}\n${f}`;
-    for (const l of ls) for (const f of filesOf(l)) editors.set(key(l, f), (editors.get(key(l, f)) || new Set()).add(l.tree));
+    // An overlap is a file both of two checkouts of the same repo have changed, as each sees the other (touchedBy).
+    const overlaps = l => [...filesOf(l)].filter(f => ls.some(o => o.tree !== l.tree && repoKey(o) === repoKey(l)
+      && touchedBy(o, l).has(f) && touchedBy(l, o).has(f)));
     return ls.map(l => ({ id: l.id, login: l.login, name: l.name, avatar: l.avatar, session: l.session, cmd: l.cmd, repo: l.repo, branch: l.branch,
       git: l.git, tree: l.tree, cols: l.cols, rows: l.rows, open: l.open, status: l.status, lastActive: l.lastActive, prompt: l.prompt || '',
       typedBy: l.typedBy || '', typedAt: l.typedAt || null,
-      files: [...filesOf(l)], overlaps: [...filesOf(l)].filter(f => editors.get(key(l, f)).size > 1) }));
+      files: [...filesOf(l)], overlaps: overlaps(l) }));
   }
   const toTeam = (teamId, msg) => {
     const data = JSON.stringify(msg);
@@ -178,7 +178,25 @@ function startHub({ port = 7681, host = '0.0.0.0', dataDir, owners, verifyUser =
     const targets = (refspecs.length ? refspecs : ['HEAD']).map(r => r.split(':').pop().replace(/^refs\/heads\//, '')).map(t => (t === 'HEAD' ? lane.branch : t));
     const target = targets.find(t => PROTECTED_BRANCHES.includes(t));
     if (target && (deleting || refspecs.some(r => r.startsWith(':')))) return `this deletes ${target} on the remote, which your team shares. Confirm it's intended.`;
+    const theirs = (deleting || refspecs.some(r => r.startsWith(':'))) && inSameRepo(lane).filter(o => targets.includes(o.branch));
+    if (theirs?.length) return `this deletes ${theirs[0].branch} on the remote, which ${[...new Set(theirs.map(o => o.name))].join(' and ')} also work on. Confirm it's intended.`;
     return target ? `this pushes straight to ${target}, which your team shares. Push a branch and open a pull request instead, or confirm.` : null;
+  }
+
+  const whoOn = others => others.map(o => `${o.name} (session "${o.session}")`).join(', ');
+  // A shell command that writes a file a teammate has changed: sed -i, a redirect, tee, mv, rm and the like.
+  // ponytail: a heuristic over the words of the command; a script that writes files it doesn't name isn't caught.
+  function shellWriteRisk(lane, command, cwd) {
+    if (!/\bsed\b[^|;&]*\s-[a-zA-Z]*i|\bperl\b[^|;&]*\s-[a-zA-Z]*i|>|\b(tee|mv|rm|cp|truncate)\b/.test(command)) return null;
+    for (const word of command.split(/[\s;|&<>()'"=]+/)) {
+      if (!/\/|\.\w+$/.test(word)) continue; // only words that look like paths
+      const full = path.resolve(cwd || lane.root, word);
+      const root = lane.roots.find(r => full.startsWith(r + path.sep)) || lane.root;
+      const rel = path.relative(root, full);
+      const others = rel && !rel.startsWith('..') ? othersOn(lane, rel) : [];
+      if (others.length) return `${whoOn(others)} already edited ${rel}, and this command changes it. Coordinate before running it.`;
+    }
+    return null;
   }
 
   // A JSON reply steers the agent; an empty one lets it continue.
@@ -197,7 +215,8 @@ function startHub({ port = 7681, host = '0.0.0.0', dataDir, owners, verifyUser =
       }
       case 'PreToolUse': {
         if (ev.tool_name === 'Bash') {
-          const reason = pushRisk(lane, String(ev.tool_input?.command || ''));
+          const command = String(ev.tool_input?.command || '');
+          const reason = pushRisk(lane, command) || shellWriteRisk(lane, command, ev.cwd);
           return reason && { hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'ask', permissionDecisionReason: `Protoplasma: ${reason}` } };
         }
         // Attach the file's team notes, and require confirmation if a teammate's agent already edited it.
@@ -208,8 +227,7 @@ function startHub({ port = 7681, host = '0.0.0.0', dataDir, owners, verifyUser =
         const out = { hookEventName: 'PreToolUse' };
         if (pinned.length) out.additionalContext = `Team notes about ${rel} (from Protoplasma):\n${notes(pinned)}`;
         if (others.length) {
-          const who = others.map(o => `${o.name} (session "${o.session}")`).join(', ');
-          Object.assign(out, { permissionDecision: 'ask', permissionDecisionReason: `Protoplasma: ${who} already edited ${rel}. Coordinate before changing it.` });
+          Object.assign(out, { permissionDecision: 'ask', permissionDecisionReason: `Protoplasma: ${whoOn(others)} already edited ${rel}. Coordinate before changing it.` });
         }
         return { hookSpecificOutput: out };
       }
@@ -402,7 +420,7 @@ function startHub({ port = 7681, host = '0.0.0.0', dataDir, owners, verifyUser =
     const lane = { id: hello.id, team: team.id, login: user.login, name: user.name, avatar: user.avatar,
       session: str(hello.session, 60), cmd: str(hello.cmd, 40), root: str(hello.root, 1000), repo: str(hello.repo, 200), branch: str(hello.branch, 100),
       roots: (Array.isArray(hello.roots) ? hello.roots.slice(0, 4) : []).map(r => str(r, 1000)).filter(Boolean),
-      cols: hello.cols | 0 || 120, rows: hello.rows | 0 || 36, open: !!hello.open, status: str(hello.cmd, 40) === 'claude' ? 'idle' : 'running', lastActive: new Date().toISOString(), files: new Set(), changed: changedFiles(hello.git),
+      cols: hello.cols | 0 || 120, rows: hello.rows | 0 || 36, open: !!hello.open, status: str(hello.cmd, 40) === 'claude' ? 'idle' : 'running', lastActive: new Date().toISOString(), files: new Set(), changed: changedFiles(hello.git), local: changedFiles(hello.git?.local ? { changed: hello.git.local } : hello.git),
       git: gitStats(hello.git), history: typeof hello.history === 'string' ? hello.history.slice(-SCROLLBACK) : '', hookSecret: hello.hookSecret, ws };
     lane.tree = crypto.createHash('sha256').update(`${lane.login}\n${lane.root}`).digest('hex').slice(0, 12); // one per checkout
     lanes.set(lane.id, lane);
@@ -427,6 +445,8 @@ function startHub({ port = 7681, host = '0.0.0.0', dataDir, owners, verifyUser =
       } else if (m?.t === 'git') {
         lane.git = gitStats(m);
         lane.changed = changedFiles(m);
+        lane.local = Array.isArray(m.local) ? changedFiles({ changed: m.local }) : lane.changed;
+        lane.files = new Set([...lane.files].filter(f => lane.changed.has(f))); // edits since committed to main, or undone, no longer count
         lane.branch = str(m.branch, 100) || lane.branch;
         broadcastState(team.id);
       } else if (m?.t === 'status' && ['needs you', 'idle', 'working'].includes(m.status)) { // trust prompts, and agents without hooks

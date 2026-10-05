@@ -81,11 +81,21 @@ async function showCode(on = true) {
   render();
   return !!code.root;
 }
+// The session's folder on this Mac: where your agent in it runs, or the checkout the app made for it. Null if neither.
+function rootFor(session) {
+  const mine = [...local].find(([, l]) => l.teamKey === currentTeam.key && l.session === session);
+  const source = sourceFor(session);
+  return proto.code.root(mine ? { lane: mine[0] }
+    : source?.repo && source.worktree !== false ? { repo: source.repo, name: recordFor(session)?.key || session } : {});
+}
+/** The open session's files, for checking a path someone typed; null when its code isn't on this Mac. */
+async function sessionFiles() {
+  const root = await rootFor(current).catch(() => null);
+  if (root && root === code.root && code.files.length) return code.files;
+  return root ? proto.code.list(root).catch(() => null) : null;
+}
 async function openRoot() {
-  const mine = [...local].find(([, l]) => l.teamKey === currentTeam.key && l.session === current);
-  const source = sourceFor(current);
-  const root = await proto.code.root(mine ? { lane: mine[0] }
-    : source?.repo && source.worktree !== false ? { repo: source.repo, name: recordFor(current)?.key || current } : {});
+  const root = await rootFor(current);
   if (root === code.root) return;
   for (const entry of models.values()) entry.model?.dispose();
   models.clear();
@@ -96,12 +106,14 @@ async function openRoot() {
 }
 async function refreshFiles() {
   const root = code.root;
-  const [files, { branch, unpushed, changes }] = await Promise.all([proto.code.list(root), proto.code.status(root)]);
+  const [files, { branch, unpushed, underWay, changes }] = await Promise.all([proto.code.list(root), proto.code.status(root)]);
   if (root !== code.root) return;
   code.files = files;
   code.tree = treeOf(files);
+  if (changes.length > code.changes.size) $('#commitNote').textContent = ''; // new changes since: the last result no longer applies
   code.branch = branch;
   code.unpushed = unpushed;
+  code.underWay = underWay;
   code.changes = new Map(changes.map(c => [c.path, c.state]));
   code.changedDirs = new Set(changes.flatMap(c => c.path.split('/').slice(0, -1).map((_, i, parts) => parts.slice(0, i + 1).join('/'))));
   render();
@@ -229,6 +241,9 @@ function renderCode() {
   const pushOnly = !code.changes.size && code.unpushed > 0;
   $('#commitBtn').textContent = pushOnly ? `Push ${code.unpushed} commit${code.unpushed === 1 ? '' : 's'}` : 'Commit & Push';
   $('#commitMessage').hidden = pushOnly;
+  $('#commitBtn').disabled = !!code.underWay;
+  if (code.underWay) $('#commitNote').textContent = `A ${code.underWay} is under way${[...code.changes.values()].includes('C') ? ', with conflicts in the files marked C' : ''}. `
+    + `Finish it or abort it in the Terminal tab (git ${code.underWay} --continue or --abort), then commit.`;
   $('#codeWelcomeText').textContent = code.root ? 'Start working in this repository'
     : 'This session\'s code isn\'t on this Mac yet. Add an agent and its folder opens here.';
   $('#codeWelcome').hidden = !!code.active;
@@ -345,6 +360,7 @@ async function commit() {
   }
 }
 $('#commitBtn').onclick = commit;
+$('#commitMessage').oninput = () => { if (!code.underWay) $('#commitNote').textContent = ''; };
 $('#commitMessage').onkeydown = e => { if (e.key === 'Enter' && e.metaKey) { e.preventDefault(); commit(); } };
 
 // ---- The Terminal tab: a plain shell in the folder, on this Mac only ----

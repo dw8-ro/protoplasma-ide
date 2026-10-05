@@ -10,6 +10,9 @@
 //                                       { "lane": "<id>", "hook_event_name": "PermissionRequest" }
 //   GET  /shot                          saves a screenshot (1440 wide, same coordinates as /click)  -> { file }
 // Agents are bash shells standing in for the CLI picked, so what you type into them really changes files.
+// The page's confirm() and alert() are answered without a dialog (a native one would block this API): confirm returns
+// window.__confirmAnswer (true unless you set it), and every question is kept in window.__dialogs.
+// Menu shortcuts (⌘K, ⌘B...) belong to the native menu, so /key can't trigger them: use /menu.
 const { app, BrowserWindow } = require('electron');
 const http = require('http');
 const fs = require('fs');
@@ -98,5 +101,14 @@ http.createServer(async (req, res) => {
     send(500, { error: e.message });
   }
 }).listen(Number(PLAY_PORT), '127.0.0.1');
+
+app.on('browser-window-created', (_, win) => {
+  win.webContents.setBackgroundThrottling(false); // keep painting, and screenshots current, while the window is hidden
+  win.webContents.on('did-finish-load', () => win.webContents.executeJavaScript(`
+    window.__dialogs = [];
+    window.confirm = question => { __dialogs.push(String(question)); return window.__confirmAnswer ?? true; };
+    window.alert = message => { __dialogs.push(String(message)); };
+  `));
+});
 
 require('../app/main');

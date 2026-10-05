@@ -332,6 +332,31 @@ test('uncommitted changes count as edits, whoever or whatever made them', async 
   await Promise.all([one.close(), two.close(), twin.close()]);
 });
 
+test('checkouts of the same pushed branch only overlap on what neither has pushed', async () => {
+  const git = (changed, local) => JSON.stringify({ t: 'git', branch: 'session/shared', added: 1, removed: 0, files: changed.length, behind: 0, ahead: 1, changed, local });
+  const david = await rawLane('shared-david', { repo: 'acme/shared', root: '/david', branch: 'session/shared' });
+  const max = await rawLane('shared-max', { repo: 'acme/shared', root: '/max', branch: 'session/shared' });
+  // David pushed a change to store.ts; Max's checkout started from that push. Both differ from main there, neither collides.
+  david.socket.send(git(['store.ts'], []));
+  max.socket.send(git(['store.ts'], []));
+  let lanes = await nextState(ls => ls.find(l => l.id === 'shared-max')?.files.includes('store.ts') && ls.find(l => l.id === 'shared-david')?.files.includes('store.ts'));
+  assert.deepEqual(lanes.find(l => l.id === 'shared-max').overlaps, [], 'a shared commit is not an overlap');
+  assert.equal(await max.hook({ hook_event_name: 'PreToolUse', tool_name: 'Edit', tool_input: { file_path: '/max/store.ts' }, cwd: '/max' }), null);
+  const bash = command => max.hook({ hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_input: { command }, cwd: '/max' });
+  assert.match((await bash('git push origin -d session/shared'))?.permissionDecisionReason || '', /deletes session\/shared on the remote, which Alice also work/,
+    'deleting the branch a teammate works on asks');
+  // Now both change it without pushing.
+  david.socket.send(git(['store.ts'], ['store.ts']));
+  max.socket.send(git(['store.ts'], ['store.ts']));
+  lanes = await nextState(ls => ['shared-david', 'shared-max'].every(id => ls.find(l => l.id === id)?.overlaps.includes('store.ts')));
+  assert.equal((await max.hook({ hook_event_name: 'PreToolUse', tool_name: 'Edit', tool_input: { file_path: '/max/store.ts' }, cwd: '/max' }))?.permissionDecision, 'ask');
+  for (const command of ["sed -i '' 's/a/b/' store.ts", 'echo x > store.ts', 'cat new.ts | tee ./store.ts', 'rm /max/store.ts']) {
+    assert.equal((await bash(command))?.permissionDecision, 'ask', command);
+  }
+  for (const command of ['cat store.ts', 'sed -i "" s/a/b/ other.ts', 'echo store.ts']) assert.equal(await bash(command), null, command);
+  await Promise.all([david.close(), max.close()]);
+});
+
 test('a teammate\'s file is recognised whichever way the path to it is written', async () => {
   // macOS resolves /var to /private/var: git reports one, an agent's shell may use the other.
   const one = await rawLane('sym-one', { repo: 'acme/sym', root: '/private/var/one', roots: ['/private/var/one', '/var/one'] });

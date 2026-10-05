@@ -49,6 +49,8 @@ exec sh -c "$(printf '%s' "$last" | sed "s#'[^']*playground.git'#'${origin}'#")"
     git(clone, 'config', 'user.name', people[c.token].name);
     git(clone, 'config', 'user.email', `${c.name}@example.com`);
     git(clone, 'remote', 'set-head', 'origin', 'main');
+    // The stand-in agents (playground-app.js writes them to <copy>/bin) count as installed in this home's login shell.
+    for (const rc of ['.zshenv', '.bash_profile']) fs.writeFileSync(path.join(home, rc), `export PATH="${path.join(root, c.name, 'bin')}:$PATH"\n`);
     const log = fs.openSync(path.join(root, c.name, 'app.log'), 'a');
     apps.push(spawn(electron, [path.join(__dirname, 'playground-app.js')], { stdio: ['ignore', log, log],
       env: { ...process.env, HOME: home, PROTO_ONLINE_HUB: hub, PROTO_GITHUB_TOKEN: c.token, PLAY_PORT: String(c.port), PLAY_DIR: path.join(root, c.name) } }));

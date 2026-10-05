@@ -46,6 +46,17 @@ test('a real conflict is left for a person, with the commit kept and nothing hal
   assert.equal((await files.status(max, env)).unpushed, 1, 'and shows as not pushed');
 });
 
+test('mid-rebase, conflicts are marked and nothing gets committed', async () => {
+  assert.throws(() => git(max, 'pull', '--rebase', 'origin', 'session/lobby'), /conflict|CONFLICT|Command failed/);
+  const status = await files.status(max, env);
+  assert.equal(status.underWay, 'rebase');
+  assert.deepEqual(status.changes.find(c => c.path === 'lobby.js'), { path: 'lobby.js', state: 'C' });
+  await assert.rejects(files.commitAndPush(max, 'Oops', env), /rebase is under way/);
+  assert.match(fs.readFileSync(path.join(max, 'lobby.js'), 'utf8'), /<<<<<<<|=======/, 'left for a person to resolve');
+  git(max, 'rebase', '--abort');
+  assert.equal((await files.status(max, env)).underWay, null);
+});
+
 test('nothing outside the session folder can be read or written, symlinks included', () => {
   fs.symlinkSync(os.homedir(), path.join(david, 'home-link'));
   for (const rel of ['../max/lobby.js', '/etc/hosts', 'home-link']) {

@@ -18,6 +18,13 @@ printf '%s' "$MAC_CERT_P12" | base64 --decode > "$DIR/cert.p12"
 security create-keychain -p "$MAC_CERT_PASSWORD" "$KC"
 security unlock-keychain -p "$MAC_CERT_PASSWORD" "$KC"
 security import "$DIR/cert.p12" -k "$KC" -P "$MAC_CERT_PASSWORD" -T /usr/bin/codesign > /dev/null
-security set-key-partition-list -S apple-tool:,apple: -s -k "$MAC_CERT_PASSWORD" "$KC" > /dev/null
-codesign --force --deep --keychain "$KC" --sign "Protoplasma Release Signing" "$APP"
+security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$MAC_CERT_PASSWORD" "$KC" > /dev/null
+# codesign finds identities through the keychain search list, so the build keychain joins it until we're done.
+SEARCH=$(security list-keychains -d user | tr -d '"')
+security list-keychains -d user -s "$KC" $SEARCH
+trap 'security list-keychains -d user -s $SEARCH; security delete-keychain "$KC" 2>/dev/null; rm -rf "$DIR"' EXIT
+security find-identity -p codesigning "$KC" | sed -n '1,3p'
+# By fingerprint: a self-signed certificate isn't trusted, and codesign won't match an untrusted identity by name.
+ID=$(security find-certificate -c "Protoplasma Release Signing" -Z "$KC" | awk '/SHA-1/ { print $NF; exit }')
+codesign --force --deep --keychain "$KC" --sign "$ID" "$APP"
 codesign --verify --deep --strict "$APP"

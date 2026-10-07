@@ -80,7 +80,11 @@ ipcMain.handle('sessions:save', signedIn((key, o) => teams.saveSession(session, 
 ipcMain.handle('sessions:done', signedIn((key, name, done) => teams.setSessionDone(session, teamFor(key), String(name), !!done)));
 ipcMain.handle('sessions:rename', signedIn((key, name, rename) => teams.renameSession(session, teamFor(key), String(name), String(rename))));
 ipcMain.handle('sessions:delete', signedIn((key, name) => teams.deleteSession(session, teamFor(key), String(name))));
-ipcMain.handle('comments:add', signedIn((key, name, text) => teams.addComment(session, teamFor(key), String(name), String(text))));
+ipcMain.handle('comments:add', signedIn((key, name, text, ref) => teams.addComment(session, teamFor(key), String(name), String(text),
+  ref && { file: String(ref.file), line: ref.line | 0, endLine: ref.endLine | 0, snippet: String(ref.snippet || '') })));
+ipcMain.handle('steps:add', signedIn((key, name, step) => teams.addStep(session, teamFor(key), String(name), { text: String(step.text), owner: String(step.owner || '') })));
+ipcMain.handle('steps:update', signedIn((key, name, id, change) => teams.updateStep(session, teamFor(key), String(name), String(id), change)));
+ipcMain.handle('steps:remove', signedIn((key, name, id) => teams.removeStep(session, teamFor(key), String(name), String(id))));
 ipcMain.handle('comments:remove', signedIn((key, name, id) => teams.removeComment(session, teamFor(key), String(name), String(id))));
 ipcMain.handle('teams:remove', signedIn(async (key, login) => remember({ ...teamFor(key), ...await teams.removeMember(session, teamFor(key), String(login)) })));
 // Leaving or deleting closes the team here too.
@@ -172,6 +176,12 @@ ipcMain.handle('code:committed', inFolder((root, env, rel) => files.committed(ro
 ipcMain.handle('code:write', inFolder((root, env, rel, text) => files.write(root, rel, text)));
 ipcMain.handle('code:search', inFolder((root, env, query) => files.search(root, query, env)));
 ipcMain.handle('code:commit', inFolder((root, env, message) => files.commitAndPush(root, message, env)));
+// A file one of your agents changed, for a teammate who asked to see it (the renderer checks you share files).
+ipcMain.handle('code:readLane', (_, id, rel) => {
+  const root = lanes.get(id)?.cwd;
+  if (!root) throw new Error('That agent has stopped.');
+  return files.read(root, rel);
+});
 ipcMain.handle('code:watch', inFolder(root => {
   stopWatching();
   stopWatching = files.watch(root, paths => toWindow('code:changed', root, paths));

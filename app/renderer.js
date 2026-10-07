@@ -13,7 +13,7 @@ const REPO = /^[\w.-]+\/[\w.-]+$/;
 
 // ---- Preferences (Settings) ----
 
-const DEFAULT_PREFS = { theme: 'dark', fontSize: 12.5, fontFamily: 'SF Mono', lineHeight: 1.2, notifyNeeds: true, notifyDone: true, badge: true, agent: 'claude', open: false, sessionBranches: true };
+const DEFAULT_PREFS = { theme: 'dark', fontSize: 12.5, fontFamily: 'SF Mono', lineHeight: 1.2, notifyNeeds: true, notifyDone: true, badge: true, agent: 'claude', open: false, sessionBranches: true, shareFiles: false };
 const prefs = { ...DEFAULT_PREFS, ...(() => { try { return JSON.parse(store.get('prefs') || '{}'); } catch { return {}; } })() };
 const effectiveTheme = () => (prefs.theme === 'system' ? (matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark') : prefs.theme);
 
@@ -405,6 +405,7 @@ function watch(conn) {
       }
       if (m.t === 'state') {
         hubLanes = m.lanes;
+        followRenames(m.sessions || []);
         for (const l of hubLanes) if (local.get(l.id)?.refused) delete local.get(l.id).refused;
         teamWatchers = m.watchers || [];
         memories = m.memories || [];
@@ -414,6 +415,8 @@ function watch(conn) {
       }
       if (m.t === 'out' && !local.has(m.lane)) write(m.lane, m.d);
       if (m.t === 'replay') showReplay(m);
+      if (m.t === 'file:get') answerFile(m);
+      if (m.t === 'file:put') fileAnswered(m);
     };
     socket.onclose = e => {
       if (generation !== watchGeneration) return;
@@ -721,7 +724,22 @@ async function deleteSession(name) {
     proto.removeSessionFolder(source.repo, key).catch(err => alert(errorText(err)));
   }
 }
-const toggleDone = name => sessionAction(() => proto.setSessionDone(currentTeam.key, name, !recordFor(name)?.done));
+const toggleDone = name => {
+  const done = !recordFor(name)?.done, running = hubLanes.some(l => l.session === name);
+  if (done && running && !confirm(`Agents are still running in "${name}". Mark it done anyway? They keep running.`)) return;
+  return sessionAction(() => proto.setSessionDone(currentTeam.key, name, done));
+};
+// A session renamed (by anyone) keeps your agents in it, what this Mac remembers about it, and you on it if it's open.
+function followRenames(sessions) {
+  const renamed = old => sessions.find(r => r.name !== old && (r.aliases || []).includes(old))?.name;
+  for (const l of hubLanes) {
+    const o = local.get(l.id);
+    if (!o || o.session === l.session) continue;
+    for (const key of [sourceKey, lastAgentKey]) if (store.get(key(o.session)) && !store.get(key(l.session))) store.set(key(l.session), store.get(key(o.session)));
+    o.session = l.session;
+  }
+  if (current && !sessions.some(r => r.name === current)) current = renamed(current) || current;
+}
 
 // Renaming only changes the name people see (the hub refuses while agents run); branch and folders keep the original.
 let renaming = null;
@@ -783,6 +801,7 @@ function render() {
   if (view === 'sessions') renderSessions(lanes);
   if (view === 'people') renderPeople();
   renderRoom(lanes); // always: it also decides which terminals exist and which are on screen
+  renderPanes(lanes); // pane mode (panes.js), or putting its terminals back
   notifyChanges(lanes);
 }
 
@@ -879,7 +898,7 @@ function renderSessions(lanes) {
     <div class="card" data-session="${esc(s.name)}" role="button" tabindex="0">
       <div class="card-top"><span class="card-title">${esc(s.name)}</span>${canManage(s.rec) ? `<button class="icon-btn" data-menu="${esc(s.name)}" aria-label="Session menu">⋯</button>` : ''}</div>
       ${s.rec?.task ? `<div class="card-task">${esc(s.rec.task)}</div>` : ''}
-      <div class="card-status">${pill(s.status)}<span>${n ? `${n} agent${n === 1 ? '' : 's'} running` : 'No agents running'}</span></div>
+      <div class="card-status">${pill(s.status)}<span>${n ? `${n} agent${n === 1 ? '' : 's'} running` : 'No agents running'}</span>${stepsDone(s.rec)}</div>
       ${n ? `<div class="card-agents">${esc([...new Set(s.lanes.map(l => agentName(l.cmd)))].join(', '))}</div>` : ''}
       ${branchLine(s.lanes)}
       ${fileList(s.lanes)}
@@ -902,8 +921,8 @@ function sessionMenu(anchor, name) {
   const done = recordFor(name)?.done, running = hubLanes.some(l => l.session === name);
   showMenu(anchor, [{ label: name },
     ...(ownsTeam(currentTeam) ? [{ text: 'Share…', run: () => $('#inviteBtn').click() }] : []),
-    { text: 'Rename…', disabled: running, hint: running ? 'Agents running' : '', run: () => openRename(name) },
-    { text: done ? 'Reopen' : 'Mark done', disabled: running, hint: running ? 'Agents running' : '', run: () => toggleDone(name) },
+    { text: 'Rename…', run: () => openRename(name) },
+    { text: done ? 'Reopen' : 'Mark done', run: () => toggleDone(name) },
     { text: 'Delete session', disabled: running, hint: running ? 'Stop its agents first' : '', run: () => deleteSession(name) }]);
 }
 
@@ -950,7 +969,7 @@ function renderRoom(lanes) {
   const here = id => inRoom.some(l => l.id === id);
   if (!here(focus)) focus = (inRoom.find(l => local.has(l.id)) || inRoom[0])?.id ?? null;
   if (!here(split) || split === focus) split = null;
-  const onStage = tab === 'agents' ? [focus, split] : [];
+  const onStage = view === 'panes' ? paneLaneIds() : tab === 'agents' ? [focus, split] : [];
 
   for (const id of terms.keys()) if (!lanes.some(l => l.id === id) && !local.has(id)) dropTerminal(id);
   for (const t of terms.values()) t.el.hidden = true; // local lanes on other teams stay alive, just hidden
@@ -984,18 +1003,19 @@ function renderRoom(lanes) {
   $('#roomWho').textContent = ended ? `${whose(ended)} ${agentName(ended.cmd)}, stopped`
     : !shown ? '' : (local.has(shown.id) ? 'Your agent' : `${shown.name}'s agent`) + (several ? `, ${agentLabel(shown, inRoom)}` : '');
   $('#myAgent').hidden = !shown || local.has(shown.id) || !inRoom.some(l => local.has(l.id));
-  $('#newPane').hidden = tab !== 'agents' || inRoom.length < 2;
-  $('#newPane').textContent = split ? 'Close pane' : 'New pane';
+
   $('#shareBtn').hidden = !ownsTeam(currentTeam);
   $('#panel').hidden = panelHidden;
   $('#backBar').hidden = tab === 'agents';
-  $('#stageTitle').textContent = { memory: 'Memory', pulls: 'Pull requests', issues: 'Issues' }[tab]
+  $('#stageTitle').textContent = { memory: 'Memory', plan: 'Plan', pulls: 'Pull requests', issues: 'Issues' }[tab]
     || (ended ? `${whose(ended)} ${agentName(ended.cmd)}, stopped ${ago(ended.endedAt)}` : tab === 'replay' ? 'Stopped agent' : '');
   $('#replayPanel').hidden = tab !== 'replay';
   $('#replayScreen').hidden = !ended;
   $('#replayGone').hidden = tab !== 'replay' || !!ended;
   $('#lanes').hidden = tab !== 'agents';
   $('#memoryPanel').hidden = tab !== 'memory';
+  $('#planPanel').hidden = tab !== 'plan';
+  if (tab === 'plan') renderPlan();
   $('#ghPanel').hidden = tab !== 'pulls' && tab !== 'issues';
   if (tab === 'memory') renderMemory(lanes);
   $('#empty').hidden = inRoom.length > 0;
@@ -1027,7 +1047,8 @@ function renderPanel(inRoom, rec) {
       <div class="person-meta"><span>${same(login, currentTeam.owner) ? 'Owner' : 'Member'}</span><span>${theirs.length ? `${(STATUS[sessionStatus(theirs)] || [])[1]?.toLowerCase() || ''}${at ? `, ${ago(at)}` : ''}` : 'no agents here'}</span></div>
       ${theirs.map(l => agentCard(l, agentLabel(l, inRoom))).join('')}
     </div>`;
-  }).join('') + stoppedRows() + `<button class="panel-row" data-tab="memory"><b>Memory</b><span>${notes ? `${notes} note${notes === 1 ? '' : 's'}` : 'No notes yet'}</span></button>`
+  }).join('') + stoppedRows() + `<button class="panel-row" data-tab="plan"><b>Plan</b><span>${stepsDone(rec) || 'No steps yet'}</span></button>`
+    + `<button class="panel-row" data-tab="memory"><b>Memory</b><span>${notes ? `${notes} note${notes === 1 ? '' : 's'}` : 'No notes yet'}</span></button>`
     + '<div class="panel-label">Comments</div>' + comments(rec));
 }
 // Agents that stopped in this session. The hub keeps the last of their output for a while.
@@ -1069,11 +1090,21 @@ function fitReplay() {
 // Someone's profile as this app knows it (picture included), falling back to just their login.
 const person = login => (same(login, me.login) ? me : board.find(l => same(l.login, login)) || { login });
 // Comments are for the people in a session (Memory is for the agents).
+const lineRef = r => `${r.file}:${r.line}${r.endLine > r.line ? `–${r.endLine}` : ''}`;
+// A comment about lines of a file, picked in the code view (code.js), waiting to be written.
+let commentRef = null;
+function setCommentRef(ref) {
+  commentRef = ref;
+  $('#commentRef').hidden = !ref;
+  setHTML($('#commentRef'), ref ? `On <b>${esc(lineRef(ref))}</b><button type="button" class="stop" data-unref aria-label="Not about these lines">×</button>` : '');
+}
+$('#commentRef').onclick = e => { if ('unref' in e.target.dataset) setCommentRef(null); };
 function comments(rec) {
   const list = rec?.comments || [];
   const removable = c => same(c.author, me.login) || ownsTeam(currentTeam);
   return list.map(c => `
-    <div class="comment">${avatar(person(c.author))}<div class="comment-body"><div><b>${esc(c.author)}</b><span class="ago">${ago(c.at)}</span></div><p>${esc(c.text)}</p></div>
+    <div class="comment">${avatar(person(c.author))}<div class="comment-body"><div><b>${esc(c.author)}</b><span class="ago">${ago(c.at)}</span></div>
+      ${c.file ? `<button class="ref" data-open-file="${esc(c.file)}" data-line="${c.line}" title="Open ${esc(c.file)}">${esc(lineRef(c))}</button>${c.snippet ? `<code>${esc(c.snippet)}</code>` : ''}` : ''}<p>${esc(c.text)}</p></div>
       ${removable(c) ? `<button class="stop" data-uncomment="${esc(c.id)}" aria-label="Remove comment" title="Remove comment">×</button>` : ''}</div>`).join('')
     || '<p class="panel-empty">Nothing yet. Leave a note for the people in this session.</p>';
 }
@@ -1081,8 +1112,9 @@ $('#commentForm').onsubmit = async e => {
   e.preventDefault();
   const text = $('#commentText').value.trim();
   if (!text) return;
-  if (await sessionAction(() => proto.addComment(currentTeam.key, current, text))) {
+  if (await sessionAction(() => proto.addComment(currentTeam.key, current, text, commentRef || undefined))) {
     $('#commentText').value = '';
+    setCommentRef(null);
     $('#panelBody').scrollTop = $('#panelBody').scrollHeight;
   }
 };
@@ -1093,12 +1125,15 @@ function agentCard(l, name) {
   const own = l.local || l.files; // not what it shares with a teammate's pushed branch
   const detail = l.prompt ? `“${l.prompt}”` : own.length ? `Edited ${own.slice(-2).join(', ')}`
     : mine ? (l.open ? 'Teammates can type' : 'Only you can type') : (l.open ? 'You can type' : 'View only');
+  const file = !mine && own.at(-1); // a teammate's latest file: open their version of it
   return `
   <div class="agent-card ${[focus, split].includes(l.id) ? 'on' : ''}" data-focus="${esc(l.id)}" style="--c:${colorFor(l.login)}" role="button" tabindex="0">
     <b>${esc(name)}</b>
     <span class="sub ${cls}">${esc(label)}</span>
     ${overlap ? `<span class="sub overlap" title="${esc(overlap)}">${esc(overlap)}</span>` : ''}
     <span class="sub ${l.prompt ? 'prompt' : ''}" title="${esc(detail)}">${esc(detail)}</span>
+    ${file ? `<button class="sub link" data-theirs="${esc(l.id)}" data-path="${esc(file)}" title="Open ${esc(l.name)}'s ${esc(file)}">Open ${esc(file.split('/').pop())}</button>` : ''}
+    ${l.id !== focus ? `<button class="beside" data-beside="${esc(l.id)}" aria-label="${split === l.id ? 'Close' : 'Show beside'}" title="${split === l.id ? 'Close the pane' : 'Show beside'}">${split === l.id ? '−' : '⧉'}</button>` : ''}
     ${mine && !stopping.has(l.id) ? `<button class="stop" data-stop="${esc(l.id)}" aria-label="Stop this agent" title="Stop this agent">×</button>` : ''}
   </div>`;
 }
@@ -1119,15 +1154,18 @@ function environment(inRoom, rec) {
     github ? '<div class="panel-label">GitHub</div>' + row('Repository', esc(roomRepo), `data-url="${esc(github)}"`)
       + row('Pull requests', '', 'data-tab="pulls"') + row('Issues', '', 'data-tab="issues"')
       + (branches.length === 1 ? row('Compare branch', '', `data-url="${esc(`${github}/compare/${branches[0].split('/').map(encodeURIComponent).join('/')}`)}"`) : '') : '',
-    canManage(rec) && !inRoom.length ? '<div class="panel-label">Session</div>' + row('Rename session', '', 'data-act="rename"')
-      + row(rec.done ? 'Reopen' : 'Mark done', '', 'data-act="done"') + row('Delete session', '', 'data-act="delete"') : '',
+    canManage(rec) ? '<div class="panel-label">Session</div>' + row('Rename session', '', 'data-act="rename"')
+      + row(rec.done ? 'Reopen' : 'Mark done', '', 'data-act="done"') + (inRoom.length ? '' : row('Delete session', '', 'data-act="delete"')) : '',
   ].join('');
 }
 
 $('.panel-tabs').onclick = e => { if (e.target.dataset.panel) { panelTab = e.target.dataset.panel; render(); } };
 $('#panelBody').onclick = e => {
   const file = e.target.closest('[data-open-file]');
-  if (file) return openFile(file.dataset.openFile);
+  if (file) return openFile(file.dataset.openFile, { line: Number(file.dataset.line) || undefined });
+  const theirs = e.target.closest('[data-theirs]');
+  if (theirs) return openTheirs(theirs.dataset.theirs, theirs.dataset.path);
+  if (e.target.dataset.beside) { split = split === e.target.dataset.beside ? null : e.target.dataset.beside; tab = 'agents'; return render(); }
   if (e.target.dataset.stop) return stopAgent(e.target.dataset.stop);
   if (e.target.dataset.uncomment) return sessionAction(() => proto.removeComment(currentTeam.key, current, e.target.dataset.uncomment));
   const replay = e.target.closest('[data-replay]');
@@ -1145,12 +1183,7 @@ $('#lanes').onclick = e => { if (e.target.dataset.stop) stopAgent(e.target.datas
 $('#emptyNew').onclick = () => agentMenu($('#emptyNew'));
 $('#resumeBtn').onclick = resumeAgent;
 $('#myAgent').onclick = () => { focus = split = null; tab = 'agents'; render(); terms.get(focus)?.term.focus(); };
-$('#newPane').onclick = () => {
-  const others = board.filter(l => l.session === current && l.id !== focus);
-  split = split ? null : (others.find(l => !local.has(l.id)) || others[0])?.id ?? null;
-  panelHidden = !!split; // two terminals need the room
-  render();
-};
+$('#newPane').onclick = () => openPanes([current, null]);
 $('#panelToggle').onclick = () => { panelHidden = !panelHidden; render(); };
 $('#backToAgents').onclick = () => { tab = 'agents'; render(); };
 $('#ghPanel').onclick = e => { const item = e.target.closest('[data-url]'); if (item) proto.openExternal(item.dataset.url); };
@@ -1170,9 +1203,54 @@ function fitTeammates() {
 const refit = new ResizeObserver(() => { fitTeammates(); fitReplay(); });
 refit.observe($('#lanes'));
 refit.observe($('#replayPanel'));
+refit.observe($('#paneGrid'));
 setInterval(() => render(), 30_000); // keeps "2m ago" labels current between updates
 
 // ---- Shared memory ----
+
+// ---- Plan: a session's steps, like Amoeba's ----
+
+const stepsDone = rec => (rec?.steps?.length ? `<span class="steps">${rec.steps.filter(s => s.done).length} of ${rec.steps.length} steps</span>` : '');
+function renderPlan() {
+  const steps = recordFor(current)?.steps || [];
+  setHTML($('#stepOwner'), '<option value="">No owner</option>' + [currentTeam.owner, ...currentTeam.members]
+    .map(login => `<option value="${esc(login)}">${esc(login)}</option>`).join(''));
+  setHTML($('#stepList'), steps.map(s => `
+    <label class="step ${s.done ? 'done' : ''}"><input type="checkbox" data-step="${esc(s.id)}" ${s.done ? 'checked' : ''}>
+      <span class="text">${esc(s.text)}</span>${s.owner ? `<span class="owner">${avatar(person(s.owner))}${esc(s.owner)}</span>` : ''}
+      <button type="button" class="stop" data-unstep="${esc(s.id)}" aria-label="Remove step" title="Remove step">×</button></label>`).join('')
+    || '<p class="panel-empty">No steps yet. Split the work into steps: everyone sees them, and so does every Claude agent in the session.</p>');
+}
+$('#stepForm').onsubmit = async e => {
+  e.preventDefault();
+  const text = $('#stepText').value.trim(), button = e.submitter || $('#stepForm button');
+  if (!text || button.disabled) return $('#stepText').focus();
+  button.disabled = true;
+  try {
+    sessionRecords = await proto.addStep(currentTeam.key, current, { text, owner: $('#stepOwner').value });
+    $('#stepText').value = '';
+    $('#stepErr').textContent = '';
+    render();
+  } catch (err) { $('#stepErr').textContent = errorText(err); } finally { button.disabled = false; $('#stepText').focus(); }
+};
+$('#stepList').onchange = e => { if (e.target.dataset.step) sessionAction(() => proto.updateStep(currentTeam.key, current, e.target.dataset.step, { done: e.target.checked })); };
+$('#stepList').onclick = e => { if (e.target.dataset.unstep) sessionAction(() => proto.removeStep(currentTeam.key, current, e.target.dataset.unstep)); };
+
+// ---- Sharing your agents' files ----
+
+// A teammate asks for a file one of your agents changed. Answered only if you share files (Settings → Agents), and only
+// with files that agent's checkout has changed.
+async function answerFile(m) {
+  const reply = body => ws?.readyState === WebSocket.OPEN && ws.send(JSON.stringify({ t: 'file:put', req: m.req, ...body }));
+  const lane = hubLanes.find(l => l.id === m.lane);
+  if (!lane || !local.has(m.lane)) return reply({ error: 'That agent has stopped.' });
+  if (!prefs.shareFiles) return reply({ error: `${me.name || me.login} doesn't share files. They can turn it on in Settings → Agents.` });
+  if (!lane.files.includes(m.path)) return reply({ error: `Only the files ${me.name || me.login}'s agents have changed are shared.` });
+  try {
+    const file = await proto.code.readLane(m.lane, m.path);
+    reply(file.text != null ? { text: file.text } : { error: file.tooBig ? 'That file is too big to share.' : 'That file can\'t be shown.' });
+  } catch (e) { reply({ error: errorText(e) }); }
+}
 
 // Notes that apply to the open session: its repo's, plus the ones written for every repo.
 const roomNotes = () => memories.filter(m => !m.repo || (roomRepo && m.repo === roomRepo));

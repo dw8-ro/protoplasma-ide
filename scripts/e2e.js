@@ -110,11 +110,11 @@ async function run(win, hub) {
     await js(`$('#panelBody [data-focus="${theirs}"]').click()`);
     check('clicking a teammate\'s agent shows it full size', await until(`focus === ${JSON.stringify(theirs)} && terms.get(${JSON.stringify(mine)}).el.hidden && !terms.get(${JSON.stringify(theirs)}).el.hidden && $('#roomWho').textContent === "Max's agent" && !$('#myAgent').hidden`));
     const large = await js(`terms.get(${JSON.stringify(theirs)}).term.options.fontSize`);
-    await js(`$('#myAgent').click(); $('#newPane').click()`);
-    check('New pane shows a teammate beside your agent', await until(`focus === ${JSON.stringify(mine)} && split === ${JSON.stringify(theirs)} && !terms.get(${JSON.stringify(mine)}).el.hidden && !terms.get(${JSON.stringify(theirs)}).el.hidden && terms.get(${JSON.stringify(theirs)}).term.options.fontSize <= ${large} && $('#newPane').textContent === 'Close pane'`));
+    await js(`$('#myAgent').click(); $('#panelBody [data-beside="${theirs}"]').click()`);
+    check('⧉ on a teammate\'s agent card shows it beside yours', await until(`focus === ${JSON.stringify(mine)} && split === ${JSON.stringify(theirs)} && !terms.get(${JSON.stringify(mine)}).el.hidden && !terms.get(${JSON.stringify(theirs)}).el.hidden && terms.get(${JSON.stringify(theirs)}).term.options.fontSize <= ${large}`));
     check('Stop button is fully visible on your pane', await js(`(() => { const t = terms.get(${JSON.stringify(mine)}); return t.bar.querySelector('[data-stop]').getBoundingClientRect().right <= t.el.getBoundingClientRect().right; })()`));
-    await js(`$('#newPane').click(); panelTab = 'environment'; render()`);
-    check('the Environment tab shows the branch and changes', await js(`/Changes/.test($('#panelBody').textContent) && /Branch/.test($('#panelBody').textContent) && !/Mark done/.test($('#panelBody').textContent)`), await js(`$('#panelBody').textContent.replace(/\\s+/g, ' ')`));
+    await js(`$('#panelBody [data-beside="${theirs}"]').click(); panelTab = 'environment'; render()`);
+    check('the Environment tab shows the branch and changes', await js(`split === null && /Changes/.test($('#panelBody').textContent) && /Branch/.test($('#panelBody').textContent) && /Mark done/.test($('#panelBody').textContent) && !/Delete session/.test($('#panelBody').textContent)`), await js(`$('#panelBody').textContent.replace(/\\s+/g, ' ')`));
     await js(`panelTab = 'session'; render()`);
 
     for (const cli of ['codex', 'opencode']) { // either starts, or says it isn't installed
@@ -258,6 +258,32 @@ async function run(win, hub) {
     check('and nothing is left to commit', await until(`code.changes.size === 0 && $('#changeCount').hidden`, 5000));
     await js(`showCode(false); 0`);
     check('Code again goes back to just the agents', await until(`!$('#room').classList.contains('coding') && $('#code').hidden && $('#dockTabs').hidden`));
+
+    // ---- a plan, renaming with agents running, comments on lines, conflicts, and pane mode (as in Amoeba)
+    await js(`openSession('Fix Login'); tab = 'plan'; render(); $('#stepText').value = 'Lock the seat row'; $('#stepForm').requestSubmit(); 0`);
+    check('a session gets a plan with steps', await until(`recordFor('Fix Login')?.steps?.length === 1 && /Lock the seat row/.test($('#stepList').textContent)`));
+    await js(`$('#stepList input[type=checkbox]').click(); 0`);
+    check('a step can be ticked off', await until(`recordFor('Fix Login').steps[0].done === true`));
+    await js(`go('sessions')`);
+    check('and the session card counts the steps', await until(`/1 of 1 steps/.test($('#sessions').textContent)`));
+    await js(`proto.renameSession(currentTeam.key, 'Fix Login', 'Login work').then(r => { sessionRecords = r; render(); }); 0`);
+    check('a session can be renamed while its agent runs, and the agent moves with it', await until(`hubLanes.find(l => l.id === ${JSON.stringify(second)})?.session === 'Login work' && local.get(${JSON.stringify(second)}).session === 'Login work' && /Login work/.test($('#sessions').textContent)`));
+    await js(`proto.renameSession(currentTeam.key, 'Login work', 'Fix Login').then(r => { sessionRecords = r; render(); }); 0`);
+    await until(`local.get(${JSON.stringify(second)}).session === 'Fix Login'`);
+    await js(`openSession('Fix Login'); openFile('README.md'); 0`);
+    await until(`code.active === 'README.md' && !!editor.getModel()`);
+    await js(`editor.setSelection(new monaco.Selection(1, 1, 1, 4)); editor.getAction('protoplasma.comment').run(); 0`);
+    check('Comment on this points the next comment at those lines', await until(`commentRef?.file === 'README.md' && commentRef.line === 1 && !$('#commentRef').hidden && document.activeElement === $('#commentText')`));
+    await js(`$('#commentText').value = 'Say what this repo is for'; $('#commentForm').requestSubmit(); 0`);
+    check('the comment shows the line it is about, and the editor marks the line', await until(`recordFor('Fix Login')?.comments?.at(-1)?.line === 1 && /README\.md:1/.test($('#panelBody').textContent) && editor.getModel().getAllDecorations().some(d => d.options.glyphMarginClassName === 'comment-glyph')`));
+    await js(`$('[data-explorer="conflicts"]').click(); 0`);
+    check('the Explorer has a Conflicts tab', await until(`code.explorer === 'conflicts' && !$('#codeConflicts').hidden && $('#conflictCount').textContent === '0' && /Nothing here/.test($('#codeConflicts').textContent)`));
+    await js(`$('[data-explorer="files"]').click(); showCode(false); $('#newPane').click(); 0`);
+    check('New pane opens pane mode with the session and room for another', await until(`view === 'panes' && panes.length === 2 && $('#panesView').querySelector('[data-pane="0"] .pane-body').contains(terms.get(${JSON.stringify(second)}).el) && !terms.get(${JSON.stringify(second)}).el.hidden && /room for another/.test($('#panesTitle').textContent)`));
+    await js(`$('#paneGrid [data-pane-pick][data-name="s1"]').click(); 0`);
+    check('a second session opens beside it, with its agent', await until(`panes[1] === 's1' && $('#paneGrid [data-pane="1"] .pane-body').contains(terms.get(${JSON.stringify(mine)}).el) && !terms.get(${JSON.stringify(mine)}).el.hidden`));
+    await js(`$('#singlePane').click(); 0`);
+    check('Single goes back to one session, terminals and all', await until(`view === 'session' && current === 'Fix Login' && $('#lanes').contains(terms.get(${JSON.stringify(second)}).el) && $('#lanes').contains(terms.get(${JSON.stringify(mine)}).el)`));
 
     // ---- with session branches off, a repo session works on the clone's own branch
     await js(`$('#settingsBtn').click(); $('input[data-pref=sessionBranches]').click(); $('#settingsDone').click();

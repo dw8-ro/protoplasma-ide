@@ -79,9 +79,13 @@ const setSessionDone = ({ token }, team, name, done) => hubApi(team.hub, token, 
 const renameSession = ({ token }, team, name, rename) => hubApi(team.hub, token, 'POST', sessionRoute(team, name), { rename });
 const deleteSession = ({ token }, team, name) => hubApi(team.hub, token, 'DELETE', sessionRoute(team, name));
 const commentRoute = (team, name, id = '') => `${sessionRoute(team, name)}/comments${id && `/${encodeURIComponent(id)}`}`;
-const addComment = ({ token }, team, name, text) => hubApi(team.hub, token, 'POST', commentRoute(team, name), { text });
+const addComment = ({ token }, team, name, text, ref = {}) => hubApi(team.hub, token, 'POST', commentRoute(team, name), { text, ...ref });
+const stepRoute = (team, name, id = '') => `${sessionRoute(team, name)}/steps${id && `/${encodeURIComponent(id)}`}`;
+const addStep = ({ token }, team, name, step) => hubApi(team.hub, token, 'POST', stepRoute(team, name), step);
+const updateStep = ({ token }, team, name, id, change) => hubApi(team.hub, token, 'POST', stepRoute(team, name, id), change);
+const removeStep = ({ token }, team, name, id) => hubApi(team.hub, token, 'DELETE', stepRoute(team, name, id));
 const removeComment = ({ token }, team, name, id) => hubApi(team.hub, token, 'DELETE', commentRoute(team, name, id));
 
 const stopAnnouncing = () => { bonjour.unpublishAll(); bonjour.destroy(); };
 
-module.exports = { listTeams, createTeam, invite, removeMember, deleteTeam, addMemory, removeMemory, saveSession, setSessionDone, renameSession, deleteSession, addComment, removeComment, stopAnnouncing };
+module.exports = { listTeams, createTeam, invite, removeMember, deleteTeam, addMemory, removeMemory, saveSession, setSessionDone, renameSession, deleteSession, addComment, removeComment, addStep, updateStep, removeStep, stopAnnouncing };

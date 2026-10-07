@@ -411,6 +411,61 @@
   .shell { flex: 1; min-height: 0; margin: 10px 14px 14px 16px; overflow: hidden; }
   .shell[hidden] { display: none; }
 
+  /* Pane mode, like Amoeba's: sessions side by side, each with its main agent. */
+  .panes-view { flex: 1; min-width: 0; min-height: 0; display: flex; flex-direction: column; }
+  .panes-view[hidden] { display: none; }
+  .panes-head { display: flex; align-items: center; gap: 8px; height: 46px; padding: 0 14px 0 20px; border-bottom: 1px solid var(--line); color: var(--muted); font-weight: 500; }
+  .panes-head .spacer { margin-left: auto; }
+  .panes-head svg { width: 12px; height: 12px; margin-right: 4px; }
+  .pane-grid { flex: 1; min-height: 0; display: grid; grid-template-columns: repeat(var(--panes, 2), minmax(0, 1fr)); }
+  .pane { display: flex; flex-direction: column; min-width: 0; min-height: 0; border-right: 1px solid var(--line); }
+  .pane:last-child { border-right: 0; }
+  .pane-head { display: flex; align-items: center; gap: 8px; min-height: 42px; padding: 0 8px 0 16px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+  .pane-head b { overflow: hidden; text-overflow: ellipsis; }
+  .pane-head .pane-task { min-width: 0; overflow: hidden; text-overflow: ellipsis; color: var(--faint); font-size: 12px; }
+  .pane-head .spacer { margin-left: auto; }
+  .pane-body { flex: 1; min-height: 0; display: flex; padding: 12px; }
+  .pane-body .lane { margin-top: 6px; }
+  .pane-empty { margin: auto; display: grid; justify-items: center; gap: 12px; width: min(340px, 100%); color: var(--muted); text-align: center; }
+  .pane-empty[hidden] { display: none; }
+  .pane-pick { display: grid; gap: 4px; width: 100%; max-height: 50vh; overflow: auto; }
+  .pane-pick .panel-row { justify-content: space-between; }
+  /* Plans */
+  .step-form select { width: 150px; flex: none; }
+  .steps-list { display: grid; gap: 2px; margin-top: 8px; }
+  .step { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border-radius: 8px; cursor: pointer; }
+  .step:hover { background: var(--surface); }
+  .step input { flex: none; }
+  .step .text { flex: 1; min-width: 0; }
+  .step.done .text { color: var(--faint); text-decoration: line-through; }
+  .step .owner { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); font-size: 12px; }
+  .step .owner .avatar { width: 18px; height: 18px; font-size: 9px; }
+  .step .stop { position: static; visibility: hidden; }
+  .step:hover .stop { visibility: visible; }
+  .card-status .steps { margin-left: auto; color: var(--faint); font-size: 12px; }
+  /* Comments about lines of a file */
+  .comment-ref { display: flex; align-items: center; gap: 6px; margin-bottom: 6px; color: var(--muted); font-size: 12px; }
+  .comment-ref b { font: 500 11.5px var(--mono); color: var(--text); }
+  .comment-ref .stop { position: static; }
+  .comment-body .ref { display: block; padding: 0; border: 0; background: none; color: var(--muted); font: 11.5px var(--mono); text-align: left; cursor: pointer; }
+  .comment-body .ref:hover { color: var(--text); text-decoration: underline; }
+  .comment-body code { display: block; margin: 2px 0; overflow: hidden; color: var(--faint); font: 11px var(--mono); white-space: nowrap; text-overflow: ellipsis; }
+  .comment-glyph { margin-left: 5px; border-radius: 50%; background: var(--needs); width: 8px !important; height: 8px !important; margin-top: 6px; }
+  .commented-line { background: color-mix(in srgb, var(--needs) 8%, transparent); }
+  /* Agent cards: beside, and a teammate's file */
+  .agent-card .beside { position: absolute; top: 6px; right: 26px; width: 18px; height: 18px; border: 0; border-radius: 5px; background: none; color: var(--faint); cursor: pointer; line-height: 18px; }
+  .agent-card .beside:hover { background: var(--line-strong); color: var(--text); }
+  .agent-card .link { padding: 0; border: 0; background: none; color: var(--muted); text-align: left; cursor: pointer; }
+  .agent-card .link:hover { color: var(--text); text-decoration: underline; }
+  /* Explorer | Conflicts */
+  .explorer-tabs { gap: 4px; }
+  .explorer-tabs button { display: inline-flex; align-items: center; gap: 6px; height: 22px; padding: 0 6px; border: 0; border-radius: 6px; background: none; color: var(--faint); font: inherit; cursor: pointer; }
+  .explorer-tabs button.on { color: var(--text); background: var(--raised); }
+  .explorer-tabs .count { color: var(--faint); font-weight: 400; }
+  .conflict { padding: 2px 0 6px; border-bottom: 1px solid var(--line); }
+  .conflict .btn { margin: 2px 0 0 26px; }
+  .tree-row .theirs { cursor: pointer; }
+
   .empty { margin: auto; display: grid; justify-items: center; gap: 14px; color: var(--muted); text-align: center; max-width: 320px; }
   .empty .mark { width: 36px; height: 36px; color: var(--faint); }
 
@@ -652,6 +707,12 @@
     <p id="peopleErr" class="error" role="alert"></p>
   </section>
 
+  <section id="panesView" class="panes-view" hidden>
+    <div class="panes-head"><span id="panesTitle"></span><span class="spacer"></span>
+      <button id="addPane" class="btn small"><svg><use href="#plus"/></svg>Pane</button><button id="singlePane" class="btn small">Single</button></div>
+    <div id="paneGrid" class="pane-grid"></div>
+  </section>
+
   <section id="room" class="room" hidden>
     <div class="room-head">
       <div class="crumbs"><b id="roomTitle"></b><span id="roomTask" class="crumb" hidden></span><span id="roomWho" class="crumb who"></span></div>
@@ -671,7 +732,9 @@
           <button data-code-view="changes" title="Source control" aria-label="Source control"><svg><use href="#branch"/></svg><span id="changeCount" class="count" hidden></span></button>
         </nav>
         <div class="code-side">
-          <div data-code-pane="explorer"><div class="code-side-head">Explorer</div><div id="codeTree" class="tree" role="tree"></div></div>
+          <div data-code-pane="explorer"><div id="explorerTabs" class="code-side-head explorer-tabs" role="tablist">
+              <button data-explorer="files" class="on" role="tab">Explorer</button><button data-explorer="conflicts" role="tab">Conflicts <span id="conflictCount" class="count">0</span></button></div>
+            <div id="codeTree" class="tree" role="tree"></div><div id="codeConflicts" class="tree" hidden></div></div>
           <div data-code-pane="search" hidden><div class="code-side-head">Search</div>
             <input id="codeQuery" class="code-input" placeholder="Find in files" aria-label="Find in files" autocomplete="off" spellcheck="false">
             <div id="codeHits" class="code-hits"></div></div>
@@ -710,6 +773,15 @@
         </div>
         <div id="replayPanel" class="replay" hidden><div id="replayScreen"></div><p id="replayGone" class="gh-empty" hidden>That agent's screen isn't kept any more.</p></div>
         <div id="ghPanel" class="gh-panel" hidden></div>
+        <div id="planPanel" class="gh-panel" hidden>
+          <form id="stepForm" class="memory-form step-form">
+            <input id="stepText" maxlength="200" placeholder="A step, like Lock the seat row before writing" aria-label="Step" autocomplete="off">
+            <select id="stepOwner" aria-label="Owner"></select>
+            <button class="btn primary">Add step</button>
+          </form>
+          <p id="stepErr" class="error" role="alert"></p>
+          <div id="stepList" class="steps-list"></div>
+        </div>
         <div id="memoryPanel" class="gh-panel" hidden>
           <form id="memoryForm" class="memory-form">
             <input id="memoryText" maxlength="500" placeholder="Something every agent on the team should know" aria-label="Note" autocomplete="off">
@@ -725,7 +797,7 @@
       <aside id="panel" class="panel">
         <div class="panel-tabs"><button data-panel="session" class="on">Session</button><button data-panel="environment">Environment</button></div>
         <div id="panelBody" class="panel-body"></div>
-        <form id="commentForm" class="comment-form"><input id="commentText" maxlength="500" placeholder="Comment for the people in this session" aria-label="Comment" autocomplete="off"></form>
+        <form id="commentForm" class="comment-form"><div id="commentRef" class="comment-ref" hidden></div><input id="commentText" maxlength="500" placeholder="Comment for the people in this session" aria-label="Comment" autocomplete="off"></form>
         <div id="roomWatching" class="panel-foot"></div>
       </aside>
     </div>
@@ -885,6 +957,8 @@
           <input type="checkbox" class="switch" data-pref="open" aria-label="Let teammates type by default"></div>
         <div class="setting"><div><b>A branch for every session</b><p>Sessions started from a GitHub repo get their own branch (session/…) and folder, so main only changes through a push or pull request. Off works on the repo's current branch.</p></div>
           <input type="checkbox" class="switch" data-pref="sessionBranches" aria-label="A branch for every session"></div>
+        <div class="setting"><div><b>Share the files your agents change</b><p>Teammates can open them read-only, to watch your agent's work or compare it with theirs. They pass through the hub on the way and aren't kept there.</p></div>
+          <input type="checkbox" class="switch" data-pref="shareFiles" aria-label="Share the files your agents change"></div>
         <div class="setting"><div><b>Repos folder</b><p>Where repos picked from GitHub are cloned.</p></div><kbd>~/Protoplasma</kbd></div>
       </div>
     </section>
@@ -942,6 +1016,7 @@
 <script src="../node_modules/@xterm/addon-webgl/lib/addon-webgl.js"></script>
 <script src="renderer.js"></script>
 <script src="code.js"></script>
+<script src="panes.js"></script>
 <!-- Monaco's AMD loader, last: it defines `define`, which the UMD scripts above would otherwise register with.
      ponytail: Monaco calls its AMD build deprecated; move to its ESM build with a bundler when it's removed. -->
 <script src="../node_modules/monaco-editor/min/vs/loader.js"></script>

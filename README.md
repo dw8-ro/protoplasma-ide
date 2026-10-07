@@ -29,8 +29,8 @@ Shared spaces for coding agents, like [Amoeba](https://useamoeba.com), drive the
 1. **Sign in with GitHub** and create a team. Invite people by their GitHub username.
 2. **Start a session** with **New** (⌘N). Say what you're working on, pick one of your GitHub repos (or a folder on your Mac) and an agent: Claude Code, Codex or OpenCode. Protoplasma clones the repo, gives the session its own branch and folder, and opens your agent.
 3. **Talk to your agent.** It's the real CLI in a terminal, so you type to it exactly as you would in Terminal, slash commands included.
-4. **Open the code.** Click **Code**, or any file the session has changed, or press ⌘P. The repo opens in an editor with its files, search and source control, and your agent moves to a panel underneath. As the agent edits a file you have open, you see the change straight away. A **Terminal** tab beside the agent gives you a plain shell in the same folder.
-5. **Work alongside your team.** Everyone's agents in the session are listed on the right with what they were last asked. Open any of them full size or beside yours, leave comments, and keep notes the agents read. A file changed in two places is flagged for everyone, and Claude asks before touching it.
+4. **Open the code.** Click **Code**, or any file the session has changed, or press ⌘P. The repo opens in an editor with its files, search and source control, and your agent moves to a panel underneath. As the agent edits a file you have open, you see the change straight away. A **Terminal** tab beside the agent gives you a plain shell in the same folder, and **Conflicts** lists files you and a teammate are both changing, with a side-by-side compare.
+5. **Work alongside your team.** Everyone's agents in the session are listed on the right with what they were last asked. Open any of them full size or beside yours, or a teammate's version of a file their agent is changing (if they share files). Plan the work as steps, comment on lines of code (⇧⌘M), and keep notes the agents read. A file changed in two places is flagged for everyone, and Claude asks before touching it. **New pane** puts several sessions side by side.
 6. **Ship it.** Write a message under source control and **Commit & Push**, then open a pull request.
 
 <p align="center">
@@ -48,6 +48,7 @@ Shared spaces for coding agents, like [Amoeba](https://useamoeba.com), drive the
 | ⌘P | Go to a file |
 | ⇧⌘E | Show or hide the code |
 | ⌘S | Save the open file |
+| ⇧⌘M | Comment on the selected lines |
 | ⌘J | Hide the panel (under the code, or beside the agents) |
 | ⌘B | Hide the sidebar |
 | ⌘, | Settings |
@@ -63,7 +64,7 @@ Shared spaces for coding agents, like [Amoeba](https://useamoeba.com), drive the
 
 **Collisions caught early.** Every checkout reports the files it has changed compared with main, committed or not, whoever or whatever changed them. A file changed in two places is an overlap for everyone, before it turns into a merge conflict.
 
-**Shared memory.** Notes for a repo or a single file. Claude gets them at the right moment: repo notes with every prompt, a file's notes just before it reads or edits it.
+**Plans and shared memory.** Each session can have a plan: steps with owners that anyone ticks off, shown on its card. Notes go with a repo or a single file. Claude gets all of it at the right moment: the plan and repo notes with every prompt, a file's notes just before it reads or edits it.
 
 <p align="center">
   <img src="docs/session.png" width="100%" alt="Your Claude Code agent with its slash-command menu open, beside a teammate's agent, with the session panel">
@@ -180,7 +181,7 @@ scripts/  end-to-end check, screenshots, demo and icon tooling
 
 - Sign-in asks for read-only access to your public GitHub profile, and nothing else. Repo access stays with the GitHub CLI on your Mac.
 - The hub keeps team names, members, notes, and sessions with their goals and comments. Terminal output passes through it and is held in memory only.
-- The code view reads and writes files on your Mac only. The hub never sees your code: teammates see which files changed, not what's in them.
+- The code view reads and writes files on your Mac only. The hub never stores your code: teammates see which files changed, not what's in them, unless you turn on **Share the files your agents change** (Settings → Agents, off by default). Then a teammate can open those files, read-only; each one passes through the hub on the way and isn't kept.
 - Teams are invite-only, and removing someone disconnects them at once.
 - Letting teammates type into your agent lets them run commands on your Mac, so it's off unless you turn it on, and your agent shows who last typed into it.
 - Teams hosted on your own Mac use plain HTTP; on a shared network, use an online team.
@@ -188,7 +189,6 @@ scripts/  end-to-end check, screenshots, demo and icon tooling
 ## Roadmap
 
 - [ ] Notarised builds, so browser downloads open without the first-launch prompt
-- [ ] Plans with owners and step status
 - [ ] Coordination tools over MCP, so agents can leave notes and message each other
 - [ ] Viewer role
 

@@ -13,7 +13,9 @@ const code = {
   branch: '',
   open: [],             // paths with a tab
   active: null,
-  diff: null,           // the open path shown as changes since the last commit
+  diff: null,           // the open path shown as changes since the last commit (or against a teammate's, below)
+  against: null,        // with diff: the teammate's agent whose version it's compared with
+  explorer: 'files',    // the Explorer's tab: files | conflicts
   pane: 'explorer',     // explorer | search | changes
   expanded: new Set(),
   unpushed: 0,          // commits on the branch that aren't pushed
@@ -24,7 +26,7 @@ const models = new Map(); // path -> { model, saved, stale, view, note }
 let monacoReady, editor, diffEditor;
 const base = p => p.slice(p.lastIndexOf('/') + 1);
 const dirOf = p => p.slice(0, Math.max(0, p.lastIndexOf('/')));
-const isDirty = entry => !!entry?.model && entry.model.getAlternativeVersionId() !== entry.saved;
+const isDirty = entry => !!entry?.model && !entry.theirs && entry.model.getAlternativeVersionId() !== entry.saved;
 
 // ---- Monaco ----
 
@@ -60,13 +62,15 @@ async function ensureEditor() {
   editorTheme();
   const host = $('#codeEditor');
   host.innerHTML = '<div class="ed"></div><div class="ed" hidden></div>';
-  const options = { automaticLayout: true, theme: 'protoplasma', fontFamily: terminalFont(), fontSize: prefs.fontSize + 0.5,
+  const options = { automaticLayout: true, theme: 'protoplasma', fontFamily: terminalFont(), fontSize: prefs.fontSize + 0.5, glyphMargin: true,
     minimap: { renderCharacters: false }, scrollBeyondLastLine: false, smoothScrolling: true, padding: { top: 10 }, fixedOverflowWidgets: true };
   editor = monaco.editor.create(host.children[0], options);
   diffEditor = monaco.editor.createDiffEditor(host.children[1], { ...options, originalEditable: false, renderOverviewRuler: false });
   for (const ed of [editor, diffEditor.getModifiedEditor()]) {
     ed.onDidChangeModelContent(() => renderTabs());
     ed.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, saveActive);
+    ed.addAction({ id: 'protoplasma.comment', label: 'Comment on this for the session', contextMenuGroupId: 'navigation', contextMenuOrder: 0,
+      keybindings: [monaco.KeyMod.CtrlCmd | monaco.KeyMod.Shift | monaco.KeyCode.KeyM], run: commentOn });
   }
 }
 
@@ -152,12 +156,13 @@ async function modelFor(path) {
   return entry;
 }
 /** Opens a file in the code view, at `line`, or as its changes since the last commit with `diff`. */
-async function openFile(path, { line, match, diff = false } = {}) {
+async function openFile(path, { line, match, diff = false, against = null } = {}) {
   if (!await showCode()) return;
   if (!code.open.includes(path)) code.open.push(path);
   rememberView();
   code.active = path;
   code.diff = diff ? path : null;
+  code.against = diff ? against : null;
   for (const dir of path.split('/').slice(0, -1).map((_, i, parts) => parts.slice(0, i + 1).join('/'))) code.expanded.add(dir);
   await modelFor(path);
   render();
@@ -167,18 +172,22 @@ function rememberView() {
   const entry = models.get(code.active);
   if (entry?.model && code.diff !== code.active) entry.view = editor.saveViewState();
 }
+let committedModel = null; // the last commit's version shown in a diff, ours to dispose
 async function showActive(line, match) {
   const entry = code.active && models.get(code.active);
   const [plain, changes] = $('#codeEditor').children;
   if (entry?.model && code.diff === code.active) {
-    const before = monaco.editor.createModel(await proto.code.committed(code.root, code.active), entry.model.getLanguageId());
-    const old = diffEditor.getModel();
+    const theirs = code.against && (await theirModel(code.against, code.active)).model;
+    const before = theirs || monaco.editor.createModel(await proto.code.committed(code.root, code.active), entry.model.getLanguageId());
     diffEditor.setModel({ original: before, modified: entry.model });
-    old?.original.dispose();
+    committedModel?.dispose();
+    committedModel = theirs ? null : before;
     [plain.hidden, changes.hidden] = [true, false];
     diffEditor.getModifiedEditor().focus();
   } else {
     editor.setModel(entry?.model || null);
+    editor.updateOptions({ readOnly: !!entry?.theirs });
+    marks.last = null;
     if (entry?.view) editor.restoreViewState(entry.view);
     [plain.hidden, changes.hidden] = [false, true];
     if (line) {
@@ -189,6 +198,7 @@ async function showActive(line, match) {
     if (entry?.model) editor.focus();
   }
   renderBanner();
+  marks();
 }
 function closeFile(path) {
   const entry = models.get(path);
@@ -204,7 +214,7 @@ function closeFile(path) {
 }
 async function saveActive() {
   const path = code.active, entry = models.get(path);
-  if (!code.on || !entry?.model) return;
+  if (!code.on || !entry?.model || entry.theirs) return;
   if (entry.stale && !confirm(`${base(path)} changed on disk while you were editing it, probably by an agent. Save yours over that change?`)) return;
   try {
     await proto.code.write(code.root, path, entry.model.getValue());
@@ -248,20 +258,31 @@ function renderCode() {
   $('#codeWelcomeText').textContent = code.root ? 'Start working in this repository'
     : 'This session\'s code isn\'t on this Mac yet. Add an agent and its folder opens here.';
   $('#codeWelcome').hidden = !!code.active;
+  for (const b of $('#explorerTabs').children) b.classList.toggle('on', b.dataset.explorer === code.explorer);
+  $('#codeTree').hidden = code.explorer !== 'files';
+  $('#codeConflicts').hidden = code.explorer !== 'conflicts';
+  const conflicts = conflictRows();
+  $('#conflictCount').textContent = conflicts.count;
+  setHTML($('#codeConflicts'), conflicts.html);
   setHTML($('#codeTree'), code.tree ? treeRows(code.tree) : '');
+  marks();
   setHTML($('#codeChanges'), [...code.changes].sort(([a], [b]) => a.localeCompare(b))
     .map(([path]) => fileRow(path, 0, base(path), dirOf(path))).join('') || (code.root ? '<p class="panel-empty">No changes since the last commit.</p>' : ''));
   renderTabs();
   renderBanner();
 }
 function renderTabs() {
-  setHTML($('#codeTabs'), code.open.map(path => `
-    <div class="code-tab ${path === code.active ? 'on' : ''} ${isDirty(models.get(path)) ? 'dirty' : ''}" data-tab-file="${esc(path)}" title="${esc(path)}" role="tab">
-      ${esc(base(path))}${code.diff === path ? '<small>changes</small>' : ''}<span class="x" data-close-file="${esc(path)}" role="button" aria-label="Close ${esc(base(path))}"></span></div>`).join(''));
+  setHTML($('#codeTabs'), code.open.map(key => {
+    const theirs = theirsOf(key), path = theirs?.path || key;
+    const note = theirs ? laneName(theirs.lane) : code.diff === key ? (code.against ? `vs ${laneName(code.against)}` : 'changes') : '';
+    return `<div class="code-tab ${key === code.active ? 'on' : ''} ${isDirty(models.get(key)) ? 'dirty' : ''}" data-tab-file="${esc(key)}" title="${esc(theirs ? `${laneName(theirs.lane)}'s ${path}` : path)}" role="tab">
+      ${esc(base(path))}${note ? `<small>${esc(note)}</small>` : ''}<span class="x" data-close-file="${esc(key)}" role="button" aria-label="Close ${esc(base(path))}"></span></div>`;
+  }).join(''));
 }
 function renderBanner() {
-  const entry = code.active && models.get(code.active);
-  const text = entry?.stale ? 'This file changed on disk while you were editing it.' : entry?.note || '';
+  const entry = code.active && models.get(code.active), theirs = theirsOf(code.active);
+  const text = entry?.stale ? 'This file changed on disk while you were editing it.'
+    : theirs ? entry?.note || `${laneName(theirs.lane)}'s version, read-only. It updates as their agent works.` : entry?.note || '';
   $('#codeBanner').hidden = !text;
   setHTML($('#codeBanner'), text ? `<span>${esc(text)}</span>${entry.stale
     ? '<span class="spacer"></span><button class="btn small" data-reload>Load theirs</button><button class="btn small" data-keep>Keep mine</button>' : ''}` : '');
@@ -307,7 +328,99 @@ function fileRow(path, depth, label, hint = '') {
   const title = theirs.length ? `${path}\n${names} ${theirs.length === 1 ? 'is' : 'are'} changing this${state ? ' too' : ''}` : path;
   return `<button class="tree-row ${state} ${theirs.length && state ? 'overlap' : ''} ${path === code.active ? 'on' : ''}" data-file="${esc(path)}" style="--depth:${depth}" title="${esc(title)}" role="treeitem">
     <span class="leaf"></span><span class="name">${esc(label)}${hint ? ` <span class="dir">${esc(hint)}</span>` : ''}</span>
-    ${theirs.length ? `<span class="theirs" style="--c:${colorFor(theirs[0].login)}"></span>` : ''}${state ? `<span class="state ${state}">${state}</span>` : ''}</button>`;
+    ${theirs.length ? `<span class="theirs" style="--c:${colorFor(theirs[0].login)}" data-theirs="${esc(theirs[0].id)}" title="Open ${esc(theirs[0].name)}'s version"></span>` : ''}${state ? `<span class="state ${state}">${state}</span>` : ''}</button>`;
+}
+
+// ---- A teammate's version of a file ----
+// Asked for through the hub; their app answers if they share files (Settings → Agents). See answerFile in renderer.js.
+
+const theirsKey = (lane, path) => `theirs:${lane}:${path}`;
+const theirsOf = key => (key?.startsWith('theirs:') ? { lane: key.split(':')[1], path: key.split(':').slice(2).join(':') } : null);
+const laneName = id => hubLanes.find(l => l.id === id)?.name || 'A teammate';
+const asks = new Map(); // ask -> resolve
+let askCount = 0;
+function askFile(lane, path) {
+  return new Promise(resolve => {
+    if (ws?.readyState !== WebSocket.OPEN) return resolve({ error: 'Not connected to the team right now.' });
+    const ask = String(++askCount);
+    asks.set(ask, resolve);
+    ws.send(JSON.stringify({ t: 'file:get', lane, path, ask }));
+    setTimeout(() => { if (asks.delete(ask)) resolve({ error: `${laneName(lane)}'s app didn't answer.` }); }, 12_000);
+  });
+}
+function fileAnswered(m) { const done = asks.get(m.ask); asks.delete(m.ask); done?.(m); }
+async function theirModel(lane, path) {
+  const key = theirsKey(lane, path);
+  const entry = models.get(key) || { theirs: true };
+  models.set(key, entry);
+  const answer = await askFile(lane, path);
+  if (answer.text == null) entry.note = answer.error;
+  else {
+    entry.note = '';
+    if (!entry.model) entry.model = monaco.editor.createModel(answer.text, undefined, monaco.Uri.parse(`theirs://${lane}/${path}`));
+    else if (entry.model.getValue() !== answer.text) entry.model.pushEditOperations([], [{ range: entry.model.getFullModelRange(), text: answer.text }], () => null);
+  }
+  return entry;
+}
+async function openTheirs(lane, path) {
+  await showCode();
+  await ensureEditor();
+  const key = theirsKey(lane, path);
+  if (!code.open.includes(key)) code.open.push(key);
+  rememberView();
+  Object.assign(code, { active: key, diff: null, against: null });
+  await theirModel(lane, path);
+  render();
+  showActive();
+}
+// Kept current while it's on screen.
+setInterval(() => {
+  if (!code.on || view !== 'session' || document.hidden) return;
+  const theirs = theirsOf(code.active);
+  if (theirs) theirModel(theirs.lane, theirs.path).then(entry => (entry.model && editor.getModel() !== entry.model && code.active === theirsKey(theirs.lane, theirs.path) ? showActive() : renderBanner()));
+  else if (code.against && code.diff === code.active) theirModel(code.against, code.active);
+}, 1500);
+
+// ---- Conflicts: what you and a teammate both changed, and merge conflicts here ----
+
+function conflictRows() {
+  const merges = [...code.changes].filter(([, state]) => state === 'C').map(([path]) => path);
+  const mine = hubLanes.filter(l => local.has(l.id) && l.session === current);
+  const both = [...new Set(mine.flatMap(l => l.overlaps))].filter(f => !merges.includes(f));
+  const html = merges.map(path => `<div class="conflict" title="A merge conflict in your checkout">${fileRow(path, 0, base(path), dirOf(path))}</div>`).join('')
+    + both.map(path => {
+      const others = hubLanes.filter(o => !local.has(o.id) && o.overlaps.includes(path));
+      return `<div class="conflict">${fileRow(path, 0, base(path), dirOf(path))}
+        ${others.map(o => `<button class="btn small" data-compare="${esc(o.id)}" data-path="${esc(path)}">Compare with ${esc(o.name)}'s</button>`).join('')}</div>`;
+    }).join('');
+  return { count: merges.length + both.length, html: html || '<p class="panel-empty">Nothing here. Files you and a teammate both change, and merge conflicts, show up here.</p>' };
+}
+
+// ---- Comments on lines ----
+
+function commentOn(ed) {
+  const path = theirsOf(code.active)?.path || code.active, sel = ed.getSelection();
+  if (!path || !sel) return;
+  const endLine = sel.endColumn === 1 && sel.endLineNumber > sel.startLineNumber ? sel.endLineNumber - 1 : sel.endLineNumber;
+  setCommentRef({ file: path, line: sel.startLineNumber, endLine, snippet: ed.getModel().getLineContent(sel.startLineNumber).trim().slice(0, 300) });
+  Object.assign(code, { dockHidden: false });
+  panelHidden = false;
+  panelTab = 'session';
+  render();
+  $('#commentText').focus();
+}
+// The session's comments on the open file, beside the lines they're about.
+let commentMarks;
+function marks() {
+  if (!editor || !window.monaco) return;
+  const path = theirsOf(code.active)?.path || code.active;
+  const list = (recordFor(current)?.comments || []).filter(c => c.file && c.file === path && c.line);
+  const key = JSON.stringify(list.map(c => c.id));
+  if (key === marks.last) return;
+  marks.last = key;
+  commentMarks ||= editor.createDecorationsCollection();
+  commentMarks.set(list.map(c => ({ range: new monaco.Range(c.line, 1, c.endLine || c.line, 1), options: { isWholeLine: true, className: 'commented-line',
+    glyphMarginClassName: 'comment-glyph', glyphMarginHoverMessage: { value: `**${c.author}:** ${c.text.replace(/[\\`*_[\]<>]/g, '\\$&')}` } } })));
 }
 
 // ---- Searching ----
@@ -410,6 +523,10 @@ $('.activity').onclick = e => {
   if (pane === 'changes') refreshFiles();
 };
 $('.code-side').onclick = e => {
+  const tabbed = e.target.closest('[data-explorer]');
+  if (tabbed) { code.explorer = tabbed.dataset.explorer; return render(); }
+  if (e.target.dataset.theirs) return openTheirs(e.target.dataset.theirs, e.target.closest('[data-file]').dataset.file);
+  if (e.target.dataset.compare) return openFile(e.target.dataset.path, { diff: true, against: e.target.dataset.compare });
   const row = e.target.closest('[data-dir], [data-file]');
   if (!row) return;
   if (row.dataset.dir) {
@@ -423,7 +540,7 @@ $('#codeTabs').onclick = e => {
   const close = e.target.closest('[data-close-file]');
   if (close) return closeFile(close.dataset.closeFile);
   const tab = e.target.closest('[data-tab-file]');
-  if (tab && tab.dataset.tabFile !== code.active) { rememberView(); code.active = tab.dataset.tabFile; code.diff = null; render(); showActive(); }
+  if (tab && tab.dataset.tabFile !== code.active) { rememberView(); code.active = tab.dataset.tabFile; code.diff = code.against = null; render(); showActive(); }
 };
 $('#codeTabs').onauxclick = e => { const tab = e.target.closest('[data-tab-file]'); if (e.button === 1 && tab) closeFile(tab.dataset.tabFile); };
 $('#codeBanner').onclick = async e => {

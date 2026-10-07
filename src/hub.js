@@ -21,6 +21,8 @@ const MAX_SESSIONS = 200; // per team; the oldest finished ones are dropped firs
 const MAX_COMMENTS = 100; // per session; the oldest go first
 const MAX_STOPPED = 20; // stopped agents whose last screen is kept, per team (in memory only)
 const MAX_COMMENT = 500;
+const MAX_STEPS = 50;            // per session plan
+const MAX_SHARED_FILE = 1_000_000; // a teammate's file passed through for viewing
 const PROTECTED_BRANCHES = ['main', 'master'];
 const STATE_REFRESH_MS = 30_000; // rebroadcast at least this often so "last active" times stay fresh
 
@@ -68,7 +70,10 @@ function startHub({ port = 7681, host = '0.0.0.0', dataDir, owners, verifyUser =
   // "Fix Login" and "fix-login" would get the same branch and folder, so they're the same session.
   // A renamed session keeps its original key, which names its branch and folders; that key still finds it.
   const keyOf = x => x.key || slug(x.name);
-  const findSession = (team, name) => team.sessions.find(x => x.name === name) || team.sessions.find(x => slug(x.name) === slug(name) || keyOf(x) === slug(name));
+  // A session answers to its name written any way, its original key, and names it had before a rename (running agents
+  // keep the name they started with).
+  const findSession = (team, name) => team.sessions.find(x => x.name === name)
+    || team.sessions.find(x => slug(x.name) === slug(name) || keyOf(x) === slug(name) || (x.aliases || []).some(a => slug(a) === slug(name)));
   function ensureSession(team, name, login, task = '') {
     let session = findSession(team, name);
     if (!session) {
@@ -143,8 +148,13 @@ function startHub({ port = 7681, host = '0.0.0.0', dataDir, owners, verifyUser =
   function teamContext(lane) {
     const others = inSameRepo(lane);
     const general = notesFor(lane);
-    const goal = findSession(teams.get(lane.team), lane.session)?.task;
+    const record = findSession(teams.get(lane.team), lane.session);
+    const goal = record?.task;
     const parts = goal ? [`You're working in the Protoplasma session "${lane.session}". Its goal: ${goal}`] : [];
+    if (record?.steps?.length) {
+      parts.push(['The session\'s plan (from Protoplasma; teammates tick steps off in the app):',
+        ...record.steps.map(s => `- [${s.done ? 'x' : ' '}] ${s.text}${s.owner ? ` (${s.owner})` : ''}`)].join('\n'));
+    }
     if (others.length) {
       parts.push(['Teammates working in this repo right now (from Protoplasma):',
         ...others.map(o => `- ${o.name}'s ${o.cmd} agent, session "${o.session}", ${o.status}` + (touchedBy(o, lane).size ? `, has changed: ${[...touchedBy(o, lane)].join(', ')}` : '')),
@@ -255,7 +265,7 @@ function startHub({ port = 7681, host = '0.0.0.0', dataDir, owners, verifyUser =
   async function handle(req, res) {
     const json = (status, body) => res.writeHead(status, { 'content-type': 'application/json' }).end(body === undefined ? '' : JSON.stringify(body));
     const [resource, id, sub, subId, leaf, leafId, ...rest] = new URL(req.url, 'http://x').pathname.split('/').filter(Boolean).map(decodeURIComponent);
-    if (rest.length || (leaf && !(sub === 'sessions' && leaf === 'comments'))) return json(404, { error: 'Not found.' });
+    if (rest.length || (leaf && !(sub === 'sessions' && ['comments', 'steps'].includes(leaf)))) return json(404, { error: 'Not found.' });
     if (!resource && req.method === 'GET') return json(200, { app: 'protoplasma-hub' });
 
     // Hook events from Claude Code, authenticated with the lane's own secret.
@@ -333,13 +343,38 @@ function startHub({ port = 7681, host = '0.0.0.0', dataDir, owners, verifyUser =
         if (!leafId && req.method === 'POST') {
           const text = str(body.text, MAX_COMMENT).trim();
           if (!text) return json(400, { error: 'Write the comment first.' });
-          session.comments.push({ id: crypto.randomBytes(6).toString('base64url'), author: user.login, text, at: new Date().toISOString() });
+          const file = str(body.file, 300).trim(), line = Math.max(0, body.line | 0), endLine = Math.max(line, body.endLine | 0);
+          session.comments.push({ id: crypto.randomBytes(6).toString('base64url'), author: user.login, text, at: new Date().toISOString(),
+            ...(file && line ? { file, line, endLine, snippet: str(body.snippet, 300) } : {}) });
           session.comments.splice(0, session.comments.length - MAX_COMMENTS);
         } else if (leafId && req.method === 'DELETE') {
           const comment = session.comments.find(c => c.id === leafId);
           if (!comment) return json(404, { error: 'That comment is already gone.' });
           if (!same(comment.author, user.login) && !same(team.owner, user.login)) return json(403, { error: 'Only its author or the team owner can remove a comment.' });
           session.comments = session.comments.filter(c => c !== comment);
+        } else return json(404, { error: 'Not found.' });
+        saveTeams();
+        broadcastState(team.id);
+        return json(200, team.sessions);
+      }
+      // A plan: steps anyone on the team adds, ticks off, gives an owner, or removes.
+      if (leaf === 'steps') {
+        const session = findSession(team, subId);
+        if (!session) return json(404, { error: 'No such session.' });
+        session.steps ||= [];
+        const step = leafId && session.steps.find(s => s.id === leafId);
+        if (leafId && !step) return json(404, { error: 'That step is gone.' });
+        if (!leafId && req.method === 'POST') {
+          const text = str(body.text, 200).trim();
+          if (!text) return json(400, { error: 'Write the step first.' });
+          if (session.steps.length >= MAX_STEPS) return json(400, { error: `A plan holds up to ${MAX_STEPS} steps.` });
+          session.steps.push({ id: crypto.randomBytes(6).toString('base64url'), text, owner: str(body.owner, 40).replace(/^@/, ''), done: false });
+        } else if (step && req.method === 'POST') {
+          if (typeof body.done === 'boolean') Object.assign(step, { done: body.done, doneBy: body.done ? user.login : undefined });
+          if (typeof body.text === 'string' && body.text.trim()) step.text = str(body.text, 200).trim();
+          if (typeof body.owner === 'string') step.owner = str(body.owner, 40).replace(/^@/, '');
+        } else if (step && req.method === 'DELETE') {
+          session.steps = session.steps.filter(s => s !== step);
         } else return json(404, { error: 'Not found.' });
         saveTeams();
         broadcastState(team.id);
@@ -360,13 +395,14 @@ function startHub({ port = 7681, host = '0.0.0.0', dataDir, owners, verifyUser =
           session.done = body.done;
           session.doneAt = body.done ? new Date().toISOString() : undefined;
         } else if (req.method === 'POST' && typeof body.rename === 'string') {
-          // Only while nothing runs in it: running agents know their session by name.
+          // Running agents move with it, and its old name keeps finding it (they rejoin under the name they started with).
           const name = str(body.rename, 60).trim();
           if (!name) return json(400, { error: 'Give the session a name.' });
-          if (running(session.name)) return json(409, { error: 'Stop its agents first.' });
           const clash = team.sessions.find(x => x !== session && (x.name === name || slug(x.name) === slug(name) || keyOf(x) === slug(name)));
           if (clash) return json(409, { error: `There's already a session called ${clash.name}.` });
           for (const s of stopped.get(team.id) || []) if (s.session === session.name) s.session = name;
+          for (const l of teamLanes(team.id)) if (l.session === session.name) l.session = name;
+          session.aliases = [...new Set([...(session.aliases || []), session.name])].slice(-5);
           session.key = keyOf(session); // its branch and folders keep the original name
           session.name = name;
         } else if (req.method === 'DELETE') {
@@ -466,6 +502,26 @@ function startHub({ port = 7681, host = '0.0.0.0', dataDir, owners, verifyUser =
     });
   }
 
+  // A teammate's file, for viewing: the request goes to the app of whoever runs the agent, which answers only if they
+  // share files (it's their setting) and only for files that agent's checkout has changed. Passed through, never kept.
+  const fileAsks = new Map(); // request id -> { from: requester's socket, owner: login }
+  function relayFile(ws, user, team, m) {
+    if (m.t === 'file:get') {
+      const lane = lanes.get(m.lane), req = crypto.randomBytes(8).toString('base64url');
+      const owners = lane?.team === team.id ? [...watchers].filter(w => w.team === team.id && same(w.login, lane.login)) : [];
+      if (!owners.length) return send(ws, { t: 'file:put', ask: m.ask, error: lane ? `${lane.name}'s app isn't open.` : 'That agent has stopped.' });
+      fileAsks.set(req, { from: ws, ask: m.ask, owner: lane.login });
+      setTimeout(() => { if (fileAsks.delete(req)) send(ws, { t: 'file:put', ask: m.ask, error: `${lane.name}'s app didn't answer.` }); }, 10_000);
+      for (const w of owners) send(w, { t: 'file:get', req, lane: lane.id, path: str(m.path, 300), from: user.name || user.login });
+      return;
+    }
+    const ask = fileAsks.get(m.req);
+    if (!ask || !same(ask.owner, user.login)) return; // only the agent's owner answers
+    fileAsks.delete(m.req);
+    const text = typeof m.text === 'string' && m.text.length <= MAX_SHARED_FILE ? m.text : undefined;
+    send(ask.from, { t: 'file:put', ask: ask.ask, text, error: text === undefined ? str(m.error || 'That file is too big to share.', 300) : undefined });
+  }
+
   function onWatcher(ws, user, team) {
     Object.assign(ws, { team: team.id, login: user.login, user, session: null });
     watchers.add(ws);
@@ -478,6 +534,7 @@ function startHub({ port = 7681, host = '0.0.0.0', dataDir, owners, verifyUser =
         const agent = (stopped.get(team.id) || []).find(s => s.id === m.id);
         return agent && send(ws, { t: 'replay', id: agent.id, d: agent.history });
       }
+      if (m?.t === 'file:get' || m?.t === 'file:put') return relayFile(ws, user, team, m);
       const lane = m?.t === 'in' && typeof m.d === 'string' && lanes.get(m.lane);
       if (!lane?.open || lane.team !== team.id) return; // only open lanes accept remote input
       send(lane.ws, { t: 'in', d: m.d });

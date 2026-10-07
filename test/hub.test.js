@@ -295,6 +295,48 @@ test('sessions have comments, and agents show their latest prompt', async () => 
   await shown;
 });
 
+test('a session has a plan its agents are told about, and comments can point at lines of a file', async () => {
+  const steps = `/teams/${team.id}/sessions/s1/steps`;
+  assert.equal((await api('tok-bob', 'POST', steps, { text: ' ' })).status, 400);
+  let sessions = (await api('tok-bob', 'POST', steps, { text: 'Lock the seat row', owner: '@bob' })).body;
+  sessions = (await api('tok-alice', 'POST', steps, { text: 'Add the race test' })).body;
+  const [lock, race] = sessions.find(x => x.name === 's1').steps;
+  assert.deepEqual([lock.owner, lock.done], ['bob', false]);
+  sessions = (await api('tok-alice', 'POST', `${steps}/${lock.id}`, { done: true })).body;
+  assert.equal(sessions.find(x => x.name === 's1').steps[0].doneBy, 'alice');
+  const ctx = (await (await postHook(alice, { hook_event_name: 'UserPromptSubmit', prompt: 'next' })).json()).hookSpecificOutput.additionalContext;
+  assert.match(ctx, /- \[x\] Lock the seat row \(bob\)\n- \[ \] Add the race test/);
+  assert.equal((await api('tok-alice', 'DELETE', `${steps}/${race.id}`)).status, 200);
+  assert.equal((await api('tok-alice', 'DELETE', `${steps}/${race.id}`)).status, 404);
+
+  const comments = `/teams/${team.id}/sessions/s1/comments`;
+  sessions = (await api('tok-bob', 'POST', comments, { text: 'Why a loop here?', file: 'src/join.ts', line: 9, endLine: 13, snippet: 'for (let n = 0' })).body;
+  const comment = sessions.find(x => x.name === 's1').comments.at(-1);
+  assert.deepEqual([comment.file, comment.line, comment.endLine, comment.snippet], ['src/join.ts', 9, 13, 'for (let n = 0']);
+});
+
+test('a teammate\'s file is passed between apps only by its owner\'s', async () => {
+  const nextMessage = (ws, match) => new Promise(resolve => ws.on('message', function on(raw) {
+    const m = JSON.parse(raw);
+    if (match(m)) { ws.off('message', on); resolve(m); }
+  }));
+  const bobs = await connectWatcher('tok-bob', team.id);
+  // Bob asks for a file from Alice's agent; Alice's app (the test's watcher) is asked and answers.
+  const asked = nextMessage(watcher, m => m.t === 'file:get');
+  bobs.send(JSON.stringify({ t: 'file:get', lane: alice.id, path: 'src/join.ts', ask: 'q1' }));
+  const ask = await asked;
+  assert.deepEqual([ask.lane, ask.path, ask.from], [alice.id, 'src/join.ts', 'Bob']);
+  bobs.send(JSON.stringify({ t: 'file:put', req: ask.req, text: 'forged' })); // not his to answer
+  const got = nextMessage(bobs, m => m.t === 'file:put');
+  watcher.send(JSON.stringify({ t: 'file:put', req: ask.req, text: 'export const join = 1;' }));
+  assert.deepEqual(await got, { t: 'file:put', ask: 'q1', text: 'export const join = 1;' });
+  // No app open for that agent: said straight away.
+  const none = nextMessage(watcher, m => m.t === 'file:put');
+  watcher.send(JSON.stringify({ t: 'file:get', lane: 'no-such-lane', path: 'x', ask: 'q2' }));
+  assert.equal((await none).error, 'That agent has stopped.');
+  bobs.close();
+});
+
 test('session names that differ only in case or punctuation are the same session', async () => {
   const a = await rawLane('same-a', { session: 'Fix Login', repo: 'acme/app' });
   const joined = nextState(lanes => lanes.some(l => l.id === 'same-b'));
@@ -438,7 +480,12 @@ test('removes an agent when its process exits, keeping its last screen to look b
 test('a session can be renamed while nothing runs in it, keeping its branch name', async () => {
   const route = `/teams/${team.id}/sessions`;
   await api('tok-alice', 'POST', route, { name: 'old-name' });
-  assert.equal((await api('tok-alice', 'POST', `${route}/s1`, { rename: 'busy' })).status, 409, 's1 has agents running');
+  const followed = nextState(lanes => lanes.some(l => l.session === 'Busy') && !lanes.some(l => l.session === 's1'));
+  assert.equal((await api('tok-alice', 'POST', `${route}/s1`, { rename: 'Busy' })).status, 200, 'renamed with agents running in it');
+  await followed; // they move with it
+  const again = (await api('tok-alice', 'POST', route, { name: 's1' })).body; // as an agent rejoining under its old name would
+  assert.ok(!again.some(x => x.name === 's1') && again.some(x => x.name === 'Busy'), 'the old name still finds it');
+  assert.equal((await api('tok-alice', 'POST', `${route}/Busy`, { rename: 's1' })).status, 200);
   let sessions = (await api('tok-alice', 'POST', `${route}/old-name`, { rename: 'New Name' })).body;
   const renamed = sessions.find(x => x.name === 'New Name');
   assert.equal(renamed.key, 'old-name', 'the branch and folders keep the original name');

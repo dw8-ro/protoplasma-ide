@@ -255,14 +255,18 @@ test('pushing to main or force-pushing needs a person to confirm', async () => {
   // A second push in a chain, and wrappers that leave quotes or brackets around the branch name, are still seen.
   for (const command of ['git push origin feature && git push origin main', 'git push; git push origin main', 'bash -c "git push origin main"',
     "sh -c 'git push origin main'", '(git push origin main)', 'ssh box "cd repo && git push origin main"', '/usr/bin/git push origin main',
-    'git -C ../app push origin main', 'echo $(git push origin main)', 'git push \\\n  origin main']) {
+    'git -C ../app push origin main', 'echo $(git push origin main)', 'git push \\\n  origin main',
+    'git -C "path with spaces" push origin main', "git -c user.name='a b' push origin main", 'GIT_DIR=/srv/git git push origin main',
+    'sudo -u git git push origin main', 'git submodule foreach git push origin main', 'out=$(git push origin main)', 'git push 2>&1 origin main']) {
     assert.match((await push(onBranch, command))?.permissionDecisionReason || '', /straight to main/, command);
   }
   for (const command of ['git push', 'git push -u origin session/fix', 'git push origin --delete session/old', 'git status', 'echo push main',
-    'git stash push -m wip', 'git push --tags', 'git commit -m "fix push to main"']) {
+    'git stash push -m wip', 'git push --tags', 'git commit -m "fix push to main"', 'git commit -m "Never git push --force to main"',
+    'git log --grep="git push origin main"']) {
     assert.equal(await push(onBranch, command), null, `fine: ${command}`);
   }
   assert.equal(await push(onMain, 'git stash push'), null, 'a stash is not a push, on main either');
+  assert.equal(await push(onMain, 'git commit -m "Fix git push hook"'), null, 'a commit message mentioning a push, on main');
   // A huge command is answered quickly rather than holding up the hub.
   const started = Date.now();
   await push(onBranch, 'git '.repeat(200_000));

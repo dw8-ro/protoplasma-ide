@@ -221,6 +221,7 @@
   .hint { color: var(--muted); padding: 8px 4px; line-height: 1.5; }
   .card-branch { display: flex; align-items: center; gap: 6px; color: var(--faint); font: 11.5px var(--mono); overflow: hidden; white-space: nowrap; }
   .card-branch svg { width: 12px; height: 12px; flex: none; }
+  .card-branch .names { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
   .card-people .ago { margin-left: auto; color: var(--faint); }
   .card-task { color: var(--muted); font-size: 12px; line-height: 1.4; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
   .card-branch .diff { margin-left: auto; }
@@ -309,6 +310,7 @@
   .lane-label { position: absolute; top: -8px; left: 14px; padding: 0 6px; background: var(--main); color: var(--c); font-size: 11px; font-weight: 600; line-height: 16px; }
   .screen { margin: 14px 8px 8px 16px; overflow: hidden; } /* margins, not padding: the fit addon sizes to the padded box */
   .lane .screen { flex: 1; min-height: 0; }
+  .lane:not(.mine) .screen { overflow-x: auto; } /* a teammate's terminal too wide for a narrow pane even at the smallest font scrolls sideways */
   .lane-bar { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border-top: 1px solid var(--line); white-space: nowrap; font-size: 12px; color: var(--muted); }
   .lane-bar > * { flex: none; }
   .lane-bar .tag { height: 24px; padding: 0 9px; border-radius: 7px; border: 1px solid var(--line); color: var(--text); line-height: 22px; font-weight: 500; }
@@ -578,7 +580,7 @@
   .members li { display: flex; align-items: center; gap: 10px; padding: 6px 0; }
   .members .login { flex: 1; font-weight: 500; }
   .error { color: var(--overlap); font-size: 12px; margin-top: 12px; overflow-wrap: anywhere; }
-  #createErr { min-height: 1.5em; } /* an error appearing doesn't move the dialog */
+  #createErr, #createErr:empty { display: block; min-height: 1.5em; } /* an error appearing doesn't move the dialog */
   .error:empty { display: none; }
   /* The New session form's footer stays in view when the window is short, and keeps a line for errors so nothing jumps. */
   .foot { position: sticky; bottom: -28px; margin: 4px -28px -28px; padding: 0 28px 28px; background: var(--surface); }
@@ -1010,7 +1012,7 @@
       <div class="group">
         <div class="setting"><div><b>Kept on the hub</b><p>Team names and members, notes, and sessions with their goals, repos, plans and comments. A comment on lines of code keeps the text of those lines (up to 300 characters), so it can find them again.</p></div></div>
         <div class="setting"><div><b>Passed through the hub</b><p>Terminal output and Claude Code's hook events, live. The last 256 KB of each agent's output is held in memory, so someone joining sees the current screen and a stopped agent's last screen can be looked at (the 20 most recent per team). None of it is written to disk, and it's gone when the hub restarts.</p></div></div>
-        <div class="setting"><div><b>Never kept on the hub</b><p>Your code and repos. Agents and git run on your Mac, and the GitHub CLI's login stays here too. Some code does pass through without being kept: Claude Code's hook events include what a tool is about to change, and with "Share the files your agents change" on, teammates can open those files.</p></div></div>
+        <div class="setting"><div><b>Not kept on the hub</b><p>Your repos and their files (apart from the lines a comment is about, above). Agents and git run on your Mac, and the GitHub CLI's login stays here too. Some code does pass through without being kept: Claude Code's hook events include what a tool is about to change, and with "Share the files your agents change" on, teammates can open those files.</p></div></div>
         <div class="setting"><div><b>Your GitHub sign-in</b><p>Read-only access to your public profile, used to check who you are. Stored encrypted on this Mac; the hub never saves it.</p></div></div>
         <div class="setting"><div><b>Training or analytics</b></div><span class="where">Never</span></div>
       </div>

@@ -17,8 +17,8 @@ const gitError = (errOut, fallback) => {
 };
 // Paths as they are (not C-quoted), never a password prompt nobody can see, and a limit for a network that hangs.
 const git = (root, args, env) => new Promise((resolve, reject) => execFile('git', ['-c', 'core.quotePath=false', ...args],
-  // A commit runs the repo's own hooks, which can take as long as they take.
-  { cwd: root, env: { ...env, GIT_TERMINAL_PROMPT: '0', GIT_OPTIONAL_LOCKS: '0' }, maxBuffer: 64e6, timeout: args[0] === 'commit' ? 0 : 120_000 },
+  // Commits and pushes run the repo's own hooks (tests, linters), which get much longer.
+  { cwd: root, env: { ...env, GIT_TERMINAL_PROMPT: '0', GIT_OPTIONAL_LOCKS: '0' }, maxBuffer: 64e6, timeout: { commit: 0, push: 900_000 }[args[0]] ?? 120_000 },
   (err, out, errOut) => (err ? reject(Object.assign(new Error(gitError(errOut || out, err.message)), { code: err.code, stderr: errOut })) : resolve(out))));
 
 /** The real path of `rel` inside `root`, refusing anything (symlinks included) that leads outside it. */
@@ -98,7 +98,7 @@ function read(root, rel) {
   const bytes = fs.readFileSync(file);
   if (bytes.subarray(0, 8000).includes(0)) return { binary: true };
   // Text in another encoding would come back changed after a save, so it isn't opened.
-  try { return { text: new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(bytes) }; } catch { return { binary: true }; } // a BOM stays
+  try { return { text: new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(bytes) }; } catch { return { notUtf8: true }; } // a BOM stays
 }
 
 /** The file as of the last commit ('' for a file that's new since). */

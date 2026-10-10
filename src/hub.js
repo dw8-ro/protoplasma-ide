@@ -160,7 +160,7 @@ function startHub({ port = 7681, host = '0.0.0.0', dataDir, owners, verifyUser =
   const broadcastState = teamId => {
     lastBroadcast.set(teamId, Date.now());
     const team = teams.get(teamId);
-    toTeam(teamId, { t: 'state', lanes: views(teamId), watchers: presence(teamId), memories: team?.memories || [], sessions: team?.sessions || [], stopped: stoppedViews(teamId) });
+    toTeam(teamId, { t: 'state', lanes: views(teamId), watchers: presence(teamId), members: team?.members || [], memories: team?.memories || [], sessions: team?.sessions || [], stopped: stoppedViews(teamId) });
   };
   const teamView = t => ({ id: t.id, name: t.name, owner: t.owner, members: t.members, agents: teamLanes(t.id).length });
 
@@ -191,24 +191,39 @@ function startHub({ port = 7681, host = '0.0.0.0', dataDir, owners, verifyUser =
     return parts.join('\n\n') || null;
   }
 
-  // The parts of a shell command between ; | & (each a command of its own), and the words of one, without the quotes or
-  // brackets a wrapper leaves on them: bash -c "git push origin main", (git push origin main).
-  const segments = command => command.replace(/\\\n/g, ' ').split(/[|;&\n]+/);
-  const wordsOf = text => text.trim().split(/\s+/).map(w => w.replace(/^[$('"`]+|[)'"`]+$/g, '')).filter(Boolean);
+  // A shell command as the commands it runs: its parts between ; | & and newlines, plus what's inside quotes, $( ) and
+  // backticks (bash -c "git push", out=$(git push)), each read again on its own. Words keep quoted spaces together.
+  // Quoted text is only read as a command when something runs it (bash -c, eval, ssh host), not a commit message.
+  const commandsIn = command => {
+    // ponytail: the first 20,000 characters; a longer command is generated, and reading all of it would hold up the hub.
+    const text = command.slice(0, 20_000).replace(/\\\r?\n/g, ' ').replace(/\d*>&\d+/g, ' '); // continuations, and 2>&1 (not an &)
+    const runs = before => { const part = before.split(/[|;&\n]/).pop(); return /(^|\s)(-c|eval)\s*$/.test(part) || /^\s*(sudo\s+)?ssh\s/.test(part); };
+    const inner = [...text.matchAll(/"([^"]*)"|'([^']*)'|\$\(([^)]*)\)|`([^`]*)`/g)]
+      .filter(m => m[3] !== undefined || m[4] !== undefined || runs(text.slice(0, m.index)))
+      .map(m => m[1] ?? m[2] ?? m[3] ?? m[4]).filter(t => /\bgit\b/.test(t));
+    return [...text.split(/[|;&\n]+/), ...inner.flatMap(commandsIn)];
+  };
+  const wordsOf = text => (text.match(/(?:[^\s"']+|"[^"]*"|'[^']*'|["'])+/g) || []).map(w => w.replace(/^[$('"`]+|[)'"`]+$/g, '')).filter(Boolean);
   // Where git's subcommand is, after options like -C <dir> or -c <key=value>: `git -C repo push`, not `git commit -m "push"`.
+  const VALUED = ['-C', '-c', '--git-dir', '--work-tree', '--namespace', '--config-env', '--attr-source'];
   const subcommandAt = (words, at) => {
     let i = at + 1;
-    while (i < words.length && words[i].startsWith('-')) i += ['-C', '-c', '--git-dir', '--work-tree', '--namespace'].includes(words[i]) ? 2 : 1;
+    while (i < words.length && words[i].startsWith('-')) i += VALUED.includes(words[i]) ? 2 : 1;
     return i;
   };
+  const isGit = w => (w === 'git' || w.endsWith('/git')) && !w.includes('='); // not GIT_DIR=/srv/git
   // Why a `git push` needs a person's confirmation, or null if it's fine. Only applies when the team has other people.
+  // ponytail: a reading of the words, not a shell parser; a script that pushes without saying so isn't caught.
   function pushRisk(lane, command) {
     if (!teams.get(lane.team).members.length) return null;
-    for (const segment of segments(command)) {
-      const words = wordsOf(segment), at = words.findIndex(w => w === 'git' || w.endsWith('/git')), push = at === -1 ? -1 : subcommandAt(words, at);
-      if (at === -1 || words[push] !== 'push') continue;
-      const reason = pushRiskOf(lane, words.slice(push + 1));
-      if (reason) return reason;
+    for (const part of commandsIn(command)) {
+      const words = wordsOf(part);
+      for (let at = 0; at < words.length; at++) { // every git in it: sudo -u git git push, submodule foreach git push
+        if (!isGit(words[at])) continue;
+        const push = subcommandAt(words, at);
+        const reason = words[push] === 'push' && pushRiskOf(lane, words.slice(push + 1));
+        if (reason) return reason;
+      }
     }
     return null;
   }
@@ -239,7 +254,7 @@ function startHub({ port = 7681, host = '0.0.0.0', dataDir, owners, verifyUser =
   // ponytail: a heuristic over the words of the command; a script that writes files it doesn't name isn't caught.
   function shellWriteRisk(lane, command, cwd) {
     const writes = segment => /\b(sed|perl)\b/.test(segment) && /\s-[a-zA-Z]*i/.test(segment);
-    if (!/>|\b(tee|mv|rm|cp|truncate)\b/.test(command) && !segments(command).some(writes)) return null;
+    if (!/>|\b(tee|mv|rm|cp|truncate)\b/.test(command) && !command.split(/[|;&\n]+/).some(writes)) return null;
     // ponytail: the first 300 path-like words; a longer command is mostly generated and not worth the hub's time.
     for (const word of command.split(/[\s;|&<>()'"=]+/).filter(w => /\/|\.\w+$/.test(w)).slice(0, 300)) {
       const full = path.resolve(cwd || lane.root, word);
@@ -475,6 +490,7 @@ function startHub({ port = 7681, host = '0.0.0.0', dataDir, owners, verifyUser =
       if (onTeam(team, login)) return json(409, { error: `${login} is already on the team.` });
       team.members.push(login);
       saveTeams();
+      broadcastState(team.id); // everyone's People page shows them
       return json(200, teamView(team));
     }
     if (subId && req.method === 'DELETE') {
@@ -484,6 +500,7 @@ function startHub({ port = 7681, host = '0.0.0.0', dataDir, owners, verifyUser =
       // Disconnect them now rather than on their next reconnect.
       for (const w of watchers) if (w.team === team.id && same(w.login, subId)) w.close(4003, 'Removed from the team.');
       for (const l of teamLanes(team.id)) if (same(l.login, subId)) l.ws.close(4003, 'Removed from the team.');
+      broadcastState(team.id);
       return json(200, teamView(team));
     }
     return json(404, { error: 'Not found.' });

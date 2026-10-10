@@ -227,7 +227,7 @@ function closeTeam() {
 $('#signout').onclick = async () => {
   if (local.size && !confirm(`Sign out and stop your ${local.size === 1 ? 'agent' : `${local.size} agents`}?`)) return;
   $('#settings').close();
-  for (const id of local.keys()) proto.kill(id); // they run under this sign-in
+  for (const id of local.keys()) { stopping.add(id); proto.kill(id); } // they run under this sign-in
   await proto.signOut();
   closeTeam();
   me = null;
@@ -251,7 +251,7 @@ async function leaveOrDeleteTeam(team) {
   leavingTeam = team.key; // the hub then disconnects us, which isn't news
   try { await (deleting ? proto.deleteTeam(team.key) : proto.leaveTeam(team.key)); }
   catch (e) { leavingTeam = null; return alert(errorText(e)); }
-  for (const [id, o] of local) if (o.teamKey === team.key) proto.kill(id);
+  for (const [id, o] of local) if (o.teamKey === team.key) { stopping.add(id); proto.kill(id); }
   $('#settings').close();
   if (team.key === currentTeam?.key) closeTeam();
   leavingTeam = null;
@@ -422,6 +422,7 @@ function watch(conn) {
         followRenames(m.sessions || []);
         for (const l of hubLanes) if (local.get(l.id)?.refused) delete local.get(l.id).refused;
         teamWatchers = m.watchers || [];
+        if (m.members && currentTeam) currentTeam = { ...currentTeam, members: m.members }; // someone joined, left or was removed
         memories = m.memories || [];
         sessionRecords = m.sessions || [];
         stoppedAgents = m.stopped || [];
@@ -462,7 +463,9 @@ function whiteForBlack(params) {
   return out.join(';');
 }
 const forPage = data => (effectiveTheme() !== 'light' ? data : data.replace(/\x1b\[([\d;]*)m/g, (_, params) => `\x1b[${whiteForBlack(params)}m`));
+const tails = new Map(); // your agents' latest output, for one that stops as soon as it starts
 function write(id, data) {
+  if (local.has(id)) tails.set(id, ((tails.get(id) || '') + data).slice(-2000));
   data = forPage(data);
   const t = terms.get(id);
   if (t) t.term.write(data);
@@ -471,13 +474,13 @@ function write(id, data) {
 proto.onData(write);
 proto.onExit(id => {
   // An agent that stops right away (nothing to resume, not signed in, a bad flag) says why before its terminal goes.
-  const info = local.get(id), buf = terms.get(id)?.term.buffer.active;
-  if (info && !stopping.has(id) && Date.now() - info.startedAt < 5000) {
-    const lines = [];
-    for (let i = 0; buf && i < buf.length; i++) lines.push(buf.getLine(i)?.translateToString(true).trim());
-    const said = lines.filter(Boolean).slice(-4).join('\n') || (pending.get(id) || '').replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, '').trim().slice(-300);
+  const info = local.get(id);
+  if (info && !stopping.has(id) && Date.now() - info.began < 5000) {
+    const said = (tails.get(id) || '').replace(/\x1b\[[0-?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b[()*+].|\x1b[@-Z\\-_]/g, '')
+      .split('\n').map(l => l.split('\r').filter(Boolean).pop()?.trim() || '').filter(Boolean).slice(-4).join('\n'); // a line redrawn after \r counts as redrawn
     setTimeout(() => alert(`${agentName(info.cmd)} stopped as soon as it started${said ? `. It said:\n\n${said}` : '.'}`));
   }
+  tails.delete(id);
   local.delete(id);
   stopping.delete(id);
   if (terms.has(id)) dropTerminal(id); // even when no team is open (signed out), so nothing lingers
@@ -514,7 +517,7 @@ async function startAgent({ session, cmd, open, source, task, resume = false }) 
     throw e;
   }
   const { id, repo } = started;
-  local.set(id, { teamKey: team.key, session, cmd, open, ...source, repo, login: me.login, name: me.name, avatar: me.avatar, startedAt: Date.now() });
+  local.set(id, { teamKey: team.key, session, cmd, open, ...source, repo, login: me.login, name: me.name, avatar: me.avatar, began: Date.now() });
   store.set(sourceKey(session, team), JSON.stringify(source));
   store.set(lastAgentKey(session, team), cmd);
   if (currentTeam?.key === team.key) openSession(sessionRecords.find(r => r.name === session || (r.aliases || []).includes(session))?.name || session, id);
@@ -647,7 +650,7 @@ $('#pick').onclick = async () => {
 // A name that matches an existing session apart from case and punctuation joins it, since both would get the same
 // branch and folder. Same rule as slug() in src/shared.js.
 // Letters of any script stay; a name with none (all emoji) gets a short code of its own instead of a shared one.
-const slug = name => String(name).normalize('NFC').toLowerCase().replace(/[^\p{L}\p{M}\p{N}._-]+|\.{2,}/gu, '-').replace(/^[-.]+|[-.]+$/g, '').replace(/\.lock$/, '')
+const slug = name => String(name).normalize('NFC').replace(/[\uFE00-\uFE0F\u200D\u20E3]/g, '').toLowerCase().replace(/[^\p{L}\p{M}\p{N}._-]+|\.{2,}/gu, '-').replace(/^[-.]+|[-.]+$/g, '').replace(/\.lock$/, '')
   || `session-${[...String(name)].reduce((h, c) => (h * 33 + c.codePointAt(0)) >>> 0, 5381).toString(36)}`;
 const existingSession = name => sessionList(board).find(s => slug(s.name) === slug(name))?.name;
 $('#agentForm').onsubmit = async e => {
@@ -822,7 +825,7 @@ function stopAgent(id) {
 const statusOf = l => (stopping.has(l.id) ? 'stopping' : l.status);
 // "Claude Code", or "Claude Code 2" for a person's second agent of the same kind in a session.
 const agentLabel = (l, inRoom) => {
-  const nth = inRoom.filter(o => o.login === l.login && o.cmd === l.cmd).sort((a, b) => (a.startedAt || '~').localeCompare(b.startedAt || '~')).indexOf(l);
+  const nth = inRoom.filter(o => o.login === l.login && o.cmd === l.cmd).sort((a, b) => (a.startedAt || '\uffff').localeCompare(b.startedAt || '\uffff')) // one the hub hasn't reported yet is newest.indexOf(l);
   return agentName(l.cmd) + (nth > 0 ? ` ${nth + 1}` : '');
 };
 
@@ -919,7 +922,7 @@ function renderWorkspaces(lanes) {
       <button class="ws ${view === 'sessions' && filterRepo === repo ? 'on' : ''}" data-repo="${esc(repo)}" title="${esc(repo || 'Sessions in folders with no GitHub repo')}"><svg><use href="#folder"/></svg><span>${esc(repo || 'Local folders')}</span></button>
       <button class="icon-btn small ws-menu" data-ws-menu="${esc(repo)}" aria-label="Workspace actions">⋯</button>
     </div>
-    ${open.filter(s => (s.repo && repo ? same(s.repo, repo) : s.repo === repo)).map(s => `<button class="ws-session ${view === 'session' && current === s.name ? 'on' : ''}" data-session="${esc(s.name)}"><span>${esc(s.name)}</span><span class="dot ${STATUS[s.status]?.[0] || ''}"></span></button>`).join('')}`).join('')
+    ${open.filter(s => s.repo === repo).map(s => `<button class="ws-session ${view === 'session' && current === s.name ? 'on' : ''}" data-session="${esc(s.name)}"><span>${esc(s.name)}</span><span class="dot ${STATUS[s.status]?.[0] || ''}"></span></button>`).join('')}`).join('')
     + (tucked ? `<button class="ws-more" data-unhide>Show ${tucked} hidden workspace${tucked === 1 ? '' : 's'}</button>` : '')
     || '<p class="hint">A repo shows up here once a session uses it.</p>');
 }
@@ -934,7 +937,7 @@ function renderSessions(lanes) {
   const query = $('#search').value.trim().toLowerCase();
   const rank = s => (s.lanes.length ? 0 : s.status === 'done' ? 2 : 1);
   const list = sessionList(lanes)
-    .filter(s => filterRepo === null || (s.repo && filterRepo ? same(s.repo, filterRepo) : s.repo === filterRepo))
+    .filter(s => filterRepo === null || s.repo === filterRepo)
     .filter(s => !query || `${s.name} ${s.rec?.task || ''} ${s.repo}`.toLowerCase().includes(query))
     .sort($('#sortBy').value === 'name' ? (a, b) => a.name.localeCompare(b.name) : (a, b) => rank(a) - rank(b) || b.at.localeCompare(a.at));
   setHTML($('#filterChip'), filterRepo === null ? '' : `<span class="chip">${esc(filterRepo || 'Local folders')}<button data-clear aria-label="Show sessions from all workspaces">×</button></span>`);
@@ -991,7 +994,7 @@ const branchLine = lanes => {
   const names = [...new Set(lanes.map(l => l.branch).filter(Boolean))];
   const diff = diffStat(lanes);
   const behind = behindChip({ git: { behind: Math.max(0, ...lanes.map(l => l.git?.behind || 0)) } });
-  return names.length || diff ? `<div class="card-branch"><svg><use href="#branch"/></svg>${esc(names.join(', '))}${behind}${diff}</div>` : '';
+  return names.length || diff ? `<div class="card-branch"><svg><use href="#branch"/></svg><span class="names" title="${esc(names.join(', '))}">${esc(names.join(', '))}</span>${behind}${diff}</div>` : '';
 };
 const lastActive = lanes => {
   const at = lanes.map(l => l.lastActive).filter(Boolean).sort().pop();
@@ -1152,7 +1155,7 @@ function setCommentRef(ref) {
 }
 $('#commentRef').onclick = e => { if ('unref' in e.target.dataset) setCommentRef(null); };
 // Where a comment's lines are now, if its file is open in the code view (they move as the file is edited).
-const linesNow = c => (models.get(c.file)?.model && linesOf(c, models.get(c.file).model)) || {};
+const linesNow = c => (code.session === current && models.get(c.file)?.model && linesOf(c, models.get(c.file).model)) || {}; // models are this session's
 function comments(rec) {
   const list = rec?.comments || [];
   const removable = c => same(c.author, me.login) || ownsTeam(currentTeam);
@@ -1250,7 +1253,8 @@ $('#ghPanel').onclick = e => { const item = e.target.closest('[data-url]'); if (
 
 // Remote terminals keep their owner's dimensions, so scale their font to fit their pane.
 const CHAR_WIDTH = 0.61, LINE_HEIGHT = 1.2; // monospace advance width, and line height at 1.0 spacing, relative to font size
-const fitFont = (term, box) => Math.max(8, Math.min(prefs.fontSize, Math.floor(Math.min(box.clientWidth / (term.cols * CHAR_WIDTH),
+// ponytail: a 6px floor; smaller isn't legible, so a terminal still too wide (three narrow panes) scrolls sideways instead.
+const fitFont = (term, box) => Math.max(6, Math.min(prefs.fontSize, Math.floor(Math.min(box.clientWidth / (term.cols * CHAR_WIDTH),
   box.clientHeight / (term.rows * prefs.lineHeight * LINE_HEIGHT)) * 2) / 2));
 function fitTeammates() {
   for (const [id, t] of terms) {
@@ -1530,7 +1534,7 @@ $('#settings').onclick = e => {
   if (step) { prefs.fontSize = Math.max(10, Math.min(18, prefs.fontSize + Number(step))); savePrefs(); }
   if (line) { prefs.lineHeight = Math.round(Math.max(1, Math.min(1.6, prefs.lineHeight + Number(line))) * 10) / 10; savePrefs(); }
   if (url) proto.openExternal(url);
-  if ('checkUpdates' in e.target.dataset) { $('#updateStatus').textContent = 'Checking…'; checkUpdates().then(showUpdateStatus); }
+  if ('checkUpdates' in e.target.dataset) { dismissed = null; $('#updateStatus').textContent = 'Checking…'; checkUpdates().then(showUpdateStatus); }
   // These two ask first and close Settings themselves, so cancelling leaves you where you were.
   if ('dropTeam' in e.target.dataset) return leaveOrDeleteTeam(currentTeam);
   if (open === 'signout') return $('#signout').click();
@@ -1541,9 +1545,9 @@ $('#settings').onclick = e => {
 // ---- Updates: a newer release on GitHub replaces the app in place (see app/updates.js) ----
 
 let update = null; // the last check's answer: { current, latest, available, canInstall, url }
-let staged = false, dismissed = null; // an update downloaded and waiting for quit; a version "Later" was clicked for
+let staged = false, downloading = false, dismissed = null; // waiting for quit; under way; a version "Later" was clicked for
 async function checkUpdates() {
-  if (staged) return update;
+  if (staged || downloading) return update;
   try { update = await proto.checkUpdates(); } catch { return null; }
   $('#updateBar').hidden = !update.available || dismissed === update.latest;
   if (update.available) {
@@ -1558,6 +1562,7 @@ $('#updateNow').onclick = async () => {
   if (!update.canInstall) return proto.openExternal(update.url);
   $('#updateNow').disabled = true;
   $('#updateText').textContent = `Downloading ${update.latest}…`;
+  downloading = true;
   try {
     await proto.installUpdate();
     staged = true;
@@ -1565,7 +1570,7 @@ $('#updateNow').onclick = async () => {
   } catch (err) {
     $('#updateText').textContent = errorText(err);
     $('#updateNow').disabled = false;
-  }
+  } finally { downloading = false; }
 };
 setInterval(checkUpdates, 6 * 60 * 60_000);
 
@@ -1644,7 +1649,7 @@ $('#setup').onclick = e => {
 // Menu commands, also run from the code editor for the keys Monaco would otherwise keep for itself (code.js).
 const runMenu = action => {
   if (action === 'settings') return openSettings();
-  if (action === 'updates') return openSettings('about');
+  if (action === 'updates') { dismissed = null; return openSettings('about'); }
   if (action === 'sidebar') return toggleSidebar();
   if (!me || document.querySelector('dialog[open]:not(#start, #settings)')) return;
   if (action === 'teams') return showTeams(me);

@@ -27,6 +27,8 @@ const parked = new Map(); // root -> { models, open } of a session left with uns
 let monacoReady, editor, diffEditor;
 const base = p => p.slice(p.lastIndexOf('/') + 1);
 const dirOf = p => p.slice(0, Math.max(0, p.lastIndexOf('/')));
+// A byte-order mark at the start of a file: Monaco leaves it out of the text, so it's kept aside and saved back.
+const unbom = text => text.replace(/^\ufeff/, '');
 const isDirty = entry => !!entry?.model && !entry.theirs && entry.model.getAlternativeVersionId() !== entry.saved;
 /** Files with unsaved edits, in every session (for the quit warning). */
 const unsavedFiles = () => [...models, ...[...parked.values()].flatMap(p => [...p.models])].filter(([, e]) => isDirty(e)).map(([p]) => p);
@@ -45,13 +47,12 @@ function replaceText(model, text) {
 
 function loadMonaco() {
   return monacoReady ||= new Promise((resolve, reject) => {
-    const failed = e => { monacoReady = null; reject(e); }; // so the next try loads it again
     require.config({ paths: { vs: '../node_modules/monaco-editor/min/vs' } });
     require(['vs/editor/editor.main'], () => {
       // Without the project's config and dependencies, TypeScript would flag imports everywhere; keep syntax errors only.
       for (const defaults of [monaco.typescript.typescriptDefaults, monaco.typescript.javascriptDefaults]) defaults.setDiagnosticsOptions({ noSemanticValidation: true });
       resolve(window.monaco);
-    }, failed);
+    }, reject);
   });
 }
 const cssVar = name => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
@@ -81,7 +82,7 @@ async function ensureEditor() {
   editor = monaco.editor.create(host.children[0], options);
   diffEditor = monaco.editor.createDiffEditor(host.children[1], { ...options, originalEditable: false, renderOverviewRuler: false });
   for (const ed of [editor, diffEditor.getModifiedEditor()]) {
-    ed.onDidChangeModelContent(() => { renderTabs(); marks(); });
+    ed.onDidChangeModelContent(() => { renderTabs(); clearTimeout(marks.timer); marks.timer = setTimeout(marks, 150); });
     ed.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, saveActive);
     // Monaco keeps these for itself (a chord, select all occurrences, suggest); in Protoplasma they mean what the menu says.
     ed.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyK, () => runMenu('switcher'));
@@ -129,7 +130,7 @@ async function openRoot() {
   const back = parked.get(root);
   parked.delete(root);
   if (back) for (const [p, e] of back.models) models.set(p, e);
-  Object.assign(code, { root, files: [], tree: null, changes: new Map(), changedDirs: new Set(), branch: '', open: back?.open || [], active: back?.open[0] || null,
+  Object.assign(code, { root, session: current, files: [], tree: null, changes: new Map(), changedDirs: new Set(), branch: '', open: back?.open || [], active: back?.open[0] || null,
     diff: null, against: null, unpushed: 0, underWay: null });
   $('#codeQuery').value = $('#commitMessage').value = $('#commitNote').textContent = '';
   setHTML($('#codeHits'), '');
@@ -178,12 +179,13 @@ async function reload(path, { force = false } = {}) {
   const file = await proto.code.read(code.root, path).catch(() => ({ gone: true }));
   if (file.text == null) { entry.note = file.gone ? 'This file has been deleted. Saving puts it back.' : entry.note; return render(); }
   if (entry.note) { entry.note = ''; render(); }
+  const bom = file.text.startsWith('\ufeff');
+  file.text = unbom(file.text);
   // What you just saved coming back from disk isn't someone else's change.
   if (file.text === entry.model.getValue() || (file.text === entry.savedText && !force)) return;
   if (isDirty(entry) && !force) { entry.stale = true; return render(); }
   replaceText(entry.model, file.text);
-  entry.saved = entry.model.getAlternativeVersionId();
-  entry.savedText = file.text;
+  Object.assign(entry, { saved: entry.model.getAlternativeVersionId(), savedText: file.text, bom }); // as it is on disk now
 }
 
 // ---- Opening, showing and saving files ----
@@ -193,11 +195,13 @@ async function modelFor(path) {
   const file = await proto.code.read(code.root, path);
   if (models.has(path)) return models.get(path); // opened twice at once (a double click)
   const entry = { note: file.binary ? 'This file isn\'t text, so it isn\'t shown here.' : file.tooBig ? 'This file is too big to open here.'
+    : file.notUtf8 ? 'This file isn\'t UTF-8 text, so it isn\'t opened here: saving it would change its characters.'
     : file.gone ? 'This file has been deleted.' : '' };
   if (file.text != null) {
-    entry.model = monaco.editor.createModel(file.text, undefined, monaco.Uri.file(`${code.root}/${path}`));
+    entry.bom = file.text.startsWith('\ufeff');
+    entry.model = monaco.editor.createModel(unbom(file.text), undefined, monaco.Uri.file(`${code.root}/${path}`));
     entry.saved = entry.model.getAlternativeVersionId();
-    entry.savedText = file.text;
+    entry.savedText = unbom(file.text);
   }
   models.set(path, entry);
   return entry;
@@ -279,7 +283,7 @@ async function saveActive() {
   // What's saved is the text as it was when saving began; typing during the write still counts as unsaved.
   const version = entry.model.getAlternativeVersionId(), text = entry.model.getValue();
   try {
-    await proto.code.write(code.root, path, text);
+    await proto.code.write(code.root, path, entry.bom ? `\ufeff${text}` : text);
     Object.assign(entry, { saved: version, savedText: text, stale: false, note: '' });
     render();
   } catch (e) { alert(errorText(e)); }
@@ -429,8 +433,9 @@ async function theirModel(lane, path) {
     }
   } else {
     entry.note = '';
-    if (!entry.model) entry.model = monaco.editor.createModel(answer.text, undefined, monaco.Uri.parse(`theirs://${lane}/${path}`));
-    else if (entry.model.getValue() !== answer.text) replaceText(entry.model, answer.text);
+    const text = unbom(answer.text);
+    if (!entry.model) entry.model = monaco.editor.createModel(text, undefined, monaco.Uri.parse(`theirs://${lane}/${path}`));
+    else if (entry.model.getValue() !== text) replaceText(entry.model, text);
   }
   return entry;
 }
@@ -500,11 +505,15 @@ const blockAt = (model, from, to) => {
 function linesOf(c, model) {
   if (!model || !c.line) return null;
   const count = model.getLineCount(), span = (c.endLine || c.line) - c.line;
-  const at = line => line >= 1 && line <= count
-    && (c.snippet.includes('\n') ? blockAt(model, line, line + span) : model.getLineContent(line).trim().slice(0, 300)) === c.snippet;
   if (!c.snippet) return c.line <= count ? { line: c.line, endLine: Math.min(count, c.line + span) } : null;
-  for (let d = 0; d < count; d++) {
-    for (const line of [c.line - d, c.line + d]) if (at(line)) return { line, endLine: Math.min(count, line + span) };
+  const first = c.snippet.split('\n')[0], lines = model.getLinesContent();
+  const starts = line => line >= 1 && line <= count && lines[line - 1].trim().slice(0, 300) === first;
+  const whole = line => !c.snippet.includes('\n') || blockAt(model, line, line + span) === c.snippet;
+  // Nearest to where it was: first where the whole block still matches, else where its first line does.
+  for (const check of [line => starts(line) && whole(line), starts]) {
+    for (let d = 0; d < count; d++) {
+      for (const line of [c.line - d, c.line + d]) if (check(line)) return { line, endLine: Math.min(count, line + span) };
+    }
   }
   return null;
 }

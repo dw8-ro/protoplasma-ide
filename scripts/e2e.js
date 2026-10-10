@@ -60,6 +60,9 @@ async function run(win, hub) {
   };
   const secretFile = path.join(os.tmpdir(), `protoplasma-e2e-${process.pid}`);
   let teammate;
+  // A native alert would block the page (and every check after it); they're kept for looking at instead. Agents this
+  // script stops straight after starting them say "stopped as soon as it started", which is expected here.
+  await js(`window.alert = message => (window.__alerts ||= []).push(String(message)); 0`);
   try {
     check('signs in from the saved profile', await until('!!me && me.login === "david"'));
     check('own avatar falls back to an initial', await js(`$('#meAvatar').textContent.trim() === 'D'`));

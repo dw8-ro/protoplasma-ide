@@ -67,7 +67,7 @@ async function gitStatus(cwd, { env = process.env, fetch = false } = {}) {
   branch ||= await run('rev-parse', '--short', 'HEAD'); // detached, e.g. mid-rebase: the commit stands in for the branch
   // A session branch made before a teammate pushed it has no upstream. Once their push is here it gets one, so a plain
   // `git pull` works and their commits count as behind. (Same name, so a bare `git push` still goes nowhere else.)
-  if (!upstream && branch && await run('rev-parse', '--verify', '--quiet', `refs/remotes/origin/${branch}`)) {
+  if (!upstream && branch.startsWith('session/') && await run('rev-parse', '--verify', '--quiet', `refs/remotes/origin/${branch}`)) {
     await run('branch', `--set-upstream-to=origin/${branch}`);
     upstream = `origin/${branch}`;
   }

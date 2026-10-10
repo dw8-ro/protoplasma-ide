@@ -38,6 +38,8 @@ test('session names become safe branch names', () => {
   assert.equal(slug('Ошибка входа'), 'ошибка-входа', 'letters of any script stay');
   assert.match(slug('🚀'), /^session-\w+$/);
   assert.notEqual(slug('🚀'), slug('🎉'), 'names without letters still differ');
+  assert.notEqual(slug('❤️'), slug('⚠️'), 'emoji with a variation selector too');
+  assert.equal(slug('नमस्ते'), 'नमस्ते', 'combining marks stay with their letters');
   for (const name of ['a..b', 'x.lock', '???', '日本語 v1.2']) {
     assert.doesNotThrow(() => execFileSync('git', ['check-ref-format', '--branch', `session/${slug(name)}`]), name);
   }

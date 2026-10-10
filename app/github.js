@@ -9,7 +9,7 @@ const { app, safeStorage } = require('electron');
 const { githubUser } = require('../src/hub');
 const { sessionWorktree, removeSessionWorktree, installPushGuard, slug } = require('../src/workspace');
 
-const REPO = /^[\w.-]+\/[\w.-]+$/;
+const REPO = /^[a-z\d-]+\/(?!\.\.?$)[\w.-]+$/i; // owner/name, never . or ..
 const tokenFile = () => path.join(app.getPath('userData'), 'github-token');
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 const postForm = (url, body) => fetch(url, { method: 'POST', headers: { accept: 'application/json', 'content-type': 'application/json' },
@@ -117,7 +117,12 @@ async function sessionFolder(repo, session, env, { worktree = true } = {}) {
   const clone = await cloneRepo(repo, env);
   await installPushGuard(clone, env).catch(() => {}); // only ever in clones the app made
   if (!worktree) return clone;
-  try { return (await sessionWorktree(clone, session, env)).dir; } catch { return clone; }
+  try { return (await sessionWorktree(clone, session, env)).dir; } catch (e) {
+    const empty = await new Promise(resolve => execFile('git', ['rev-parse', '--verify', 'HEAD'], { cwd: clone, env }, err => resolve(!!err)));
+    if (empty) return clone;
+    // Quietly working in the shared clone would mix this session's work with others'.
+    throw new Error(`Couldn't make this session's own folder and branch: ${e.message}. You can turn off "A branch for every session" in Settings → Agents.`);
+  }
 }
 
 /** A session's own folder on this Mac, if it has one. */

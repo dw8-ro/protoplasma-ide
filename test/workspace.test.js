@@ -35,7 +35,12 @@ after(() => fs.rmSync(tmp, { recursive: true, force: true }));
 test('session names become safe branch names', () => {
   assert.equal(slug('Fix Login!'), 'fix-login');
   assert.equal(slug('  ../weird//name  '), 'weird-name');
-  assert.equal(slug('???'), 'session');
+  assert.equal(slug('Ошибка входа'), 'ошибка-входа', 'letters of any script stay');
+  assert.match(slug('🚀'), /^session-\w+$/);
+  assert.notEqual(slug('🚀'), slug('🎉'), 'names without letters still differ');
+  for (const name of ['a..b', 'x.lock', '???', '日本語 v1.2']) {
+    assert.doesNotThrow(() => execFileSync('git', ['check-ref-format', '--branch', `session/${slug(name)}`]), name);
+  }
 });
 
 test('a session gets its own folder and branch, off the default branch', async () => {

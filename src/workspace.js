@@ -5,8 +5,9 @@ const path = require('path');
 const { execFile } = require('child_process');
 const { slug } = require('./shared');
 
+// A stalled network (a captive portal, a dead VPN) gives up after a while instead of holding up a new session.
 const git = (cwd, args, env) => new Promise((resolve, reject) => execFile('git', args,
-  { cwd, encoding: 'utf8', env: { ...env, GIT_TERMINAL_PROMPT: '0' } },
+  { cwd, encoding: 'utf8', env: { ...env, GIT_TERMINAL_PROMPT: '0' }, timeout: args[0] === 'fetch' ? 30_000 : 120_000 },
   (err, out, errOut) => (err ? reject(new Error(errOut.trim().split('\n').pop() || err.message)) : resolve(out.trim()))));
 const tryGit = (cwd, args, env) => git(cwd, args, env).catch(() => '');
 
@@ -70,7 +71,8 @@ async function installPushGuard(clone, env = process.env) {
   const file = path.join(hooks, 'pre-push');
   if (fs.existsSync(file) && !fs.readFileSync(file, 'utf8').includes('Added by Protoplasma')) return false;
   fs.mkdirSync(hooks, { recursive: true });
-  fs.writeFileSync(file, PUSH_GUARD, { mode: 0o755 });
+  fs.writeFileSync(file, PUSH_GUARD);
+  fs.chmodSync(file, 0o755); // writeFileSync's mode only applies to a new file, and git skips a hook it can't run
   return true;
 }
 

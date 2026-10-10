@@ -17,6 +17,8 @@ const appendScrollback = (buf, data) => {
 };
 
 /** A session name as a safe branch and folder name. Names that give the same slug are the same session. */
-const slug = name => String(name).toLowerCase().replace(/[^a-z0-9._-]+/g, '-').replace(/^[-.]+|[-.]+$/g, '') || 'session';
+// Letters of any script stay; a name with none (all emoji) gets a short code of its own instead of a shared one.
+const slug = name => String(name).normalize('NFC').toLowerCase().replace(/[^\p{L}\p{M}\p{N}._-]+|\.{2,}/gu, '-').replace(/^[-.]+|[-.]+$/g, '').replace(/\.lock$/, '')
+  || `session-${[...String(name)].reduce((h, c) => (h * 33 + c.codePointAt(0)) >>> 0, 5381).toString(36)}`;
 
 module.exports = { SCROLLBACK, EDIT_TOOLS, appendScrollback, slug };

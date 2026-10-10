@@ -1,7 +1,8 @@
 // Hub discovery, so users never deal with addresses:
 // - Online: the hosted hub from config.json.
 // - This Mac: an in-process hub, advertised over Bonjour.
-// - Nearby: other teammates' hubs discovered over Bonjour.
+// - Nearby: other teammates' hubs discovered over Bonjour. Only asked when the user turns it on: asking a hub means
+//   showing it your GitHub sign-in, and anything on the network can claim to be one.
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
@@ -44,16 +45,19 @@ async function hubApi(url, token, method, route, body) {
 }
 
 /** Teams the user belongs to across all known hubs. Hubs that fail to respond are listed in `unreachable`. */
-async function listTeams({ token, user }, onlineUrl) {
+async function listTeams({ token, user }, onlineUrl, { nearby: lookNearby = false } = {}) {
   if (!local && hostsTeamsHere()) await hostHere(user); // resume hosting saved local teams
   const hubs = [
     onlineUrl && { url: onlineUrl, where: 'Online' },
     local && { url: local.url, where: 'This Mac' },
-    ...[...nearby.values()].map(n => ({ url: n.url, where: `${n.host}'s Mac` })),
+    ...(lookNearby ? [...nearby.values()].map(n => ({ url: n.url, where: `${n.host}'s Mac` })) : []),
   ].filter(Boolean);
   const results = await Promise.allSettled(hubs.map(h => hubApi(h.url, token, 'GET', '/teams')));
+  // Only well-formed teams: a hub on the network could answer anything.
+  const valid = t => t && typeof t.id === 'string' && typeof t.name === 'string' && typeof t.owner === 'string' && Array.isArray(t.members);
   return {
-    teams: results.flatMap((r, i) => r.status === 'fulfilled' ? r.value.map(t => ({ ...t, hub: hubs[i].url, where: hubs[i].where })) : []),
+    teams: results.flatMap((r, i) => (r.status === 'fulfilled' && Array.isArray(r.value) ? r.value.filter(valid)
+      .map(t => ({ ...t, members: t.members.filter(m => typeof m === 'string'), agents: t.agents | 0, hub: hubs[i].url, where: hubs[i].where })) : [])),
     unreachable: hubs.filter((_, i) => results[i].status === 'rejected').map(h => h.where),
   };
 }

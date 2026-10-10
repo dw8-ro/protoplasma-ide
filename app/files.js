@@ -7,7 +7,6 @@ const { execFile, execFileSync } = require('child_process');
 const MAX_BYTES = 2_000_000; // bigger files aren't opened in the editor
 const MAX_FILES = 20_000;
 
-// Git's own words for a failure: its error line, not the hints after it.
 // Git's own words for a failure: its error, including the lines it wraps onto, not the hints after it.
 const gitError = (errOut, fallback) => {
   const lines = errOut.trim().split('\n').map(l => l.trim()).filter(l => l && !l.startsWith('hint:'));
@@ -16,15 +15,21 @@ const gitError = (errOut, fallback) => {
   const rest = lines.slice(at + 1).findIndex(l => /^(error|fatal|!|To |\w+:)/.test(l));
   return lines.slice(at, rest < 0 ? at + 4 : at + 1 + rest).join(' ').replace(/^(error|fatal): /, '');
 };
-const git = (root, args, env) => new Promise((resolve, reject) => execFile('git', args, { cwd: root, env, maxBuffer: 64e6 },
-  (err, out, errOut) => (err ? reject(Object.assign(new Error(gitError(errOut, err.message)), { code: err.code, stderr: errOut })) : resolve(out))));
+// Paths as they are (not C-quoted), never a password prompt nobody can see, and a limit for a network that hangs.
+const git = (root, args, env) => new Promise((resolve, reject) => execFile('git', ['-c', 'core.quotePath=false', ...args],
+  // A commit runs the repo's own hooks, which can take as long as they take.
+  { cwd: root, env: { ...env, GIT_TERMINAL_PROMPT: '0', GIT_OPTIONAL_LOCKS: '0' }, maxBuffer: 64e6, timeout: args[0] === 'commit' ? 0 : 120_000 },
+  (err, out, errOut) => (err ? reject(Object.assign(new Error(gitError(errOut || out, err.message)), { code: err.code, stderr: errOut })) : resolve(out))));
 
 /** The real path of `rel` inside `root`, refusing anything (symlinks included) that leads outside it. */
 function inside(root, rel, { exists = true } = {}) {
   const base = fs.realpathSync(root);
   let full = path.resolve(base, String(rel));
   if (exists) full = fs.realpathSync(full);
-  else full = path.join(fs.realpathSync(path.dirname(full)), path.basename(full));
+  else {
+    full = path.join(fs.realpathSync(path.dirname(full)), path.basename(full));
+    if (fs.lstatSync(full, { throwIfNoEntry: false })?.isSymbolicLink()) throw new Error('That file is outside the session folder.'); // a link to nowhere
+  }
   if (full !== base && !full.startsWith(base + path.sep)) throw new Error('That file is outside the session folder.');
   return full;
 }
@@ -64,16 +69,18 @@ function underWay(root) {
  */
 async function status(root, env) {
   try {
-    const [branch, out, unpushed] = await Promise.all([git(root, ['branch', '--show-current'], env),
+    // Status paths are from the repo's root; a session folder can be a part of the repo, and its paths start there.
+    const [branch, out, unpushed, prefix] = await Promise.all([git(root, ['branch', '--show-current'], env),
       git(root, ['status', '--porcelain=v1', '-z', '--untracked-files=all'], env),
-      git(root, ['rev-list', '--count', '@{upstream}..HEAD'], env).catch(() => git(root, ['rev-list', '--count', 'origin/HEAD..HEAD'], env)).catch(() => '0')]);
+      git(root, ['rev-list', '--count', '@{upstream}..HEAD'], env).catch(() => git(root, ['rev-list', '--count', 'origin/HEAD..HEAD'], env)).catch(() => '0'),
+      git(root, ['rev-parse', '--show-prefix'], env).then(p => p.trim(), () => '')]);
     const entries = out.split('\0'), changes = [];
     for (let i = 0; i < entries.length; i++) {
       const [xy, file] = [entries[i].slice(0, 2), entries[i].slice(3)];
-      if (!file) continue;
       if (/[RC]/.test(xy)) i++; // a rename is followed by the old path
+      if (!file || !file.startsWith(prefix)) continue;
       const state = xy === '??' ? 'U' : /U|AA|DD/.test(xy) ? 'C' : /D/.test(xy) ? 'D' : /R/.test(xy) ? 'R' : /A/.test(xy) ? 'A' : 'M';
-      changes.push({ path: file, state });
+      changes.push({ path: file.slice(prefix.length), state });
     }
     return { branch: branch.trim(), unpushed: Number(unpushed) || 0, underWay: underWay(root), changes };
   } catch {
@@ -85,9 +92,13 @@ async function status(root, env) {
 function read(root, rel) {
   let file;
   try { file = inside(root, rel); } catch (e) { if (e.code === 'ENOENT') return { gone: true }; throw e; }
-  if (fs.statSync(file).size > MAX_BYTES) return { tooBig: true };
+  const stat = fs.statSync(file);
+  if (stat.isDirectory()) return { binary: true }; // a submodule
+  if (stat.size > MAX_BYTES) return { tooBig: true };
   const bytes = fs.readFileSync(file);
-  return bytes.subarray(0, 8000).includes(0) ? { binary: true } : { text: bytes.toString('utf8') };
+  if (bytes.subarray(0, 8000).includes(0)) return { binary: true };
+  // Text in another encoding would come back changed after a save, so it isn't opened.
+  try { return { text: new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(bytes) }; } catch { return { binary: true }; } // a BOM stays
 }
 
 /** The file as of the last commit ('' for a file that's new since). */
@@ -131,13 +142,16 @@ async function commitAndPush(root, message, env) {
     await push();
     return done;
   } catch (e) {
-    if (!/rejected|non-fast-forward|fetch first/.test(e.stderr || e.message)) return `${was} couldn't be pushed: ${e.message}`;
+    // Only a teammate's newer commits are worked around; the server refusing it (a protected branch) is reported as is.
+    if (!/non-fast-forward|fetch first/.test(e.stderr || e.message)) return `${was} couldn't be pushed: ${e.message}`;
   }
   const branch = (await git(root, ['branch', '--show-current'], env)).trim();
   try {
     await git(root, ['pull', '--rebase', '--autostash', 'origin', branch], env);
-  } catch {
+  } catch (e) {
+    const conflict = underWay(root);
     await git(root, ['rebase', '--abort'], env).catch(() => {});
+    if (!conflict) return `${was} couldn't be pushed: ${e.message}`;
     return `${was} couldn't be pushed: a teammate changed the same lines on ${branch}. Pull in the Terminal tab and sort out the conflict, or ask your agent to.`;
   }
   try {
@@ -156,6 +170,7 @@ function watch(root, onChange) {
     const rel = file.split(path.sep).join('/');
     // Inside .git, only a new commit or index matters (it changes what counts as changed).
     if (rel.startsWith('.git/') && !/^\.git\/(index|HEAD)$/.test(rel)) return;
+    if (/(^|\/)node_modules\//.test(rel)) return; // installs and builds churn there
     changed.add(rel);
     clearTimeout(timer);
     timer = setTimeout(() => { const paths = [...changed]; changed = new Set(); onChange(paths); }, 150);

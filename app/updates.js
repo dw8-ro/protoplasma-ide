@@ -48,9 +48,15 @@ function ownBundle(exe) {
  */
 async function stage(release, bundle, pid, env) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'protoplasma-update-'));
+  try { await prepare(release, bundle, pid, env, dir); } catch (e) {
+    fs.rmSync(dir, { recursive: true, force: true }); // a failed download isn't left taking up space
+    throw e;
+  }
+}
+async function prepare(release, bundle, pid, env, dir) {
   const zip = path.join(dir, release.asset.name);
   if (release.public) {
-    const res = await fetch(release.asset.url, { headers: { 'user-agent': 'protoplasma' } });
+    const res = await fetch(release.asset.url, { headers: { 'user-agent': 'protoplasma' }, signal: AbortSignal.timeout(10 * 60_000) });
     if (!res.ok) throw new Error(`Couldn't download the update (GitHub answered ${res.status}).`);
     fs.writeFileSync(zip, Buffer.from(await res.arrayBuffer()));
   } else {

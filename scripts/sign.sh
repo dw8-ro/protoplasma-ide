@@ -8,6 +8,8 @@
 set -e
 APP=$1
 if [ -z "$MAC_CERT_P12" ]; then
+  # A release signed ad hoc would be refused by every copy already installed, so CI never makes one.
+  [ -z "$CI" ] || { echo "The signing certificate (MAC_CERT_P12, MAC_CERT_PASSWORD) isn't set in this repo's secrets." >&2; exit 1; }
   codesign --force --deep --sign - "$APP"
   exit
 fi

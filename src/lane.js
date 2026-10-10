@@ -20,7 +20,7 @@ const NO_HOOKS = ['codex', 'opencode'];
 const QUIET_MS = 3000;
 const ECHO_MS = 400;
 // A CLI asking whether to trust its folder (Claude Code does in every new session folder). No hook fires for it.
-const TRUST_PROMPT = /trust\s*(?:this\s*folder|the\s*files\s*in\s*this\s*folder)/i;
+const TRUST_PROMPT = /trust\s*(?:this\s*folder|the\s*files\s*in\s*this\s*folder|the\s*contents\s*of\s*this\s*directory)/i;
 const stripAnsi = s => s.replace(/\x1b\[[0-?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b[@-Z\\-_]/g, '');
 
 // Per-run HTTP hooks for Claude Code. --settings merges with the user's own settings rather than replacing them.
@@ -47,7 +47,7 @@ function rootsOf(cwd, root) {
   try { return [...new Set([root, path.join(cwd, path.relative(fs.realpathSync(cwd), root))])]; } catch { return [root]; }
 }
 /** "owner/name" from a GitHub remote URL (https or ssh), or '' for anything else. */
-const repoFromRemote = url => /github\.com[:/]([\w.-]+\/[\w.-]+?)(?:\.git)?\/?$/.exec(url)?.[1] || '';
+const repoFromRemote = url => /(?:^|[/@])github\.com[:/]([\w.-]+\/[\w.-]+?)(?:\.git)?\/?$/.exec(url)?.[1] || '';
 const githubRepo = cwd => repoFromRemote(git(cwd, 'remote', 'get-url', 'origin'));
 
 /**
@@ -59,27 +59,35 @@ const githubRepo = cwd => repoFromRemote(git(cwd, 'remote', 'get-url', 'origin')
  * Never blocks; `fetch` updates the remote refs first, failing quietly when offline or unauthenticated.
  */
 async function gitStatus(cwd, { env = process.env, fetch = false } = {}) {
-  const run = (...args) => new Promise(resolve => execFile('git', args,
-    { cwd, encoding: 'utf8', maxBuffer: 10e6, timeout: 20_000, env: { ...env, GIT_TERMINAL_PROMPT: '0' } }, (err, out) => resolve(err ? '' : out.trim())));
+  const run = (...args) => new Promise(resolve => execFile('git', ['-c', 'core.quotePath=false', ...args],
+    { cwd, encoding: 'utf8', maxBuffer: 10e6, timeout: 20_000, env: { ...env, GIT_TERMINAL_PROMPT: '0', GIT_OPTIONAL_LOCKS: '0' } }, (err, out) => resolve(err ? '' : out.trim())));
   if (fetch) await run('fetch', '--quiet');
-  const [branch, upstream, main] = await Promise.all([run('branch', '--show-current'), run('rev-parse', '--abbrev-ref', '@{upstream}'),
+  let [branch, upstream, main] = await Promise.all([run('branch', '--show-current'), run('rev-parse', '--abbrev-ref', '@{upstream}'),
     run('rev-parse', '--abbrev-ref', 'origin/HEAD')]);
+  branch ||= await run('rev-parse', '--short', 'HEAD'); // detached, e.g. mid-rebase: the commit stands in for the branch
+  // A session branch made before a teammate pushed it has no upstream. Once their push is here it gets one, so a plain
+  // `git pull` works and their commits count as behind. (Same name, so a bare `git push` still goes nowhere else.)
+  if (!upstream && branch && await run('rev-parse', '--verify', '--quiet', `refs/remotes/origin/${branch}`)) {
+    await run('branch', `--set-upstream-to=origin/${branch}`);
+    upstream = `origin/${branch}`;
+  }
   const base = main && await run('merge-base', 'HEAD', main); // where this checkout left main
   const count = async (...args) => Number(await run('rev-list', '--count', ...args)) || 0;
   const [numstat, untracked, behind, ahead, unpushed, sinceUpstream] = await Promise.all([
     run('diff', '--numstat', base || 'HEAD'), run('ls-files', '--others', '--exclude-standard', '--full-name'),
     count('^HEAD', ...[main, upstream].filter(Boolean)), main ? count(`${main}..HEAD`) : 0, count(`${upstream || main || 'HEAD'}..HEAD`),
     upstream ? run('merge-base', 'HEAD', upstream).then(at => run('diff', '--name-only', at || upstream)) : null]);
-  const changed = untracked ? untracked.split('\n') : [];
-  const stats = { branch, added: 0, removed: 0, files: changed.length, behind: main || upstream ? behind : 0, ahead, unpushed };
+  const added = untracked ? untracked.split('\n') : [], changed = [];
+  const stats = { branch, added: 0, removed: 0, files: added.length, behind: main || upstream ? behind : 0, ahead, unpushed };
   for (const line of numstat.split('\n').filter(Boolean)) {
     const [added, removed, file] = line.split('\t');
     stats.added += +added || 0; // binary files report "-"
     stats.removed += +removed || 0;
     stats.files++;
-    changed.push(file.replace(/\{[^}]* => ([^}]*)\}/, '$1').replace(/^.* => /, '')); // a rename counts as its new path
+    changed.push(file.replace(/\{[^}]* => ([^}]*)\}/, '$1').replace(/^.* => /, '').replace(/\/{2,}/g, '/')); // a rename counts as its new path
   }
-  const local = sinceUpstream === null ? changed : [...new Set([...(sinceUpstream ? sinceUpstream.split('\n') : []), ...(untracked ? untracked.split('\n') : [])])];
+  for (const file of added.slice(0, MAX_CHANGED)) changed.push(file); // (a spread of a huge list would overflow the stack)
+  const local = sinceUpstream === null ? changed : [...new Set([...(sinceUpstream ? sinceUpstream.split('\n') : []), ...added])];
   return { ...stats, changed: changed.slice(0, MAX_CHANGED), local: local.slice(0, MAX_CHANGED) };
 }
 
@@ -135,8 +143,7 @@ function startLane({ hub, team, token, session, cmd = 'claude', args = [], cwd =
     ws.on('open', () => {
       unsent = ''; // history covers anything unsent
       send({ ...hello, cols: term.cols, rows: term.rows, history, git: lastGit });
-      if (asking) send({ t: 'status', status: 'needs you' });
-      else if (activity) send({ t: 'status', status: activity });
+      if (activity) send({ t: 'status', status: activity });
     });
     ws.on('message', raw => {
       try { const m = JSON.parse(raw); if (m.t === 'in' && typeof m.d === 'string') write(m.d); } catch {}
@@ -161,7 +168,7 @@ function startLane({ hub, team, token, session, cmd = 'claude', args = [], cwd =
     unsent += d;
     flushTimer ??= setTimeout(flush, FLUSH_MS);
     recent = (recent + stripAnsi(d)).slice(-400);
-    if (!asking && TRUST_PROMPT.test(recent)) { asking = true; recent = ''; send({ t: 'status', status: 'needs you' }); }
+    if (!asking && TRUST_PROMPT.test(recent)) { asking = true; recent = ''; clearTimeout(quiet); report('needs you'); }
     if (byActivity && !asking && Date.now() - lastInput > ECHO_MS) {
       report('working');
       clearTimeout(quiet);
@@ -172,13 +179,15 @@ function startLane({ hub, team, token, session, cmd = 'claude', args = [], cwd =
   // The terminal's own automatic replies (escape sequences answering the CLI's queries) don't count.
   function write(d) {
     lastInput = Date.now();
-    if (asking && (d === '\r' || d === '\x1b' || !d.includes('\x1b'))) { asking = false; send({ t: 'status', status: 'idle' }); }
+    if (asking && (d === '\r' || d === '\x1b' || !d.includes('\x1b'))) { asking = false; recent = ''; report('idle'); }
     term.write(d);
   }
   // Report git progress (and branch switches) as the agent works, only when something changed.
-  let polls = 0;
+  let polls = 0, polling = false;
   const pollGit = setInterval(async () => {
-    const next = await gitStatus(cwd, { env, fetch: polls++ % FETCH_EVERY === 0 });
+    if (polling) return;
+    polling = true;
+    const next = await gitStatus(cwd, { env, fetch: polls++ % FETCH_EVERY === 0 }).finally(() => { polling = false; });
     if (exited || !next.branch || JSON.stringify(next) === JSON.stringify(lastGit)) return;
     lastGit = next;
     send({ t: 'git', ...lastGit });
@@ -187,7 +196,11 @@ function startLane({ hub, team, token, session, cmd = 'claude', args = [], cwd =
 
   term.onExit(() => { exited = true; clearInterval(pollGit); clearTimeout(quiet); flush(); ws.close(); });
 
-  return { id, term, repo: hello.repo, write, rejoin: connect, resize(c, r) { term.resize(c, r); send({ t: 'size', cols: c, rows: r }); } };
+  return { id, term, repo: hello.repo, write, rejoin: connect, resize(c, r) {
+    if (exited || !(c > 0 && r > 0)) return; // a hidden terminal measures 0
+    try { term.resize(c, r); } catch { return; } // the agent exited a moment ago
+    send({ t: 'size', cols: c, rows: r });
+  } };
 }
 
 module.exports = { startLane, repoFromRemote, gitStatus, installed };

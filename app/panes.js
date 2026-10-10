@@ -59,6 +59,7 @@ function renderPanes(lanes) {
       : `${choices.length ? `<div class="pane-pick">${choices.map(s => `<button class="panel-row" data-pane-pick="${i}" data-name="${esc(s.name)}"><b>${esc(s.name)}</b>${pill(s.status)}</button>`).join('')}</div>`
         : '<p>Every session is already open in a pane.</p>'}<button class="btn small" data-pane-new>New session</button>`);
   });
+  requestAnimationFrame(fitTeammates); // teammates' terminals scale to the pane they're in now
 }
 
 $('#addPane').onclick = () => { if (panes.length < MAX_PANES) { panes.push(null); savePanes(); render(); } };

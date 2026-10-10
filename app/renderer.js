@@ -8,12 +8,12 @@ const store = {
   set: (k, v) => { try { localStorage.setItem(k, v); } catch {} },
 };
 const setHTML = (el, html) => { if (el._html !== html) { el._html = html; el.innerHTML = html; } };
-const GITHUB_LOGIN = /^[a-z\d](?:[a-z\d-]{0,38})$/i;
-const REPO = /^[\w.-]+\/[\w.-]+$/;
+const GITHUB_LOGIN = /^(?=.{1,39}$)[a-z\d](?:-?[a-z\d])*$/i; // letters, digits and single hyphens inside
+const REPO = /^[a-z\d-]+\/(?!\.\.?$)[\w.-]+$/i; // owner/name, never . or ..
 
 // ---- Preferences (Settings) ----
 
-const DEFAULT_PREFS = { theme: 'dark', fontSize: 12.5, fontFamily: 'SF Mono', lineHeight: 1.2, notifyNeeds: true, notifyDone: true, badge: true, agent: 'claude', open: false, sessionBranches: true, shareFiles: false };
+const DEFAULT_PREFS = { theme: 'dark', fontSize: 12.5, fontFamily: 'SF Mono', lineHeight: 1.2, notifyNeeds: true, notifyDone: true, badge: true, agent: 'claude', open: false, sessionBranches: true, shareFiles: false, findNearby: false };
 const prefs = { ...DEFAULT_PREFS, ...(() => { try { return JSON.parse(store.get('prefs') || '{}'); } catch { return {}; } })() };
 const effectiveTheme = () => (prefs.theme === 'system' ? (matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark') : prefs.theme);
 
@@ -41,7 +41,7 @@ const colorFor = login => teamColors.get(login) || PEOPLE_COLORS[hash(login) % P
 const failedAvatars = new Set();
 const avatarUrl = p => ('avatar' in p ? p.avatar : GITHUB_LOGIN.test(p.login || '') ? `https://github.com/${p.login}.png?size=64` : '');
 const avatar = p => {
-  const url = avatarUrl(p), initial = (p.name || p.login || '?')[0].toUpperCase();
+  const url = avatarUrl(p), initial = [...(p.name || p.login || '?')][0].toUpperCase(); // a whole emoji, not half of one
   return `<span class="avatar" style="--c:${colorFor(p.login)}" title="${esc(p.name || p.login)}" data-initial="${esc(initial)}">${
     url && !failedAvatars.has(url) ? `<img src="${esc(url)}" alt="">` : esc(initial)}</span>`;
 };
@@ -207,6 +207,7 @@ function clearTeamView() {
 // Removed from the team (or it was deleted) while it was open: back to your teams, saying what happened.
 function removedFromTeam(reason) {
   const team = currentTeam, running = [...local.values()].filter(l => l.teamKey === team?.key).length;
+  for (const d of document.querySelectorAll('dialog[open]:not(#start)')) d.close(); // nothing of the team stays open
   closeTeam();
   showTeams(me);
   $('#removedNote').hidden = false;
@@ -230,6 +231,8 @@ $('#signout').onclick = async () => {
   await proto.signOut();
   closeTeam();
   me = null;
+  repos = null; // the next person's repos aren't these
+  $('#removedNote').hidden = true;
   store.set('team', '');
   $('.side-foot').hidden = true;
   showView('signinView');
@@ -237,6 +240,7 @@ $('#signout').onclick = async () => {
 };
 
 // The owner deletes a team; anyone else leaves it. Cancelling changes nothing.
+let leavingTeam = null;
 const ownsTeam = team => team.owner.toLowerCase() === me.login.toLowerCase();
 async function leaveOrDeleteTeam(team) {
   const deleting = ownsTeam(team);
@@ -244,11 +248,13 @@ async function leaveOrDeleteTeam(team) {
   const work = unpushed ? ` Some of your agents' folders have work that isn't pushed; it stays on this Mac.` : '';
   if (!confirm(deleting ? `Delete the team "${team.name}"? Its sessions and notes go with it, for everyone on it.${work}`
     : `Leave "${team.name}"? Your agents in it stop, and you'd need a new invite to come back.${work}`)) return;
+  leavingTeam = team.key; // the hub then disconnects us, which isn't news
   try { await (deleting ? proto.deleteTeam(team.key) : proto.leaveTeam(team.key)); }
-  catch (e) { return alert(errorText(e)); }
+  catch (e) { leavingTeam = null; return alert(errorText(e)); }
   for (const [id, o] of local) if (o.teamKey === team.key) proto.kill(id);
   $('#settings').close();
   if (team.key === currentTeam?.key) closeTeam();
+  leavingTeam = null;
   showTeams(me);
 }
 
@@ -260,6 +266,7 @@ function showTeams(user) {
   $('#me').innerHTML = `${avatar(user)}${esc(user.login)}`;
   $('#closeStart').hidden = !currentTeam;
   $('#createErr').textContent = '';
+  $('#findNearby').checked = prefs.findNearby;
   showView('teamsView');
   if (!$('#start').open) $('#start').showModal();
   refreshTeams();
@@ -271,7 +278,8 @@ async function refreshTeams() {
   clearTimeout(teamsTimer);
   if (!$('#start').open || $('#teamsView').hidden) return;
   try {
-    const { teams, unreachable, online } = await proto.teams();
+    const { teams, unreachable, online } = await proto.teams({ nearby: prefs.findNearby });
+    if (!me || !$('#start').open || $('#teamsView').hidden) return; // signed out or moved on meanwhile
     onlineReady = online;
     renderTeamList(teams);
     const last = reopenLast && listedTeams.get(store.get('team')); // on launch, go straight back to the last team
@@ -286,7 +294,8 @@ async function refreshTeams() {
 let listedTeams = new Map();
 function renderTeamList(teams) {
   listedTeams = new Map(teams.map(t => [t.key, t]));
-  $('#teamList').innerHTML = teams.map(t => {
+  // Redrawn only when something changed, so a poll doesn't take the focus or a click in progress.
+  const html = teams.map(t => {
     const open = t.key === currentTeam?.key, size = t.members.length + 1;
     return `
     <button class="team ${open ? 'on' : ''}" data-key="${esc(t.key)}">
@@ -295,6 +304,7 @@ function renderTeamList(teams) {
       <span class="agents">${[open && 'Open', t.agents && `${t.agents} running`].filter(Boolean).join(', ')}</span>
     </button>`;
   }).join('') || `<p class="hint">No teams yet. Create one below, or ask a teammate to invite ${esc(me.login)}.</p>`;
+  if (html !== renderTeamList.last) $('#teamList').innerHTML = renderTeamList.last = html;
 }
 $('#teamList').onclick = e => { const b = e.target.closest('[data-key]'); if (b) openTeam(listedTeams.get(b.dataset.key)); };
 
@@ -305,9 +315,11 @@ function syncWhere() {
   if (!onlineReady && online.checked) $('input[name=where][value=mac]').checked = true;
   $('#whereHint').textContent = whereValue() === 'online'
     ? 'Works from anywhere. Lives on your team\'s online hub.'
-    : `For teammates on the same Wi-Fi. Available while Protoplasma is open.${onlineReady ? '' : ' The online hub isn\'t set up yet.'}`;
+    : `For teammates on the same Wi-Fi, who turn on "Look for teams on this network". Available while Protoplasma is open.${onlineReady ? '' : ' The online hub isn\'t set up yet.'}`;
 }
-for (const r of document.querySelectorAll('input[name=where]')) r.onchange = syncWhere;
+$('#findNearby').onchange = e => { prefs.findNearby = e.target.checked; savePrefs(); refreshTeams(); };
+for (const r of document.querySelectorAll('input[name=where]')) r.onchange = () => { $('#createErr').textContent = ''; syncWhere(); };
+$('#teamName').oninput = () => { $('#createErr').textContent = ''; };
 
 $('#createTeam').onsubmit = async e => {
   e.preventDefault();
@@ -325,6 +337,7 @@ $('#createTeam').onsubmit = async e => {
 };
 
 async function openTeam(team) {
+  if (team.key === currentTeam?.key) { currentTeam = team; $('#start').close(); return go('sessions'); } // already open: no reconnecting
   try {
     const conn = await proto.openTeam(team.key);
     $('#removedNote').hidden = true;
@@ -370,10 +383,11 @@ $('#inviteBtn').onclick = () => {
 };
 $('#shareBtn').onclick = () => $('#inviteBtn').click();
 $('#inviteDone').onclick = () => $('#inviteDlg').close();
+$('#inviteLogin').oninput = () => { $('#inviteErr').textContent = ''; };
 $('#inviteForm').onsubmit = async e => {
   e.preventDefault();
   const login = $('#inviteLogin').value.trim().replace(/^@/, '');
-  if (!GITHUB_LOGIN.test(login)) { $('#inviteErr').textContent = 'Enter a GitHub username.'; return; }
+  if (!GITHUB_LOGIN.test(login)) { $('#inviteErr').textContent = login ? 'GitHub usernames are letters, numbers and single hyphens, up to 39 characters.' : 'Enter a GitHub username.'; return; }
   try { currentTeam = await proto.invite(currentTeam.key, login); $('#inviteDlg').close(); render(); }
   catch (err) { $('#inviteErr').textContent = errorText(err); }
 };
@@ -420,10 +434,10 @@ function watch(conn) {
     };
     socket.onclose = e => {
       if (generation !== watchGeneration) return;
-      if (e.code === 4003) return removedFromTeam(e.reason);
-      if (e.code >= 4000) return setConnection('retrying', e.reason);
-      setConnection('retrying', 'Hub unreachable, retrying');
-      setTimeout(connect, 3000);
+      if (e.code === 4003) return leavingTeam && leavingTeam === currentTeam?.key ? null : removedFromTeam(e.reason);
+      // Refused (a sign-in the hub didn't accept): try again now and then rather than giving up for good.
+      setConnection('retrying', e.code >= 4000 ? e.reason : 'Hub unreachable, retrying');
+      setTimeout(connect, e.code >= 4000 ? 30_000 : 3000);
     };
   })();
 }
@@ -456,6 +470,14 @@ function write(id, data) {
 }
 proto.onData(write);
 proto.onExit(id => {
+  // An agent that stops right away (nothing to resume, not signed in, a bad flag) says why before its terminal goes.
+  const info = local.get(id), buf = terms.get(id)?.term.buffer.active;
+  if (info && !stopping.has(id) && Date.now() - info.startedAt < 5000) {
+    const lines = [];
+    for (let i = 0; buf && i < buf.length; i++) lines.push(buf.getLine(i)?.translateToString(true).trim());
+    const said = lines.filter(Boolean).slice(-4).join('\n') || (pending.get(id) || '').replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, '').trim().slice(-300);
+    setTimeout(() => alert(`${agentName(info.cmd)} stopped as soon as it started${said ? `. It said:\n\n${said}` : '.'}`));
+  }
   local.delete(id);
   stopping.delete(id);
   if (terms.has(id)) dropTerminal(id); // even when no team is open (signed out), so nothing lingers
@@ -471,7 +493,7 @@ proto.onRefused((id, reason) => {
 // ---- New session, and adding agents to one ----
 
 // Where this Mac works on a session: what it was started with here, else the session's GitHub repo.
-const sourceKey = session => `source:${currentTeam.key}:${session}`;
+const sourceKey = (session, team = currentTeam) => `source:${team.key}:${session}`;
 function sourceFor(session) {
   try { const saved = JSON.parse(store.get(sourceKey(session)) || 'null'); if (saved) return saved; } catch {}
   const repo = hubLanes.find(l => l.session === session && l.repo)?.repo || recordFor(session)?.repo;
@@ -480,15 +502,22 @@ function sourceFor(session) {
 
 // Starts an agent and shows it. `source` is { repo, worktree } or { cwd }; `resume` picks up the agent's last
 // conversation in that folder. A renamed session's folder and branch keep its original key.
-const lastAgentKey = session => `lastAgent:${currentTeam.key}:${session}`;
+const lastAgentKey = (session, team = currentTeam) => `lastAgent:${team.key}:${session}`;
 async function startAgent({ session, cmd, open, source, task, resume = false }) {
-  if (task && recordFor(session)?.task !== task) sessionRecords = await proto.saveSession(currentTeam.key, { name: session, task });
+  const team = currentTeam; // the team it was started in, even if another is opened while it starts
+  const created = !recordFor(session);
+  if (task && recordFor(session)?.task !== task) sessionRecords = await proto.saveSession(team.key, { name: session, task });
   const opts = { session, cmd, open, resume, folderKey: recordFor(session)?.key, ...source };
-  const { id, repo } = await proto.startLane(opts);
-  local.set(id, { teamKey: currentTeam.key, session, cmd, open, ...source, repo, login: me.login, name: me.name, avatar: me.avatar });
-  store.set(sourceKey(session), JSON.stringify(source));
-  store.set(lastAgentKey(session), cmd);
-  openSession(session, id);
+  let started;
+  try { started = await proto.startLane(opts); } catch (e) {
+    if (created && task) proto.deleteSession(team.key, session).catch(() => {}); // don't leave an empty session behind
+    throw e;
+  }
+  const { id, repo } = started;
+  local.set(id, { teamKey: team.key, session, cmd, open, ...source, repo, login: me.login, name: me.name, avatar: me.avatar, startedAt: Date.now() });
+  store.set(sourceKey(session, team), JSON.stringify(source));
+  store.set(lastAgentKey(session, team), cmd);
+  if (currentTeam?.key === team.key) openSession(sessionRecords.find(r => r.name === session || (r.aliases || []).includes(session))?.name || session, id);
 }
 // The agent this Mac last ran in a session, if it can pick that conversation back up.
 // Your agent that stopped most recently in this session, or else the last kind you started here.
@@ -526,10 +555,10 @@ async function openNewAgent(session) {
   $('#session').value = session ?? '';
   $('#task').value = recordFor($('#session').value.trim())?.task || '';
   $('#task').dataset.from = recordFor($('#session').value.trim())?.name || '';
-  $('#repo').value = (session && sourceFor(session)?.repo) || $('#repo').value || store.get('repo');
+  $('#repo').value = $('#repo').value || store.get('repo');
   if (!$('#cwd').value) showFolder(store.get('cwd'));
-  const known = session && sourceFor(session); // an existing session keeps the kind of source it already uses
-  $(`input[name=source][value=${(known ? known.cwd : store.get('sourceKind') === 'folder') ? 'folder' : 'repo'}]`).checked = true;
+  $(`input[name=source][value=${store.get('sourceKind') === 'folder' ? 'folder' : 'repo'}]`).checked = true;
+  const known = session && showSource(session); // an existing session keeps the source it already uses
   $('#agentErr').textContent = '';
   $(`input[name=cmd][value=${prefs.agent}]`).checked = true;
   $('#open').checked = prefs.open;
@@ -577,6 +606,17 @@ $('#repoPicker').onclick = e => {
 };
 // A long path is shown from its end, which is the part that tells folders apart.
 const showFolder = dir => { const el = $('#cwd'); el.value = el.title = dir; el.scrollLeft = el.scrollWidth; };
+// Puts an existing session's repo or folder in the form. Returns it, or null for a session new to this Mac.
+function showSource(session) {
+  const known = sourceFor(session);
+  if (!known) return null;
+  if (known.repo) $('#repo').value = known.repo;
+  if (known.cwd) showFolder(known.cwd);
+  $(`input[name=source][value=${known.cwd ? 'folder' : 'repo'}]`).checked = true;
+  syncSource();
+  renderRepoPicker();
+  return known;
+}
 const syncSource = () => {
   const fromRepo = $('input[name=source]:checked').value === 'repo';
   $('#repoField').hidden = !fromRepo;
@@ -591,6 +631,7 @@ function syncSessionName() {
   if (rec) $('#task').value = rec.task || '';
   else if ($('#task').dataset.from) $('#task').value = ''; // a goal filled in from another session doesn't carry over
   $('#task').dataset.from = rec ? rec.name : '';
+  if (adding) showSource(name);
   $('#agentTitle').textContent = adding ? 'Add an agent' : 'New session';
   $('#startAgent').textContent = adding ? 'Start agent' : 'Start the session';
 }
@@ -598,13 +639,16 @@ $('#session').oninput = syncSessionName;
 $('#task').oninput = () => { $('#task').dataset.from = ''; };
 $('#new').onclick = () => openNewAgent();
 $('#cancel').onclick = () => $('#agent').close();
+$('#agent').oncancel = e => { if ($('#startAgent').disabled) e.preventDefault(); }; // Esc while it starts
 $('#pick').onclick = async () => {
   const dir = await proto.pickFolder($('#cwd').value);
   if (dir) { showFolder(dir); store.set('cwd', dir); }
 };
 // A name that matches an existing session apart from case and punctuation joins it, since both would get the same
 // branch and folder. Same rule as slug() in src/shared.js.
-const slug = name => String(name).toLowerCase().replace(/[^a-z0-9._-]+/g, '-').replace(/^[-.]+|[-.]+$/g, '') || 'session';
+// Letters of any script stay; a name with none (all emoji) gets a short code of its own instead of a shared one.
+const slug = name => String(name).normalize('NFC').toLowerCase().replace(/[^\p{L}\p{M}\p{N}._-]+|\.{2,}/gu, '-').replace(/^[-.]+|[-.]+$/g, '').replace(/\.lock$/, '')
+  || `session-${[...String(name)].reduce((h, c) => (h * 33 + c.codePointAt(0)) >>> 0, 5381).toString(36)}`;
 const existingSession = name => sessionList(board).find(s => slug(s.name) === slug(name))?.name;
 $('#agentForm').onsubmit = async e => {
   e.preventDefault();
@@ -618,16 +662,18 @@ $('#agentForm').onsubmit = async e => {
     if (!session) throw new Error('Name the session.');
     if (fromRepo && !REPO.test(source.repo)) throw new Error('Pick a repo, like owner/name.');
     if (!fromRepo && !source.cwd) throw new Error('Choose a folder.');
-    button.disabled = true;
+    button.disabled = $('#cancel').disabled = true;
     button.textContent = fromRepo ? 'Getting the repo…' : 'Starting…';
     await startAgent({ session, cmd: $('input[name=cmd]:checked').value, open: $('#open').checked, source, task: $('#task').value.trim() });
     if (fromRepo) store.set('repo', source.repo);
     store.set('sourceKind', fromRepo ? 'repo' : 'folder');
     $('#agent').close();
+    terms.get(focus)?.term.focus(); // closing the dialog gave focus back to the button that opened it
   } catch (err) {
-    $('#agentErr').textContent = errorText(err);
+    if ($('#agent').open) $('#agentErr').textContent = errorText(err);
+    else alert(errorText(err)); // the dialog was closed while it started (a second Esc can't be refused)
   } finally {
-    button.disabled = false;
+    button.disabled = $('#cancel').disabled = false;
     button.textContent = label;
   }
 };
@@ -685,7 +731,7 @@ function go(next, repo = null) {
 }
 function openSession(name, laneId = null) {
   closeMenu();
-  if (name !== current) code.on = false; // a session opens on its agents; the code comes up when you open a file
+  if (name !== current) { code.on = false; setCommentRef(null); } // a session opens on its agents; the code comes up when you open a file
   if (laneId) Object.assign(code, { dock: 'agent', dockHidden: false }); // and an agent asked for by name is brought forward
   view = 'session';
   current = name;
@@ -714,8 +760,8 @@ const sessionAction = async action => {
 async function deleteSession(name) {
   if (!confirm(`Delete the session "${name}"? Its agents have already stopped; this removes it from the board.`)) return;
   const source = sourceFor(name), key = recordFor(name)?.key || name;
-  if (current === name) go('sessions');
   if (!await sessionAction(() => proto.deleteSession(currentTeam.key, name))) return;
+  if (current === name) go('sessions');
   store.set(sourceKey(name), '');
   store.set(lastAgentKey(name), '');
   // Its own folder (and only that: never a folder you picked yourself) can go too, if you say so.
@@ -873,7 +919,7 @@ function renderWorkspaces(lanes) {
       <button class="ws ${view === 'sessions' && filterRepo === repo ? 'on' : ''}" data-repo="${esc(repo)}" title="${esc(repo || 'Sessions in folders with no GitHub repo')}"><svg><use href="#folder"/></svg><span>${esc(repo || 'Local folders')}</span></button>
       <button class="icon-btn small ws-menu" data-ws-menu="${esc(repo)}" aria-label="Workspace actions">⋯</button>
     </div>
-    ${open.filter(s => s.repo === repo).map(s => `<button class="ws-session ${view === 'session' && current === s.name ? 'on' : ''}" data-session="${esc(s.name)}"><span>${esc(s.name)}</span><span class="dot ${STATUS[s.status]?.[0] || ''}"></span></button>`).join('')}`).join('')
+    ${open.filter(s => (s.repo && repo ? same(s.repo, repo) : s.repo === repo)).map(s => `<button class="ws-session ${view === 'session' && current === s.name ? 'on' : ''}" data-session="${esc(s.name)}"><span>${esc(s.name)}</span><span class="dot ${STATUS[s.status]?.[0] || ''}"></span></button>`).join('')}`).join('')
     + (tucked ? `<button class="ws-more" data-unhide>Show ${tucked} hidden workspace${tucked === 1 ? '' : 's'}</button>` : '')
     || '<p class="hint">A repo shows up here once a session uses it.</p>');
 }
@@ -888,7 +934,7 @@ function renderSessions(lanes) {
   const query = $('#search').value.trim().toLowerCase();
   const rank = s => (s.lanes.length ? 0 : s.status === 'done' ? 2 : 1);
   const list = sessionList(lanes)
-    .filter(s => filterRepo === null || s.repo === filterRepo)
+    .filter(s => filterRepo === null || (s.repo && filterRepo ? same(s.repo, filterRepo) : s.repo === filterRepo))
     .filter(s => !query || `${s.name} ${s.rec?.task || ''} ${s.repo}`.toLowerCase().includes(query))
     .sort($('#sortBy').value === 'name' ? (a, b) => a.name.localeCompare(b.name) : (a, b) => rank(a) - rank(b) || b.at.localeCompare(a.at));
   setHTML($('#filterChip'), filterRepo === null ? '' : `<span class="chip">${esc(filterRepo || 'Local folders')}<button data-clear aria-label="Show sessions from all workspaces">×</button></span>`);
@@ -898,7 +944,7 @@ function renderSessions(lanes) {
     <div class="card" data-session="${esc(s.name)}" role="button" tabindex="0">
       <div class="card-top"><span class="card-title">${esc(s.name)}</span>${canManage(s.rec) ? `<button class="icon-btn" data-menu="${esc(s.name)}" aria-label="Session menu">⋯</button>` : ''}</div>
       ${s.rec?.task ? `<div class="card-task">${esc(s.rec.task)}</div>` : ''}
-      <div class="card-status">${pill(s.status)}<span>${n ? `${n} agent${n === 1 ? '' : 's'} running` : 'No agents running'}</span>${stepsDone(s.rec)}</div>
+      <div class="card-status">${pill(s.status)}<span>${n ? `${s.rec?.done ? 'Marked done, ' : ''}${n} agent${n === 1 ? '' : 's'} ${s.rec?.done ? 'still ' : ''}running` : 'No agents running'}</span>${stepsDone(s.rec)}</div>
       ${n ? `<div class="card-agents">${esc([...new Set(s.lanes.map(l => agentName(l.cmd)))].join(', '))}</div>` : ''}
       ${branchLine(s.lanes)}
       ${fileList(s.lanes)}
@@ -920,15 +966,21 @@ $('#search').oninput = $('#sortBy').onchange = () => render();
 function sessionMenu(anchor, name) {
   const done = recordFor(name)?.done, running = hubLanes.some(l => l.session === name);
   showMenu(anchor, [{ label: name },
-    ...(ownsTeam(currentTeam) ? [{ text: 'Share…', run: () => $('#inviteBtn').click() }] : []),
+    ...(ownsTeam(currentTeam) ? [{ text: 'Invite to the team…', run: () => $('#inviteBtn').click() }] : []),
     { text: 'Rename…', run: () => openRename(name) },
     { text: done ? 'Reopen' : 'Mark done', run: () => toggleDone(name) },
     { text: 'Delete session', disabled: running, hint: running ? 'Stop its agents first' : '', run: () => deleteSession(name) }]);
 }
 
 // Uncommitted changes, as the agents' git status reports them. Agents sharing a checkout are counted once.
+// Checkouts of the same branch share its pushed commits, so they count once (the one with the most changes).
 const diffStat = lanes => {
-  const g = [...new Map(lanes.filter(l => l.git).map(l => [l.tree || l.id, l.git])).values()];
+  const size = x => x.added + x.removed, byBranch = new Map();
+  for (const l of lanes.filter(l => l.git)) {
+    const key = l.branch ? `${(l.repo || l.tree).toLowerCase()}|${l.branch}` : l.tree || l.id;
+    if (!byBranch.has(key) || size(l.git) > size(byBranch.get(key))) byBranch.set(key, l.git);
+  }
+  const g = [...byBranch.values()];
   if (!g.some(x => x.added || x.removed || x.files)) return '';
   const files = g.reduce((n, x) => n + x.files, 0);
   return `<span class="diff" title="${files} file${files === 1 ? '' : 's'} changed"><span class="add">+${g.reduce((n, x) => n + x.added, 0)}</span><span class="del">−${g.reduce((n, x) => n + x.removed, 0)}</span></span>`;
@@ -1056,7 +1108,7 @@ const whose = agent => (same(agent.login, me.login) ? 'Your' : `${agent.name || 
 function stoppedRows() {
   const ended = stoppedAgents.filter(s => s.session === current).slice(0, 5);
   return ended.length ? '<div class="panel-label">Stopped agents</div>' + ended.map(s => `
-    <button class="panel-row" data-replay="${esc(s.id)}"><b>${esc(whose(s))} ${esc(agentName(s.cmd))}</b><span>${ago(s.endedAt)}</span></button>`).join('') : '';
+    <button class="panel-row" data-replay="${esc(s.id)}"><b>${esc(whose(s))} ${esc(agentName(s.cmd))}</b><span title="${esc(new Date(s.endedAt).toLocaleString())}">stopped ${new Date(s.endedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span></button>`).join('') : '';
 }
 let replayTerm;
 function openReplay(id) {
@@ -1099,12 +1151,14 @@ function setCommentRef(ref) {
   setHTML($('#commentRef'), ref ? `On <b>${esc(lineRef(ref))}</b><button type="button" class="stop" data-unref aria-label="Not about these lines">×</button>` : '');
 }
 $('#commentRef').onclick = e => { if ('unref' in e.target.dataset) setCommentRef(null); };
+// Where a comment's lines are now, if its file is open in the code view (they move as the file is edited).
+const linesNow = c => (models.get(c.file)?.model && linesOf(c, models.get(c.file).model)) || {};
 function comments(rec) {
   const list = rec?.comments || [];
   const removable = c => same(c.author, me.login) || ownsTeam(currentTeam);
   return list.map(c => `
     <div class="comment">${avatar(person(c.author))}<div class="comment-body"><div><b>${esc(c.author)}</b><span class="ago">${ago(c.at)}</span></div>
-      ${c.file ? `<button class="ref" data-open-file="${esc(c.file)}" data-line="${c.line}" title="Open ${esc(c.file)}">${esc(lineRef(c))}</button>${c.snippet ? `<code>${esc(c.snippet)}</code>` : ''}` : ''}<p>${esc(c.text)}</p></div>
+      ${c.file ? `<button class="ref" data-open-comment="${esc(c.id)}" title="Open ${esc(c.file)}">${esc(lineRef({ ...c, ...linesNow(c) }))}</button>${c.snippet ? `<code>${esc(c.snippet.split('\n')[0])}</code>` : ''}` : ''}<p>${esc(c.text)}</p></div>
       ${removable(c) ? `<button class="stop" data-uncomment="${esc(c.id)}" aria-label="Remove comment" title="Remove comment">×</button>` : ''}</div>`).join('')
     || '<p class="panel-empty">Nothing yet. Leave a note for the people in this session.</p>';
 }
@@ -1139,8 +1193,8 @@ function agentCard(l, name) {
 }
 function environment(inRoom, rec) {
   const branches = [...new Set(inRoom.map(l => l.branch).filter(Boolean))];
-  const behind = Math.max(0, ...inRoom.map(l => l.git?.behind || 0));
   const mine = inRoom.filter(l => local.has(l.id)); // your checkout's commits; teammates' are on their own Macs
+  const behind = Math.max(0, ...(mine.length ? mine : inRoom).map(l => l.git?.behind || 0));
   const ahead = Math.max(0, ...mine.map(l => l.git?.ahead || 0)), unpushed = Math.max(0, ...mine.map(l => l.git?.unpushed || 0));
   const github = roomRepo && `https://github.com/${roomRepo}`;
   const row = (label, value, action = '') => `<${action ? 'button' : 'div'} class="panel-row" ${action}><b>${label}</b><span class="mono">${value}</span></${action ? 'button' : 'div'}>`;
@@ -1163,6 +1217,11 @@ $('.panel-tabs').onclick = e => { if (e.target.dataset.panel) { panelTab = e.tar
 $('#panelBody').onclick = e => {
   const file = e.target.closest('[data-open-file]');
   if (file) return openFile(file.dataset.openFile, { line: Number(file.dataset.line) || undefined });
+  const commented = e.target.closest('[data-open-comment]');
+  const comment = commented && recordFor(current)?.comments?.find(c => c.id === commented.dataset.openComment);
+  if (comment) return openComment(comment);
+  // Anything that shows agents or a panel underneath the code brings the agents back from the Terminal tab.
+  if (e.target.closest('[data-beside], [data-focus], [data-tab], [data-replay]')) code.dock = 'agent';
   const theirs = e.target.closest('[data-theirs]');
   if (theirs) return openTheirs(theirs.dataset.theirs, theirs.dataset.path);
   if (e.target.dataset.beside) { split = split === e.target.dataset.beside ? null : e.target.dataset.beside; tab = 'agents'; return render(); }
@@ -1182,8 +1241,9 @@ $('#panelBody').onclick = e => {
 $('#lanes').onclick = e => { if (e.target.dataset.stop) stopAgent(e.target.dataset.stop); };
 $('#emptyNew').onclick = () => agentMenu($('#emptyNew'));
 $('#resumeBtn').onclick = resumeAgent;
-$('#myAgent').onclick = () => { focus = split = null; tab = 'agents'; render(); terms.get(focus)?.term.focus(); };
-$('#newPane').onclick = () => openPanes([current, null]);
+$('#myAgent').onclick = () => { focus = split = null; tab = 'agents'; code.dock = 'agent'; render(); terms.get(focus)?.term.focus(); };
+// Back to the panes this session was in, if it was in some; otherwise this session beside an empty pane.
+$('#newPane').onclick = () => { let saved = []; try { saved = JSON.parse(store.get(panesKey()) || '[]'); } catch {} openPanes(saved.includes(current) ? saved : [current, null]); };
 $('#panelToggle').onclick = () => { panelHidden = !panelHidden; render(); };
 $('#backToAgents').onclick = () => { tab = 'agents'; render(); };
 $('#ghPanel').onclick = e => { const item = e.target.closest('[data-url]'); if (item) proto.openExternal(item.dataset.url); };
@@ -1233,7 +1293,10 @@ $('#stepForm').onsubmit = async e => {
     render();
   } catch (err) { $('#stepErr').textContent = errorText(err); } finally { button.disabled = false; $('#stepText').focus(); }
 };
-$('#stepList').onchange = e => { if (e.target.dataset.step) sessionAction(() => proto.updateStep(currentTeam.key, current, e.target.dataset.step, { done: e.target.checked })); };
+$('#stepList').onchange = e => {
+  const box = e.target;
+  if (box.dataset.step) sessionAction(() => proto.updateStep(currentTeam.key, current, box.dataset.step, { done: box.checked })).then(ok => { if (!ok) box.checked = !box.checked; });
+};
 $('#stepList').onclick = e => { if (e.target.dataset.unstep) sessionAction(() => proto.removeStep(currentTeam.key, current, e.target.dataset.unstep)); };
 
 // ---- Sharing your agents' files ----
@@ -1253,9 +1316,8 @@ async function answerFile(m) {
 }
 
 // Notes that apply to the open session: its repo's, plus the ones written for every repo.
-const roomNotes = () => memories.filter(m => !m.repo || (roomRepo && m.repo === roomRepo));
+const roomNotes = () => memories.filter(m => !m.repo || (roomRepo && same(m.repo, roomRepo)));
 function renderMemory(lanes) {
-  setHTML($('#fileList'), [...new Set(lanes.flatMap(l => l.files))].map(f => `<option value="${esc(f)}">`).join(''));
   const canRemove = m => [m.author, currentTeam.owner].some(l => l.toLowerCase() === me.login.toLowerCase());
   const notes = roomNotes();
   setHTML($('#memoryList'), notes.length ? `<div class="gh-list">${notes.reverse().map(m => `
@@ -1265,6 +1327,11 @@ function renderMemory(lanes) {
       ${canRemove(m) ? `<button class="btn ghost small" data-forget="${esc(m.id)}">Remove</button>` : ''}
     </div>`).join('')}</div>` : '<p class="gh-empty">No notes yet. Add what you\'d tell a new teammate: conventions, gotchas, decisions.</p>');
 }
+// Suggestions for "Pin to a file": the files agents are changing first, then the rest of the session's files.
+$('#memoryFile').onfocus = async () => {
+  const changed = hubLanes.filter(l => l.session === current).flatMap(l => l.files), all = await sessionFiles() || [];
+  setHTML($('#fileList'), [...new Set([...changed, ...all])].slice(0, 2000).map(f => `<option value="${esc(f)}">`).join(''));
+};
 $('#memoryForm').onsubmit = async e => {
   e.preventDefault();
   const note = { text: $('#memoryText').value.trim(), file: $('#memoryFile').value.trim().replace(/^\.?\//, ''), repo: roomRepo };
@@ -1275,7 +1342,8 @@ $('#memoryForm').onsubmit = async e => {
   try {
     const known = note.file && await sessionFiles();
     if (known && !known.includes(note.file)) {
-      const like = known.filter(f => f.endsWith(`/${note.file}`));
+      // A file's name, or its name without the extension, finds it if only one file has it.
+      const like = known.filter(f => f.endsWith(`/${note.file}`) || f.split('/').pop().replace(/\.[^.]*$/, '') === note.file);
       if (like.length !== 1) {
         $('#memoryErr').textContent = like.length ? `More than one file is called ${note.file}. Use its path from the repo root, like ${like[0]}.`
           : `There's no ${note.file} in this repo. Use the file's path from the repo root, like src/app.ts.`;
@@ -1441,7 +1509,7 @@ async function openSettings(pane = 'general') {
       <button class="btn" data-check-updates>Check now</button></div></div>
     <h4>Online hub</h4>
     <div class="group"><div class="setting"><div><b>${esc(info.onlineHub ? new URL(info.onlineHub).host : 'Not set up')}</b>
-      <p>Relays terminals and coordination between teammates. It never sees your repos, and keeps only team names, members, notes, and sessions with their goals and comments.</p></div></div></div>`;
+      <p>Relays terminals and coordination between teammates. It never stores your repos, and keeps only team names, members, notes, and sessions with their goals, repos, plans and comments (Data &amp; privacy has the details).</p></div></div></div>`;
   checkUpdates().then(showUpdateStatus);
 }
 $('#settingsBtn').onclick = () => openSettings();
@@ -1473,9 +1541,11 @@ $('#settings').onclick = e => {
 // ---- Updates: a newer release on GitHub replaces the app in place (see app/updates.js) ----
 
 let update = null; // the last check's answer: { current, latest, available, canInstall, url }
+let staged = false, dismissed = null; // an update downloaded and waiting for quit; a version "Later" was clicked for
 async function checkUpdates() {
+  if (staged) return update;
   try { update = await proto.checkUpdates(); } catch { return null; }
-  $('#updateBar').hidden = !update.available;
+  $('#updateBar').hidden = !update.available || dismissed === update.latest;
   if (update.available) {
     $('#updateText').textContent = `A Protoplasma update is available (${update.latest}).`;
     $('#updateNow').textContent = update.canInstall ? 'Update now' : 'Download';
@@ -1483,13 +1553,14 @@ async function checkUpdates() {
   }
   return update;
 }
-$('#updateLater').onclick = () => { $('#updateBar').hidden = true; };
+$('#updateLater').onclick = () => { $('#updateBar').hidden = true; dismissed = update?.latest; };
 $('#updateNow').onclick = async () => {
   if (!update.canInstall) return proto.openExternal(update.url);
   $('#updateNow').disabled = true;
   $('#updateText').textContent = `Downloading ${update.latest}…`;
   try {
     await proto.installUpdate();
+    staged = true;
     $('#updateText').textContent = `${update.latest} is ready. It goes in as soon as Protoplasma quits.`;
   } catch (err) {
     $('#updateText').textContent = errorText(err);
@@ -1570,7 +1641,8 @@ $('#setup').onclick = e => {
 
 // ---- Menu shortcuts ----
 
-proto.onMenu(action => {
+// Menu commands, also run from the code editor for the keys Monaco would otherwise keep for itself (code.js).
+const runMenu = action => {
   if (action === 'settings') return openSettings();
   if (action === 'updates') return openSettings('about');
   if (action === 'sidebar') return toggleSidebar();
@@ -1585,7 +1657,8 @@ proto.onMenu(action => {
   if (action === 'go-to-file') goToFile();
   if (action === 'save') saveActive();
   if (action === 'invite') ownsTeam(currentTeam) ? $('#inviteBtn').click() : alert(`Only the team's owner, ${currentTeam.owner}, can invite people.`);
-});
+};
+proto.onMenu(runMenu);
 // Settings is a page, so Esc closes it the way it closes a dialog.
 addEventListener('keydown', e => {
   if (e.key !== 'Escape') return;

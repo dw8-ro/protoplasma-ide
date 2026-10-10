@@ -27,6 +27,7 @@ const agentEnv = new Promise(resolve => {
     const env = Object.fromEntries(out.split('__ENV__').pop().split('\0').filter(kv => kv.includes('='))
       .map(kv => [kv.slice(0, kv.indexOf('=')), kv.slice(kv.indexOf('=') + 1)]));
     process.env.PATH = env.PATH || process.env.PATH; // node-pty resolves commands against our PATH
+    env.LANG ||= 'en_US.UTF-8'; // a Finder launch has none, and CLIs then mangle anything that isn't ASCII
     resolve(env);
   });
   child.stdin.end();
@@ -35,10 +36,13 @@ const agentEnv = new Promise(resolve => {
 const lanes = new Map(); // id -> lane running on this machine
 const known = new Map(); // "hub|id" -> team from the last listing; the renderer can only open these
 let win, session, team, signInAbort; // session: { token, user }; team: the open team
+const openTeam = () => team;
+let unsaved = 0; // files with unsaved edits in the code view, for the quit warning
 
 // Lanes can outlive the window during quit, and sending to a destroyed window throws.
 const toWindow = (channel, ...args) => { if (win && !win.isDestroyed()) win.webContents.send(channel, ...args); };
-const remember = t => { const key = `${t.hub}|${t.id}`; known.set(key, t); return { ...t, key }; };
+// Every listing refreshes the open team too, so who is on it (and so the push guard for new agents) stays current.
+const remember = t => { const key = `${t.hub}|${t.id}`; known.set(key, t); if (team && `${team.hub}|${team.id}` === key) team = t; return { ...t, key }; };
 const teamFor = key => { const t = known.get(key); if (!t) throw new Error('That team isn\'t available any more.'); return t; };
 const signedIn = fn => async (_, ...args) => {
   if (!session) throw new Error('Sign in with GitHub first.');
@@ -60,11 +64,11 @@ ipcMain.handle('auth:start', async () => {
   return { code: flow.user_code, url: flow.verification_uri };
 });
 ipcMain.handle('auth:cancel', () => signInAbort?.abort());
-ipcMain.handle('auth:signOut', () => { github.signOut(); session = null; });
+ipcMain.handle('auth:signOut', () => { signInAbort?.abort(); github.signOut(); session = team = null; known.clear(); stopWatching(); });
 
 // ---- Teams ----
-ipcMain.handle('teams:list', signedIn(async () => {
-  const { teams: list, unreachable } = await teams.listTeams(session, onlineHub);
+ipcMain.handle('teams:list', signedIn(async (o = {}) => {
+  const { teams: list, unreachable } = await teams.listTeams(session, onlineHub, { nearby: !!o?.nearby });
   return { teams: list.map(remember), unreachable, online: !!onlineHub };
 }));
 ipcMain.handle('teams:create', signedIn(async o => remember(await teams.createTeam(session, onlineHub, { name: String(o.name), online: !!o.online }))));
@@ -108,6 +112,7 @@ ipcMain.handle('gh:status', async () => github.ghStatus(await agentEnv));
 ipcMain.on('focus', () => { win?.show(); app.focus({ steal: true }); });
 ipcMain.on('badge', (_, count) => app.dock?.setBadge(count > 0 ? String(count) : ''));
 ipcMain.on('clipboard', (_, text) => clipboard.writeText(String(text)));
+ipcMain.on('unsaved', (_, count) => { unsaved = count | 0; });
 
 // ---- Updates (see updates.js) ----
 let release = null; // a newer release found by the last check
@@ -132,6 +137,7 @@ ipcMain.handle('pickFolder', async (_, from) => (await dialog.showOpenDialog(win
 // Which agent CLIs this Mac can run, so the app only offers the ones that will start.
 ipcMain.handle('agents:status', async () => { const env = await agentEnv; return AGENTS.map(cmd => ({ cmd, installed: installed(cmd, env) })); });
 ipcMain.handle('startLane', signedIn(async o => {
+  const team = openTeam(); // as it is now: another may be opened while the repo is fetched
   if (!team) throw new Error('Open a team first.');
   if (!AGENTS.includes(o.cmd)) throw new Error(`Unknown agent: ${o.cmd}`);
   const env = await agentEnv;
@@ -198,7 +204,7 @@ ipcMain.handle('shell:start', inFolder((root, env, cols, rows) => {
   return id;
 }));
 ipcMain.on('shell:write', (_, id, d) => shells.get(id)?.write(d));
-ipcMain.on('shell:resize', (_, id, cols, rows) => shells.get(id)?.resize(cols, rows));
+ipcMain.on('shell:resize', (_, id, cols, rows) => { if (cols > 0 && rows > 0) try { shells.get(id)?.resize(cols, rows); } catch {} }); // it may have just exited
 
 // Shortcuts live in the native menu so they work while a terminal has focus.
 const menuAction = action => () => toWindow('menu', action);
@@ -242,7 +248,13 @@ Menu.setApplicationMenu(Menu.buildFromTemplate([
 const boundsFile = () => path.join(app.getPath('userData'), 'window.json');
 const savedBounds = () => { try { return JSON.parse(fs.readFileSync(boundsFile(), 'utf8')); } catch { return {}; } };
 
+// One copy at a time: a second would start its own agents and hub beside this one's.
+const firstCopy = app.requestSingleInstanceLock();
+if (!firstCopy) app.quit();
+app.on('second-instance', () => { if (win) { if (win.isMinimized()) win.restore(); win.show(); win.focus(); } });
+
 app.whenReady().then(() => {
+  if (!firstCopy) return;
   if (!app.isPackaged) app.dock?.setIcon(path.join(__dirname, '../build/icon.png'));
   win = new BrowserWindow({ width: 1440, height: 900, ...savedBounds(), minWidth: 900, minHeight: 560, backgroundColor: '#0b0b0c',
     titleBarStyle: 'hiddenInset', trafficLightPosition: { x: 18, y: 18 },
@@ -251,12 +263,16 @@ app.whenReady().then(() => {
   win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   win.webContents.on('will-navigate', e => e.preventDefault());
   win.loadFile(path.join(__dirname, 'index.html'));
-  // Closing the window quits the app, and with it every agent running here, so ask first.
+  // Closing the window quits the app, and with it every agent running here and any unsaved edits, so ask first.
   win.on('close', e => {
     const running = lanes.size;
-    if (running && dialog.showMessageBoxSync(win, { type: 'warning', buttons: ['Quit', 'Cancel'], defaultId: 1, cancelId: 1,
-      message: running === 1 ? 'An agent is still running' : `${running} agents are still running`,
-      detail: `Quitting Protoplasma stops ${running === 1 ? 'it' : 'them'}. A Claude Code conversation can be picked up again later with /resume.` }) === 1) return e.preventDefault();
+    const plural = (n, one, many) => (n === 1 ? one : `${n} ${many}`);
+    const what = [running && plural(running, 'An agent is still running', 'agents are still running'),
+      unsaved && plural(unsaved, 'a file has unsaved changes', 'files have unsaved changes')].filter(Boolean);
+    if (what.length && dialog.showMessageBoxSync(win, { type: 'warning', buttons: ['Quit', 'Cancel'], defaultId: 1, cancelId: 1,
+      message: `${what.join(', and ')}`.replace(/^./, c => c.toUpperCase()),
+      detail: [running && `Quitting Protoplasma stops ${running === 1 ? 'it' : 'them'}. A Claude Code conversation can be picked up again later with /resume.`,
+        unsaved && 'Unsaved changes are lost.', shells.size && 'Terminals open in the code view close too.'].filter(Boolean).join(' ') }) === 1) return e.preventDefault();
     try { fs.writeFileSync(boundsFile(), JSON.stringify(win.getNormalBounds())); } catch {}
   });
 });

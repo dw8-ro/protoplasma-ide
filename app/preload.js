@@ -10,7 +10,7 @@ contextBridge.exposeInMainWorld('proto', {
   signOut: () => ipcRenderer.invoke('auth:signOut'),
   onSignedIn: listen('auth:done'),
 
-  teams: () => ipcRenderer.invoke('teams:list'),
+  teams: opts => ipcRenderer.invoke('teams:list', opts),
   createTeam: opts => ipcRenderer.invoke('teams:create', opts),
   openTeam: key => ipcRenderer.invoke('teams:open', key),
   invite: (key, login) => ipcRenderer.invoke('teams:invite', key, login),
@@ -45,6 +45,7 @@ contextBridge.exposeInMainWorld('proto', {
   ghStatus: () => ipcRenderer.invoke('gh:status'),
   setBadge: count => ipcRenderer.send('badge', count),
   copy: text => ipcRenderer.send('clipboard', text),
+  setUnsaved: count => ipcRenderer.send('unsaved', count),
   onMenu: listen('menu'),
 
   agents: () => ipcRenderer.invoke('agents:status'),

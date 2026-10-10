@@ -3,6 +3,8 @@
 # Anything downloaded this way isn't quarantined, so macOS opens the app without the "can't be verified" warning.
 set -e
 REPO=dw8-ro/protoplasma-ide
+# (uname -m says x86_64 in a Rosetta shell, so ask the hardware)
+[ "$(sysctl -n hw.optional.arm64 2>/dev/null)" = 1 ] || { echo "Protoplasma runs on Macs with Apple silicon." >&2; exit 1; }
 TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT
 
@@ -15,8 +17,11 @@ else
 fi
 
 ditto -x -k "$TMP"/*.zip "$TMP/app"
+# The new copy goes in beside the old one first, so a failed move never leaves you with neither.
+rm -rf /Applications/Protoplasma.app.new
+mv "$TMP/app/Protoplasma.app" /Applications/Protoplasma.app.new
 rm -rf /Applications/Protoplasma.app
-mv "$TMP/app/Protoplasma.app" /Applications/
+mv /Applications/Protoplasma.app.new /Applications/Protoplasma.app
 xattr -dr com.apple.quarantine /Applications/Protoplasma.app 2>/dev/null || true
 echo "Installed Protoplasma. It keeps itself up to date from now on."
 open /Applications/Protoplasma.app

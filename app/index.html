@@ -88,6 +88,8 @@
   input[readonly] { color: var(--muted); font-family: var(--mono); font-size: 12px; }
   .row { display: flex; gap: 8px; }
   .fine { color: var(--faint); font-size: 12px; line-height: 1.5; }
+  .nearby { display: flex; align-items: center; gap: 8px; margin: 2px 0 0; cursor: pointer; }
+  #whereHint { min-height: 3em; } /* two lines either way, so the Create button doesn't move */
 
   /* Identity: every teammate has a colour (set as --c) */
   .avatar {
@@ -206,7 +208,8 @@
   .card:hover { border-color: var(--line-strong); }
   .card-top { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
   .card-title { flex: 1; min-width: 0; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .card { min-width: 0; }
+  .card { min-width: 0; grid-template-columns: minmax(0, 1fr); } /* a long name or goal stays inside its card */
+  .card-task { overflow-wrap: anywhere; }
   .card-top .icon-btn { flex: none; }
   .card-people { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 12px; }
   .files { list-style: none; margin: 0; padding: 8px 0 0; border-top: 1px solid var(--line); display: grid; gap: 4px; }
@@ -291,8 +294,8 @@
   .comment-body b { font-weight: 600; margin-right: 6px; }
   .comment-body .ago { color: var(--faint); font-size: 11.5px; }
   .comment-body p { margin-top: 2px; color: var(--text); line-height: 1.45; overflow-wrap: anywhere; user-select: text; }
-  .comment .stop { position: absolute; top: 6px; right: 4px; width: 18px; height: 18px; border: 0; border-radius: 5px; background: none; color: var(--faint); cursor: pointer; }
-  .comment .stop:hover { background: var(--line-strong); color: var(--text); }
+  .comment .stop, .step .stop, .comment-ref .stop { position: absolute; top: 6px; right: 4px; width: 18px; height: 18px; border: 0; border-radius: 5px; background: none; color: var(--faint); cursor: pointer; flex: none; }
+  .comment .stop:hover, .step .stop:hover, .comment-ref .stop:hover { background: var(--line-strong); color: var(--text); }
   .panel-empty { padding: 4px 8px; color: var(--faint); font-size: 12px; }
   .comment-form { padding: 10px 12px; border-top: 1px solid var(--line); }
   .comment-form input { height: 32px; font-size: 12.5px; }
@@ -322,7 +325,7 @@
   .lane { container-type: inline-size; }
   @container (max-width: 620px) { .lane-bar .access { display: none; } .lane-bar [data-stop] { margin-left: auto; } }
   /* The code view, laid out like Amoeba's editor: views on the left, the editor, and the agents in a panel below it. */
-  .room.coding .room-body { display: grid; grid-template-columns: minmax(0, 1fr) auto; grid-template-rows: minmax(0, 1fr) 5px var(--dock, 36%); }
+  .room.coding .room-body { display: grid; grid-template-columns: minmax(0, 1fr) auto; grid-template-rows: minmax(0, 1fr) 5px min(var(--dock, 36%), calc(100% - 220px)); }
   .room.coding .code-view { grid-column: 1 / -1; grid-row: 1; }
   .room.coding .dock-grip { grid-column: 1 / -1; grid-row: 2; cursor: row-resize; border-top: 1px solid var(--line); }
   .room.coding .stage { grid-row: 3; grid-column: 1; }
@@ -425,7 +428,7 @@
   .pane-head .pane-task { min-width: 0; overflow: hidden; text-overflow: ellipsis; color: var(--faint); font-size: 12px; }
   .pane-head .spacer { margin-left: auto; }
   .pane-body { flex: 1; min-height: 0; display: flex; padding: 12px; }
-  .pane-body .lane { margin-top: 6px; }
+  .pane-body .lane { margin-top: 6px; min-width: 0; }
   .pane-empty { margin: auto; display: grid; justify-items: center; gap: 12px; width: min(340px, 100%); color: var(--muted); text-align: center; }
   .pane-empty[hidden] { display: none; }
   .pane-pick { display: grid; gap: 4px; width: 100%; max-height: 50vh; overflow: auto; }
@@ -436,7 +439,7 @@
   .step { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border-radius: 8px; cursor: pointer; }
   .step:hover { background: var(--surface); }
   .step input { flex: none; }
-  .step .text { flex: 1; min-width: 0; }
+  .step .text { flex: 1; min-width: 0; overflow-wrap: anywhere; }
   .step.done .text { color: var(--faint); text-decoration: line-through; }
   .step .owner { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); font-size: 12px; }
   .step .owner .avatar { width: 18px; height: 18px; font-size: 9px; }
@@ -512,11 +515,11 @@
   /* Shared memory */
   .memory-form { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 1fr) auto; gap: 8px; }
   .memory-note { color: var(--faint); font-size: 12px; margin: 8px 0 16px; }
-  .memory { display: grid; grid-template-columns: 1fr auto; gap: 6px 12px; padding: 14px 16px; border-top: 1px solid var(--line); }
+  .memory { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 6px 12px; padding: 14px 16px; border-top: 1px solid var(--line); }
   .memory:first-child { border-top: 0; }
-  .memory-text { line-height: 1.5; user-select: text; }
+  .memory-text { line-height: 1.5; user-select: text; overflow-wrap: anywhere; }
   .memory-meta { display: flex; align-items: center; gap: 8px; color: var(--faint); font-size: 12px; }
-  .memory-meta .file { font: 11.5px var(--mono); color: var(--muted); padding: 1px 7px; border-radius: 6px; background: var(--raised); border: 1px solid var(--line); }
+  .memory-meta .file { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 11.5px var(--mono); color: var(--muted); padding: 1px 7px; border-radius: 6px; background: var(--raised); border: 1px solid var(--line); }
   .memory .btn { grid-row: 1 / 3; grid-column: 2; align-self: center; }
 
   /* Dialogs */
@@ -574,7 +577,8 @@
   .members { list-style: none; margin: 18px 0 0; padding: 0; display: grid; gap: 2px; }
   .members li { display: flex; align-items: center; gap: 10px; padding: 6px 0; }
   .members .login { flex: 1; font-weight: 500; }
-  .error { color: var(--overlap); font-size: 12px; margin-top: 12px; }
+  .error { color: var(--overlap); font-size: 12px; margin-top: 12px; overflow-wrap: anywhere; }
+  #createErr { min-height: 1.5em; } /* an error appearing doesn't move the dialog */
   .error:empty { display: none; }
   /* The New session form's footer stays in view when the window is short, and keeps a line for errors so nothing jumps. */
   .foot { position: sticky; bottom: -28px; margin: 4px -28px -28px; padding: 0 28px 28px; background: var(--surface); }
@@ -827,6 +831,8 @@
     <p id="removedNote" class="error" role="status" hidden></p>
     <div id="teamList" class="team-list"></div>
     <p id="teamsNote" class="fine"></p>
+    <label class="nearby fine"><input type="checkbox" id="findNearby"> Look for teams on this network</label>
+    <p class="fine">For teams hosted on a teammate's Mac. Looking shows your GitHub sign-in to every Mac that answers, so turn it on only on networks you trust.</p>
     <form id="createTeam" class="create">
       <h3>Create a team</h3>
       <div class="segmented">
@@ -834,7 +840,7 @@
         <label><input type="radio" name="where" value="mac"><span>This Mac</span></label>
       </div>
       <p id="whereHint" class="fine"></p>
-      <div class="row"><input id="teamName" placeholder="Team name" aria-label="Team name" autocomplete="off"><button class="btn primary">Create</button></div>
+      <div class="row"><input id="teamName" maxlength="60" placeholder="Team name" aria-label="Team name" autocomplete="off"><button class="btn primary">Create</button></div>
       <p id="createErr" class="error" role="alert" style="margin-top: 0"></p>
     </form>
     <div class="actions"><button id="signout" class="btn ghost">Sign out</button><button id="closeStart" class="btn" hidden>Close</button></div>
@@ -988,6 +994,10 @@
         <div class="setting"><b>Toggle the sidebar</b><kbd>⌘B</kbd></div>
         <div class="setting"><b>Toggle the session panel</b><kbd>⌘J</kbd></div>
         <div class="setting"><b>Invite to team</b><kbd>⌘I</kbd></div>
+        <div class="setting"><b>Show the code</b><kbd>⇧⌘E</kbd></div>
+        <div class="setting"><b>Go to a file</b><kbd>⌘P</kbd></div>
+        <div class="setting"><b>Save the file</b><kbd>⌘S</kbd></div>
+        <div class="setting"><b>Comment on the selected lines</b><kbd>⇧⌘M</kbd></div>
         <div class="setting"><b>Switch team</b><kbd>⇧⌘T</kbd></div>
         <div class="setting"><b>Settings</b><kbd>⌘,</kbd></div>
         <div class="setting"><b>Close a dialog or Settings</b><kbd>Esc</kbd></div>
@@ -998,9 +1008,9 @@
     <section data-pane="data" hidden>
       <h3>Data &amp; privacy</h3>
       <div class="group">
-        <div class="setting"><div><b>Kept on the hub</b><p>Team names and members, notes, and sessions with their goals, repos and comments.</p></div></div>
+        <div class="setting"><div><b>Kept on the hub</b><p>Team names and members, notes, and sessions with their goals, repos, plans and comments. A comment on lines of code keeps the text of those lines (up to 300 characters), so it can find them again.</p></div></div>
         <div class="setting"><div><b>Passed through the hub</b><p>Terminal output and Claude Code's hook events, live. The last 256 KB of each agent's output is held in memory, so someone joining sees the current screen and a stopped agent's last screen can be looked at (the 20 most recent per team). None of it is written to disk, and it's gone when the hub restarts.</p></div></div>
-        <div class="setting"><div><b>Never sent to the hub</b><p>Your code and repos. Agents and git run on your Mac, and the GitHub CLI's login stays here too.</p></div></div>
+        <div class="setting"><div><b>Never kept on the hub</b><p>Your code and repos. Agents and git run on your Mac, and the GitHub CLI's login stays here too. Some code does pass through without being kept: Claude Code's hook events include what a tool is about to change, and with "Share the files your agents change" on, teammates can open those files.</p></div></div>
         <div class="setting"><div><b>Your GitHub sign-in</b><p>Read-only access to your public profile, used to check who you are. Stored encrypted on this Mac; the hub never saves it.</p></div></div>
         <div class="setting"><div><b>Training or analytics</b></div><span class="where">Never</span></div>
       </div>

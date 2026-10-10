@@ -10,6 +10,7 @@ const { repoFromRemote, startLane: startLaneHere } = require('../src/lane');
 const { appendScrollback, SCROLLBACK } = require('../src/shared');
 
 const LANE = path.join(__dirname, '../src/lane.js');
+const SECRET = 'a-test-hook-secret'; // what raw test agents use for their hooks
 const root = path.join(__dirname, '..'); // lanes started here report this as their git root
 // "tok-slow-<name>" takes a moment to verify, to exercise connections that drop mid-check.
 const verifyUser = async token => {
@@ -167,7 +168,7 @@ test('shows who is watching which session', async () => {
 test('connections that drop while being verified leave no ghosts', async () => {
   const lane = new WebSocket(`${url.replace('http', 'ws')}/lane`);
   await new Promise(resolve => lane.on('open', resolve));
-  lane.send(JSON.stringify({ t: 'hello', token: 'tok-slow-alice', team: team.id, id: 'ghost-lane', hookSecret: 'x', session: 's1', cmd: 'sh' }));
+  lane.send(JSON.stringify({ t: 'hello', token: 'tok-slow-alice', team: team.id, id: 'ghost-lane', hookSecret: SECRET, session: 's1', cmd: 'sh' }));
   const viewer = new WebSocket(`${url.replace('http', 'ws')}/watch`);
   await new Promise(resolve => viewer.on('open', resolve));
   viewer.send(JSON.stringify({ t: 'watch', token: 'tok-slow-bob', team: team.id }));
@@ -203,7 +204,7 @@ test('git progress and branch switches reach teammates', async () => {
   const lane = new WebSocket(`${url.replace('http', 'ws')}/lane`);
   await new Promise(resolve => lane.on('open', resolve));
   const joined = nextState(lanes => lanes.some(l => l.id === 'git-lane'));
-  lane.send(JSON.stringify({ t: 'hello', token: 'tok-alice', team: team.id, id: 'git-lane', hookSecret: 'x', session: 's1', cmd: 'sh', branch: 'main' }));
+  lane.send(JSON.stringify({ t: 'hello', token: 'tok-alice', team: team.id, id: 'git-lane', hookSecret: SECRET, session: 's1', cmd: 'sh', branch: 'main' }));
   await joined;
   const updated = nextState(lanes => lanes.some(l => l.id === 'git-lane' && l.git?.added === 3));
   lane.send(JSON.stringify({ t: 'git', branch: 'fix/lobby', added: 3, removed: 1, files: 2 }));
@@ -220,10 +221,10 @@ async function rawLane(id, hello = {}) {
   const lane = new WebSocket(`${url.replace('http', 'ws')}/lane`);
   await new Promise(resolve => lane.on('open', resolve));
   const joined = nextState(lanes => lanes.some(l => l.id === id));
-  lane.send(JSON.stringify({ t: 'hello', token: 'tok-alice', team: team.id, id, hookSecret: 'x', session: 's1', cmd: 'claude', root: '/r', ...hello }));
+  lane.send(JSON.stringify({ t: 'hello', token: 'tok-alice', team: team.id, id, hookSecret: SECRET, session: 's1', cmd: 'claude', root: '/r', ...hello }));
   await joined;
   const hook = async body => {
-    const res = await fetch(`${url}/hooks/${id}`, { method: 'POST', headers: { authorization: 'Bearer x' }, body: JSON.stringify({ cwd: '/r', ...body }) });
+    const res = await fetch(`${url}/hooks/${id}`, { method: 'POST', headers: { authorization: `Bearer ${SECRET}` }, body: JSON.stringify({ cwd: '/r', ...body }) });
     return (await res.json().catch(() => null))?.hookSpecificOutput ?? null;
   };
   const close = async () => { const gone = nextState(lanes => !lanes.some(l => l.id === id)); lane.close(); await gone; };
@@ -251,9 +252,21 @@ test('pushing to main or force-pushing needs a person to confirm', async () => {
   for (const command of ['git push origin --delete main', 'git push origin :main']) {
     assert.match((await push(onBranch, command)).permissionDecisionReason, /deletes main/, command);
   }
-  for (const command of ['git push', 'git push -u origin session/fix', 'git push origin --delete session/old', 'git status', 'echo push main']) {
+  // A second push in a chain, and wrappers that leave quotes or brackets around the branch name, are still seen.
+  for (const command of ['git push origin feature && git push origin main', 'git push; git push origin main', 'bash -c "git push origin main"',
+    "sh -c 'git push origin main'", '(git push origin main)', 'ssh box "cd repo && git push origin main"', '/usr/bin/git push origin main',
+    'git -C ../app push origin main', 'echo $(git push origin main)', 'git push \\\n  origin main']) {
+    assert.match((await push(onBranch, command))?.permissionDecisionReason || '', /straight to main/, command);
+  }
+  for (const command of ['git push', 'git push -u origin session/fix', 'git push origin --delete session/old', 'git status', 'echo push main',
+    'git stash push -m wip', 'git push --tags', 'git commit -m "fix push to main"']) {
     assert.equal(await push(onBranch, command), null, `fine: ${command}`);
   }
+  assert.equal(await push(onMain, 'git stash push'), null, 'a stash is not a push, on main either');
+  // A huge command is answered quickly rather than holding up the hub.
+  const started = Date.now();
+  await push(onBranch, 'git '.repeat(200_000));
+  assert.ok(Date.now() - started < 1000, `took ${Date.now() - started} ms`);
   await onMain.close();
   await onBranch.close();
 });
@@ -355,7 +368,7 @@ test('uncommitted changes count as edits, whoever or whatever made them', async 
   one.socket.send(JSON.stringify(git(['src/a.ts'])));
   await nextState(lanes => lanes.find(l => l.id === 'git-one')?.files.includes('src/a.ts'));
   const edit = { hook_event_name: 'PreToolUse', tool_name: 'Edit', tool_input: { file_path: '/two/src/a.ts' }, cwd: '/two' };
-  const res = await fetch(`${url}/hooks/git-two`, { method: 'POST', headers: { authorization: 'Bearer x' }, body: JSON.stringify(edit) });
+  const res = await fetch(`${url}/hooks/git-two`, { method: 'POST', headers: { authorization: `Bearer ${SECRET}` }, body: JSON.stringify(edit) });
   assert.equal((await res.json()).hookSpecificOutput.permissionDecision, 'ask', 'Claude is asked before touching a file changed in another checkout');
   const both = nextState(lanes => ['git-one', 'git-two'].every(id => lanes.find(l => l.id === id)?.overlaps.includes('src/a.ts')));
   two.socket.send(JSON.stringify(git(['src/a.ts'])));
@@ -368,7 +381,7 @@ test('uncommitted changes count as edits, whoever or whatever made them', async 
   const after = await nextState(ls => ls.find(l => l.id === 'git-one')?.files.includes('src/b.ts') && ls.find(l => l.id === 'git-twin')?.files.includes('src/b.ts'));
   assert.ok(!after.find(l => l.id === 'git-one').overlaps.includes('src/b.ts'));
   const twinEdit = { hook_event_name: 'PreToolUse', tool_name: 'Edit', tool_input: { file_path: '/one/src/b.ts' }, cwd: '/one' };
-  const twinRes = await fetch(`${url}/hooks/git-twin`, { method: 'POST', headers: { authorization: 'Bearer x' }, body: JSON.stringify(twinEdit) });
+  const twinRes = await fetch(`${url}/hooks/git-twin`, { method: 'POST', headers: { authorization: `Bearer ${SECRET}` }, body: JSON.stringify(twinEdit) });
   assert.equal((await twinRes.json().catch(() => null))?.hookSpecificOutput?.permissionDecision, undefined,
     "a change in its own folder isn't blamed on the other agent there");
   await Promise.all([one.close(), two.close(), twin.close()]);
@@ -544,4 +557,37 @@ test('scrollback keeps the latest output within its limit', () => {
   for (let i = 0; i < 5000; i++) buf = appendScrollback(buf, `line ${i}\n`.padEnd(200, '.'));
   assert.ok(buf.length <= 2 * SCROLLBACK);
   assert.ok(buf.endsWith(`line 4999\n`.padEnd(200, '.')));
+});
+
+test('only a session\'s creator or the team owner changes its goal', async () => {
+  const sessions = `/teams/${team.id}/sessions`;
+  await api('tok-alice', 'POST', sessions, { name: 'Goal kept', task: 'the goal' });
+  const { body } = await api('tok-bob', 'POST', sessions, { name: 'goal-kept', task: 'overwritten' });
+  assert.equal(body.find(s => s.name === 'Goal kept').task, 'the goal', 'bob joined it without changing its goal');
+  assert.equal((await api('tok-alice', 'DELETE', `${sessions}/Goal%20kept`)).status, 200);
+});
+
+test('the hub keeps going when GitHub or its disk lets it down', async () => {
+  const fs = require('node:fs'), os = require('node:os'), { once } = require('node:events');
+  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'protoplasma-hub-'));
+  fs.writeFileSync(path.join(dataDir, 'teams.json'), '{ not json');
+  let down = false;
+  const h = await startHub({ port: 0, host: '127.0.0.1', dataDir, verifyUser: async token => { if (down) throw new Error('GitHub is down'); return verifyUser(token); } });
+  const u = `http://127.0.0.1:${h.port}`, call = (token, method, body) => fetch(`${u}/teams`, { method, headers: { authorization: `Bearer ${token}` }, body: body && JSON.stringify(body) });
+  assert.ok(fs.readdirSync(dataDir).some(f => f.startsWith('teams.json.bad-')), 'a damaged teams.json is kept aside, and the hub starts');
+  const made = await (await call('tok-alice', 'POST', { name: 'T' })).json();
+
+  down = true;
+  assert.equal((await call('tok-newcomer', 'GET')).status, 503, 'GitHub being down means "try again", not "sign in"');
+  const ws = new WebSocket(`${u.replace('http', 'ws')}/watch`);
+  await once(ws, 'open');
+  ws.send(JSON.stringify({ t: 'watch', token: 'tok-other', team: made.id }));
+  assert.equal((await once(ws, 'close'))[0], 1013, 'a connection is told to try again');
+  down = false;
+
+  fs.rmSync(path.join(dataDir, 'teams.json'));
+  fs.mkdirSync(path.join(dataDir, 'teams.json.tmp')); // saving now fails
+  assert.equal((await call('tok-alice', 'POST', { name: 'Unsaved' })).status, 201, 'a failed save is logged, not fatal');
+  assert.equal((await fetch(u)).status, 200);
+  await h.close();
 });

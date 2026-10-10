@@ -60,7 +60,7 @@ Shared spaces for coding agents, like [Amoeba](https://useamoeba.com), drive the
 
 **The code beside it.** An editor built on Monaco (the editor inside VS Code), with an Explorer that marks what changed since the last commit and which files teammates' agents are changing.
 
-**Sessions for every piece of work.** Each one keeps its goal, branch and comments, and stays on the board after its agents stop, with **Resume** to pick the conversation back up and the last screen of every stopped agent one click away.
+**Sessions for every piece of work.** Each one keeps its goal, branch and comments, and stays on the board after its agents stop, with **Resume** to pick the conversation back up and the last screen of recently stopped agents one click away.
 
 **Collisions caught early.** Every checkout reports the files it has changed compared with main, committed or not, whoever or whatever changed them. A file changed in two places is an overlap for everyone, before it turns into a merge conflict.
 
@@ -97,7 +97,7 @@ flowchart LR
 ```
 
 - **Lanes** (`src/lane.js`) run an agent in a pseudo-terminal and stream it to the hub, with its branch, what it has changed compared with main, and its status. Claude Code also gets per-run [HTTP hooks](https://code.claude.com/docs/en/hooks) through `--settings`; Codex and OpenCode report working or idle from their terminal activity.
-- **The hub** (`src/hub.js`) relays terminals, tracks who changed what, keeps sessions, notes and comments, and answers Claude's hooks with the session's goal, the team's notes and an `ask` before a conflicting edit or a risky push. It never runs agents and never sees your code.
+- **The hub** (`src/hub.js`) relays terminals, tracks who changed what, keeps sessions, notes and comments, and answers Claude's hooks with the session's goal, the team's notes and an `ask` before a conflicting edit or a risky push. It never runs agents and never stores your code (what passes through it is listed under Security and privacy).
 - **The app** (`app/`) is Electron. The renderer has no Node access. The main process launches the agent CLIs (in a clean login-shell environment) and a shell for the Terminal tab, and the code view can only read and write inside a session's own folder.
 
 ## Working on the same code
@@ -180,7 +180,8 @@ scripts/  end-to-end check, screenshots, demo and icon tooling
 ## Security and privacy
 
 - Sign-in asks for read-only access to your public GitHub profile, and nothing else. Repo access stays with the GitHub CLI on your Mac.
-- The hub keeps team names, members, notes, and sessions with their goals and comments. Terminal output passes through it and is held in memory only.
+- The hub keeps team names, members, notes, and sessions with their goals, plans and comments (a comment on lines of code keeps the text of those lines). Terminal output and Claude Code's hook events, which include what a tool is about to change, pass through it and are held in memory only.
+- Looking for teams hosted on a teammate's Mac is off until you turn it on in Your teams: it shows your GitHub sign-in to every Mac on the network that answers.
 - The code view reads and writes files on your Mac only. The hub never stores your code: teammates see which files changed, not what's in them, unless you turn on **Share the files your agents change** (Settings → Agents, off by default). Then a teammate can open those files, read-only; each one passes through the hub on the way and isn't kept.
 - Teams are invite-only, and removing someone disconnects them at once.
 - Letting teammates type into your agent lets them run commands on your Mac, so it's off unless you turn it on, and your agent shows who last typed into it.

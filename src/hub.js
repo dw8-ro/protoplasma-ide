@@ -14,7 +14,7 @@ const IDENTITY_TTL_MS = 2 * 60_000; // how long a verified GitHub token is trust
 const MAX_CHANGED = 200; // uncommitted files a lane reports
 const MAX_API_BODY = 64 * 1024;
 const MAX_HOOK_BODY = 5 * 1024 * 1024;
-const GITHUB_LOGIN = /^[a-z\d](?:[a-z\d-]{0,38})$/i;
+const GITHUB_LOGIN = /^(?=.{1,39}$)[a-z\d](?:-?[a-z\d])*$/i; // letters, digits and single hyphens inside
 const MAX_MEMORIES = 200;
 const MAX_MEMORY = 500;
 const MAX_SESSIONS = 200; // per team; the oldest finished ones are dropped first
@@ -24,6 +24,8 @@ const MAX_COMMENT = 500;
 const MAX_STEPS = 50;            // per session plan
 const MAX_SHARED_FILE = 1_000_000; // a teammate's file passed through for viewing
 const PROTECTED_BRANCHES = ['main', 'master'];
+const MAX_BUFFERED = 16 * 1024 * 1024; // unsent bytes to one viewer before it's dropped as too slow
+const MAX_CONTEXT_FILES = 15; // per teammate, in an agent's prompt context
 const STATE_REFRESH_MS = 30_000; // rebroadcast at least this often so "last active" times stay fresh
 
 /** This machine's LAN IPv4 addresses. */
@@ -32,10 +34,11 @@ const lanAddresses = () => Object.values(os.networkInterfaces()).flat()
 
 /** Resolves a GitHub token to its user. Only reads the public profile, so a token with no scopes works. */
 async function githubUser(token) {
-  const res = await fetch('https://api.github.com/user', {
+  const res = await fetch('https://api.github.com/user', { signal: AbortSignal.timeout(8000),
     headers: { authorization: `Bearer ${token}`, accept: 'application/vnd.github+json', 'user-agent': 'protoplasma' },
   });
-  if (!res.ok) return null;
+  if (res.status === 401) return null;
+  if (!res.ok) throw new Error(`GitHub answered ${res.status}.`); // down or rate-limited: not a verdict on the token
   const u = await res.json();
   return { login: u.login, name: u.name || u.login, avatar: u.avatar_url };
 }
@@ -49,7 +52,7 @@ async function githubUser(token) {
  * @param {(token: string) => Promise<{login: string, name: string, avatar: string} | null>} [o.verifyUser]
  * @returns {Promise<{ port: number, close: () => Promise<void> }>}
  */
-function startHub({ port = 7681, host = '0.0.0.0', dataDir, owners, verifyUser = githubUser } = {}) {
+function startHub({ port = 7681, host = '0.0.0.0', dataDir, owners, verifyUser = token => module.exports.githubUser(token) } = {}) {
   const same = (a, b) => String(a).toLowerCase() === String(b).toLowerCase();
   const send = (ws, msg) => ws.readyState === ws.OPEN && ws.send(JSON.stringify(msg));
   const parse = raw => { try { return JSON.parse(raw); } catch { return null; } };
@@ -58,13 +61,21 @@ function startHub({ port = 7681, host = '0.0.0.0', dataDir, owners, verifyUser =
   // ---- Teams (persisted) ----
   const teamsFile = dataDir && path.join(dataDir, 'teams.json');
   if (dataDir) fs.mkdirSync(dataDir, { recursive: true });
-  const teams = new Map((teamsFile && fs.existsSync(teamsFile) ? JSON.parse(fs.readFileSync(teamsFile, 'utf8')) : [])
-    .map(t => [t.id, { memories: [], sessions: [], ...t }]));
-  // Written to a temporary file first, so a crash mid-write can't leave a half-written teams.json behind.
+  let saved = [];
+  try { saved = teamsFile && fs.existsSync(teamsFile) ? JSON.parse(fs.readFileSync(teamsFile, 'utf8')) : []; } catch (e) {
+    // A damaged file is kept aside for a person to look at, rather than stopping the hub from starting.
+    fs.renameSync(teamsFile, `${teamsFile}.bad-${Date.now()}`);
+    console.error(`teams.json couldn't be read (${e.message}), so it was moved aside and the hub started empty.`);
+  }
+  const teams = new Map(saved.map(t => [t.id, { memories: [], sessions: [], ...t }]));
+  // Written to a temporary file first, so a crash mid-write can't leave a half-written teams.json behind. A failed write
+  // (full disk) is logged and retried on the next change; the teams stay in memory meanwhile.
   const saveTeams = () => {
     if (!teamsFile) return;
-    fs.writeFileSync(`${teamsFile}.tmp`, JSON.stringify([...teams.values()], null, 2));
-    fs.renameSync(`${teamsFile}.tmp`, teamsFile);
+    try {
+      fs.writeFileSync(`${teamsFile}.tmp`, JSON.stringify([...teams.values()], null, 2));
+      fs.renameSync(`${teamsFile}.tmp`, teamsFile);
+    } catch (e) { console.error(`Couldn't save teams: ${e.message}`); }
   };
   const onTeam = (team, login) => same(team.owner, login) || team.members.some(m => same(m, login));
   // "Fix Login" and "fix-login" would get the same branch and folder, so they're the same session.
@@ -74,28 +85,34 @@ function startHub({ port = 7681, host = '0.0.0.0', dataDir, owners, verifyUser =
   // keep the name they started with).
   const findSession = (team, name) => team.sessions.find(x => x.name === name)
     || team.sessions.find(x => slug(x.name) === slug(name) || keyOf(x) === slug(name) || (x.aliases || []).some(a => slug(a) === slug(name)));
+  // Past the cap the oldest finished session without running agents goes. If there's none, the team goes over the cap
+  // rather than losing work (the API refuses new sessions then; agents joining still get theirs).
   function ensureSession(team, name, login, task = '') {
     let session = findSession(team, name);
     if (!session) {
       session = { name, task, createdBy: login, createdAt: new Date().toISOString(), done: false };
       team.sessions.push(session);
+      const running = x => teamLanes(team.id).some(l => l.session === x.name);
       while (team.sessions.length > MAX_SESSIONS) {
-        const oldestDone = team.sessions.findIndex(x => x.done);
-        team.sessions.splice(oldestDone === -1 ? 0 : oldestDone, 1);
+        const drop = team.sessions.findIndex(x => x.done && !running(x));
+        if (drop === -1) break;
+        team.sessions.splice(drop, 1);
       }
     }
     return session;
   }
 
   // ---- Identity (GitHub tokens, cached by hash) ----
-  const identities = new Map(); // sha256(token) -> { user, expires }
+  const identities = new Map(); // sha256(token) -> { user, expires }; a rejected token is remembered briefly too
+  const lookups = new Map();    // sha256(token) -> the GitHub lookup under way, shared by everyone presenting it
   async function identify(token) {
     if (typeof token !== 'string' || !token || token.length > 500) return null;
     const key = crypto.createHash('sha256').update(token).digest('hex');
     const hit = identities.get(key);
     if (hit?.expires > Date.now()) return hit.user;
-    const user = await verifyUser(token).catch(() => null);
-    if (user) identities.set(key, { user, expires: Date.now() + IDENTITY_TTL_MS });
+    if (!lookups.has(key)) lookups.set(key, Promise.resolve().then(() => verifyUser(token)).finally(() => lookups.delete(key)));
+    const user = await lookups.get(key); // throws when GitHub couldn't be asked
+    identities.set(key, { user, expires: Date.now() + (user ? IDENTITY_TTL_MS : 10_000) });
     return user;
   }
 
@@ -106,7 +123,7 @@ function startHub({ port = 7681, host = '0.0.0.0', dataDir, owners, verifyUser =
   const watchers = new Set(); // app windows: ws.team, ws.login, ws.user, ws.session
   const teamLanes = teamId => [...lanes.values()].filter(l => l.team === teamId);
   // Which codebase a lane works in: its GitHub repo, or its own checkout when the folder has no GitHub remote.
-  const repoKey = l => l.repo || l.tree;
+  const repoKey = l => (l.repo || l.tree).toLowerCase();
   const inSameRepo = lane => teamLanes(lane.team).filter(o => o !== lane && repoKey(o) === repoKey(lane));
   // Files a lane has touched: edits Claude reported through its hooks, plus whatever its checkout has that main doesn't
   // (which also covers shell commands, Codex, OpenCode and people).
@@ -117,7 +134,7 @@ function startHub({ port = 7681, host = '0.0.0.0', dataDir, owners, verifyUser =
   const touchedBy = (o, lane) => (o.tree === lane.tree ? o.files
     : o.branch && o.branch === lane.branch ? new Set([...o.local, ...[...o.files].filter(f => !o.changed.has(f))]) : filesOf(o));
   const othersOn = (lane, file) => inSameRepo(lane).filter(o => touchedBy(o, lane).has(file));
-  const notesFor = (lane, file = '') => teams.get(lane.team).memories.filter(m => m.file === file && (!m.repo || m.repo === lane.repo));
+  const notesFor = (lane, file = '') => teams.get(lane.team).memories.filter(m => m.file === file && (!m.repo || same(m.repo, lane.repo)));
   function views(teamId) {
     const ls = teamLanes(teamId);
     // An overlap is a file both of two checkouts of the same repo have changed, as each sees the other (touchedBy).
@@ -130,7 +147,11 @@ function startHub({ port = 7681, host = '0.0.0.0', dataDir, owners, verifyUser =
   }
   const toTeam = (teamId, msg) => {
     const data = JSON.stringify(msg);
-    for (const w of watchers) if (w.team === teamId && w.readyState === w.OPEN) w.send(data);
+    for (const w of watchers) {
+      if (w.team !== teamId || w.readyState !== w.OPEN) continue;
+      if (w.bufferedAmount > MAX_BUFFERED) w.terminate();
+      else w.send(data);
+    }
   };
   // One entry per person and session they're viewing.
   const presence = teamId => [...new Map([...watchers].filter(w => w.team === teamId)
@@ -157,7 +178,9 @@ function startHub({ port = 7681, host = '0.0.0.0', dataDir, owners, verifyUser =
     }
     if (others.length) {
       parts.push(['Teammates working in this repo right now (from Protoplasma):',
-        ...others.map(o => `- ${o.name}'s ${o.cmd} agent, session "${o.session}", ${o.status}` + (touchedBy(o, lane).size ? `, has changed: ${[...touchedBy(o, lane)].join(', ')}` : '')),
+        ...others.map(o => { const files = [...touchedBy(o, lane)], more = files.length - MAX_CONTEXT_FILES;
+          return `- ${o.name}'s ${o.cmd} agent, session "${o.session}", ${o.status}`
+            + (files.length ? `, has changed: ${files.slice(0, MAX_CONTEXT_FILES).join(', ')}${more > 0 ? ` and ${more} more` : ''}` : ''); }),
         'Check with the user before editing files a teammate has edited.'].join('\n'));
     }
     if (general.length) parts.push(`Team notes for this repo (from Protoplasma):\n${notes(general)}`);
@@ -168,14 +191,31 @@ function startHub({ port = 7681, host = '0.0.0.0', dataDir, owners, verifyUser =
     return parts.join('\n\n') || null;
   }
 
+  // The parts of a shell command between ; | & (each a command of its own), and the words of one, without the quotes or
+  // brackets a wrapper leaves on them: bash -c "git push origin main", (git push origin main).
+  const segments = command => command.replace(/\\\n/g, ' ').split(/[|;&\n]+/);
+  const wordsOf = text => text.trim().split(/\s+/).map(w => w.replace(/^[$('"`]+|[)'"`]+$/g, '')).filter(Boolean);
+  // Where git's subcommand is, after options like -C <dir> or -c <key=value>: `git -C repo push`, not `git commit -m "push"`.
+  const subcommandAt = (words, at) => {
+    let i = at + 1;
+    while (i < words.length && words[i].startsWith('-')) i += ['-C', '-c', '--git-dir', '--work-tree', '--namespace'].includes(words[i]) ? 2 : 1;
+    return i;
+  };
   // Why a `git push` needs a person's confirmation, or null if it's fine. Only applies when the team has other people.
   function pushRisk(lane, command) {
-    const team = teams.get(lane.team);
-    const push = /\bgit\b[^|;&]*?\bpush\b([^|;&]*)/.exec(command);
-    if (!team.members.length || !push) return null;
-    const words = push[1].trim().split(/\s+/).filter(Boolean).map(w => w.replace(/^(['"])(.*)\1$/, '$2'));
+    if (!teams.get(lane.team).members.length) return null;
+    for (const segment of segments(command)) {
+      const words = wordsOf(segment), at = words.findIndex(w => w === 'git' || w.endsWith('/git')), push = at === -1 ? -1 : subcommandAt(words, at);
+      if (at === -1 || words[push] !== 'push') continue;
+      const reason = pushRiskOf(lane, words.slice(push + 1));
+      if (reason) return reason;
+    }
+    return null;
+  }
+  function pushRiskOf(lane, words) {
     const flags = words.filter(w => w.startsWith('-'));
     const refspecs = words.filter(w => !w.startsWith('-')).slice(1); // after the remote
+    if (!refspecs.length && flags.includes('--tags')) return null; // only tags
     // --force-with-lease too: lanes fetch in the background, so the lease rarely protects a teammate's commits.
     if (flags.some(f => /^--force(-with-lease)?(=|$)/.test(f) || /^-[a-zA-Z]*f/.test(f)) || refspecs.some(r => r.startsWith('+'))) {
       return 'this force-push can overwrite commits your teammates pushed. Confirm it\'s intended.';
@@ -198,9 +238,10 @@ function startHub({ port = 7681, host = '0.0.0.0', dataDir, owners, verifyUser =
   // A shell command that writes a file a teammate has changed: sed -i, a redirect, tee, mv, rm and the like.
   // ponytail: a heuristic over the words of the command; a script that writes files it doesn't name isn't caught.
   function shellWriteRisk(lane, command, cwd) {
-    if (!/\bsed\b[^|;&]*\s-[a-zA-Z]*i|\bperl\b[^|;&]*\s-[a-zA-Z]*i|>|\b(tee|mv|rm|cp|truncate)\b/.test(command)) return null;
-    for (const word of command.split(/[\s;|&<>()'"=]+/)) {
-      if (!/\/|\.\w+$/.test(word)) continue; // only words that look like paths
+    const writes = segment => /\b(sed|perl)\b/.test(segment) && /\s-[a-zA-Z]*i/.test(segment);
+    if (!/>|\b(tee|mv|rm|cp|truncate)\b/.test(command) && !segments(command).some(writes)) return null;
+    // ponytail: the first 300 path-like words; a longer command is mostly generated and not worth the hub's time.
+    for (const word of command.split(/[\s;|&<>()'"=]+/).filter(w => /\/|\.\w+$/.test(w)).slice(0, 300)) {
       const full = path.resolve(cwd || lane.root, word);
       const root = lane.roots.find(r => full.startsWith(r + path.sep)) || lane.root;
       const rel = path.relative(root, full);
@@ -256,7 +297,7 @@ function startHub({ port = 7681, host = '0.0.0.0', dataDir, owners, verifyUser =
   const readBody = (req, max) => new Promise((resolve, reject) => {
     let body = '';
     req.setEncoding('utf8');
-    req.on('data', chunk => { body += chunk; if (body.length > max) { reject(new Error('too large')); req.destroy(); } });
+    req.on('data', chunk => { body += chunk; if (body.length > max) { body = ''; req.pause(); reject(Object.assign(new Error('Too large.'), { status: 413 })); } });
     req.on('end', () => resolve(body));
   });
   const bearer = req => str(req.headers.authorization, 600).replace(/^Bearer /, '');
@@ -264,7 +305,9 @@ function startHub({ port = 7681, host = '0.0.0.0', dataDir, owners, verifyUser =
 
   async function handle(req, res) {
     const json = (status, body) => res.writeHead(status, { 'content-type': 'application/json' }).end(body === undefined ? '' : JSON.stringify(body));
-    const [resource, id, sub, subId, leaf, leafId, ...rest] = new URL(req.url, 'http://x').pathname.split('/').filter(Boolean).map(decodeURIComponent);
+    let parts;
+    try { parts = new URL(req.url, 'http://x').pathname.split('/').filter(Boolean).map(decodeURIComponent); } catch { return json(400, { error: 'Bad address.' }); }
+    const [resource, id, sub, subId, leaf, leafId, ...rest] = parts;
     if (rest.length || (leaf && !(sub === 'sessions' && ['comments', 'steps'].includes(leaf)))) return json(404, { error: 'Not found.' });
     if (!resource && req.method === 'GET') return json(200, { app: 'protoplasma-hub' });
 
@@ -283,7 +326,7 @@ function startHub({ port = 7681, host = '0.0.0.0', dataDir, owners, verifyUser =
     }
 
     if (resource !== 'teams') return json(404, { error: 'Not found.' });
-    const user = await identify(bearer(req));
+    const user = await identify(bearer(req)).catch(e => { throw Object.assign(e, { github: true }); });
     if (!user) return json(401, { error: 'Sign in with GitHub first.' });
     const body = req.method === 'POST' ? parse(await readBody(req, MAX_API_BODY)) || {} : {};
 
@@ -383,8 +426,12 @@ function startHub({ port = 7681, host = '0.0.0.0', dataDir, owners, verifyUser =
       if (!subId && req.method === 'POST') {
         const name = str(body.name, 60).trim();
         if (!name) return json(400, { error: 'Name the session.' });
+        const existed = findSession(team, name);
+        if (!existed && team.sessions.length >= MAX_SESSIONS && !team.sessions.some(x => x.done && !running(x.name))) {
+          return json(409, { error: `A team holds ${MAX_SESSIONS} sessions. Mark some done or delete them first.` });
+        }
         const session = ensureSession(team, name, user.login);
-        if (typeof body.task === 'string') session.task = str(body.task, 300).trim();
+        if (typeof body.task === 'string' && (!existed || same(session.createdBy, user.login) || same(team.owner, user.login))) session.task = str(body.task, 300).trim();
       } else if (subId) {
         const session = findSession(team, subId);
         if (!session) return json(404, { error: 'No such session.' });
@@ -398,7 +445,8 @@ function startHub({ port = 7681, host = '0.0.0.0', dataDir, owners, verifyUser =
           // Running agents move with it, and its old name keeps finding it (they rejoin under the name they started with).
           const name = str(body.rename, 60).trim();
           if (!name) return json(400, { error: 'Give the session a name.' });
-          const clash = team.sessions.find(x => x !== session && (x.name === name || slug(x.name) === slug(name) || keyOf(x) === slug(name)));
+          const clash = team.sessions.find(x => x !== session && (x.name === name || slug(x.name) === slug(name) || keyOf(x) === slug(name)
+            || (x.aliases || []).some(a => slug(a) === slug(name))));
           if (clash) return json(409, { error: `There's already a session called ${clash.name}.` });
           for (const s of stopped.get(team.id) || []) if (s.session === session.name) s.session = name;
           for (const l of teamLanes(team.id)) if (l.session === session.name) l.session = name;
@@ -441,23 +489,29 @@ function startHub({ port = 7681, host = '0.0.0.0', dataDir, owners, verifyUser =
     return json(404, { error: 'Not found.' });
   }
 
-  const server = http.createServer((req, res) => handle(req, res).catch(() => {
-    if (!res.headersSent) res.writeHead(500, { 'content-type': 'application/json' }).end(JSON.stringify({ error: 'The hub hit an error.' }));
+  // GitHub being unreachable while checking a sign-in is a 503 (try again), not a 401 (sign in again).
+  const server = http.createServer((req, res) => handle(req, res).catch(e => {
+    if (res.headersSent) return;
+    const [status, error] = e.status === 413 ? [413, 'That\'s too much at once.'] : e.github ? [503, 'The hub couldn\'t reach GitHub to check who you are. Try again in a moment.'] : [500, 'The hub hit an error.'];
+    res.writeHead(status, { 'content-type': 'application/json', connection: 'close' }).end(JSON.stringify({ error }));
   }));
 
   // ---- WebSockets: agents (/lane) and app windows (/watch) ----
   const gitStats = g => g && typeof g === 'object'
     ? { added: g.added | 0, removed: g.removed | 0, files: g.files | 0, behind: g.behind | 0, ahead: g.ahead | 0, unpushed: g.unpushed | 0 } : null;
   const changedFiles = g => new Set(Array.isArray(g?.changed) ? g.changed.slice(0, MAX_CHANGED).map(f => str(f, 300)).filter(Boolean) : []);
+  const size = (v, min, max, fallback) => Math.min(max, Math.max(min, v | 0 || fallback)); // terminal cols and rows
   function onLane(ws, user, team, hello) {
     const existing = lanes.get(hello.id);
-    if (!/^[\w-]{1,64}$/.test(hello.id) || typeof hello.hookSecret !== 'string' || (existing && !same(existing.login, user.login))) {
+    if (typeof hello.id !== 'string' || !/^[\w-]{1,64}$/.test(hello.id) || typeof hello.hookSecret !== 'string' || hello.hookSecret.length < 16
+      || !str(hello.session, 60).trim() || (existing && !same(existing.login, user.login))) {
       return ws.close(4000, 'Bad hello.');
     }
+    existing?.ws.terminate(); // the same agent reconnecting before its old connection timed out
     const lane = { id: hello.id, team: team.id, login: user.login, name: user.name, avatar: user.avatar,
-      session: str(hello.session, 60), cmd: str(hello.cmd, 40), root: str(hello.root, 1000), repo: str(hello.repo, 200), branch: str(hello.branch, 100),
+      session: str(hello.session, 60).trim(), cmd: str(hello.cmd, 40), root: str(hello.root, 1000), repo: str(hello.repo, 200), branch: str(hello.git?.branch || hello.branch, 100),
       roots: (Array.isArray(hello.roots) ? hello.roots.slice(0, 4) : []).map(r => str(r, 1000)).filter(Boolean),
-      cols: hello.cols | 0 || 120, rows: hello.rows | 0 || 36, open: !!hello.open, status: str(hello.cmd, 40) === 'claude' ? 'idle' : 'running', lastActive: new Date().toISOString(), startedAt: existing?.startedAt || new Date().toISOString(), files: new Set(), changed: changedFiles(hello.git), local: changedFiles(hello.git?.local ? { changed: hello.git.local } : hello.git),
+      cols: size(hello.cols, 20, 500, 120), rows: size(hello.rows, 5, 200, 36), open: !!hello.open, status: str(hello.cmd, 40) === 'claude' ? 'idle' : 'running', lastActive: new Date().toISOString(), startedAt: existing?.startedAt || new Date().toISOString(), files: new Set(), changed: changedFiles(hello.git), local: changedFiles(hello.git?.local ? { changed: hello.git.local } : hello.git),
       git: gitStats(hello.git), history: typeof hello.history === 'string' ? hello.history.slice(-SCROLLBACK) : '', hookSecret: hello.hookSecret, ws };
     lane.tree = crypto.createHash('sha256').update(`${lane.login}\n${lane.root}`).digest('hex').slice(0, 12); // one per checkout
     lanes.set(lane.id, lane);
@@ -468,7 +522,7 @@ function startHub({ port = 7681, host = '0.0.0.0', dataDir, owners, verifyUser =
     if (lane.repo) session.repo = lane.repo; // so its pull requests and issues stay reachable after the agents stop
     saveTeams();
     broadcastState(team.id);
-    toTeam(team.id, { t: 'out', lane: lane.id, d: lane.history });
+    toTeam(team.id, { t: 'out', lane: lane.id, d: `\x1bc${lane.history}` }); // a reset first: watchers may hold its screen already
 
     ws.on('message', raw => {
       const m = parse(raw);
@@ -476,8 +530,8 @@ function startHub({ port = 7681, host = '0.0.0.0', dataDir, owners, verifyUser =
         lane.history = appendScrollback(lane.history, m.d);
         toTeam(team.id, { t: 'out', lane: lane.id, d: m.d });
       } else if (m?.t === 'size') {
-        lane.cols = m.cols | 0 || lane.cols;
-        lane.rows = m.rows | 0 || lane.rows;
+        lane.cols = size(m.cols, 20, 500, lane.cols);
+        lane.rows = size(m.rows, 5, 200, lane.rows);
         broadcastState(team.id);
       } else if (m?.t === 'git') {
         lane.git = gitStats(m);
@@ -488,6 +542,7 @@ function startHub({ port = 7681, host = '0.0.0.0', dataDir, owners, verifyUser =
         broadcastState(team.id);
       } else if (m?.t === 'status' && ['needs you', 'idle', 'working'].includes(m.status)) { // trust prompts, and agents without hooks
         lane.status = m.status;
+        lane.lastActive = new Date().toISOString();
         broadcastState(team.id);
       }
     });
@@ -510,13 +565,14 @@ function startHub({ port = 7681, host = '0.0.0.0', dataDir, owners, verifyUser =
       const lane = lanes.get(m.lane), req = crypto.randomBytes(8).toString('base64url');
       const owners = lane?.team === team.id ? [...watchers].filter(w => w.team === team.id && same(w.login, lane.login)) : [];
       if (!owners.length) return send(ws, { t: 'file:put', ask: m.ask, error: lane ? `${lane.name}'s app isn't open.` : 'That agent has stopped.' });
-      fileAsks.set(req, { from: ws, ask: m.ask, owner: lane.login });
+      fileAsks.set(req, { from: ws, ask: m.ask, owner: lane.login, waiting: owners.length });
       setTimeout(() => { if (fileAsks.delete(req)) send(ws, { t: 'file:put', ask: m.ask, error: `${lane.name}'s app didn't answer.` }); }, 10_000);
       for (const w of owners) send(w, { t: 'file:get', req, lane: lane.id, path: str(m.path, 300), from: user.name || user.login });
       return;
     }
     const ask = fileAsks.get(m.req);
     if (!ask || !same(ask.owner, user.login)) return; // only the agent's owner answers
+    if (typeof m.text !== 'string' && --ask.waiting > 0) return; // another of their windows may have the agent
     fileAsks.delete(m.req);
     const text = typeof m.text === 'string' && m.text.length <= MAX_SHARED_FILE ? m.text : undefined;
     send(ask.from, { t: 'file:put', ask: ask.ask, text, error: text === undefined ? str(m.error || 'That file is too big to share.', 300) : undefined });
@@ -553,24 +609,32 @@ function startHub({ port = 7681, host = '0.0.0.0', dataDir, owners, verifyUser =
     let first = true;
     const timer = setTimeout(() => ws.close(4001, 'Sign-in timed out.'), 10_000);
     ws.on('message', async function gate(raw) {
-      if (!first) return early.push(raw);
+      if (!first) return early.length < 100 && early.push(raw);
       first = false;
-      const m = parse(raw);
-      const user = await identify(m?.token);
-      const team = teams.get(m?.team);
-      clearTimeout(timer);
-      ws.off('message', gate);
-      if (ws.readyState !== ws.OPEN) return; // closed during verification
-      if (!user) return ws.close(4001, 'Sign in with GitHub first.');
-      if (!team || !onTeam(team, user.login)) return ws.close(4003, 'You aren\'t on this team.');
-      role(ws, user, team, m);
-      for (const r of early) ws.emit('message', r);
+      try {
+        const m = parse(raw);
+        const user = await identify(m?.token).catch(() => undefined);
+        const team = teams.get(m?.team);
+        clearTimeout(timer);
+        ws.off('message', gate);
+        if (ws.readyState !== ws.OPEN) return; // closed during verification
+        if (user === undefined) return ws.close(1013, 'GitHub didn\'t answer. Trying again.');
+        if (!user) return ws.close(4001, 'Sign in with GitHub first.');
+        if (!team || !onTeam(team, user.login)) return ws.close(4003, 'You aren\'t on this team.');
+        role(ws, user, team, m);
+        for (const r of early) ws.emit('message', r);
+      } catch (e) {
+        console.error(`A connection failed: ${e.message}`);
+        ws.close(1011, 'The hub hit an error.');
+      }
     });
   }
 
   const wss = new WebSocketServer({ noServer: true, maxPayload: MAX_HOOK_BODY });
   server.on('upgrade', (req, sock, head) => {
-    const role = { '/lane': onLane, '/watch': onWatcher }[new URL(req.url, 'http://x').pathname];
+    let route = null;
+    try { route = new URL(req.url, 'http://x').pathname; } catch {} // a malformed address ("//") is just not found
+    const role = { '/lane': onLane, '/watch': onWatcher }[route];
     if (!role) return sock.end('HTTP/1.1 404 Not Found\r\n\r\n');
     wss.handleUpgrade(req, sock, head, ws => {
       ws.alive = true;

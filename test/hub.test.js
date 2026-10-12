@@ -457,7 +457,7 @@ test('agents without hooks report working and idle themselves', async () => {
 
 test('an agent waiting on its folder trust prompt needs you until someone answers', async () => {
   const asking = nextState(lanes => lanes.some(l => l.session === 'trust' && l.status === 'needs you'));
-  processes.push(spawn('node', [LANE, url, team.id, 'trust', '--open', 'sh', '-c', 'printf "Is this a project you trust?\\n  Yes, I trust this folder"; cat'],
+  processes.push(spawn('node', [LANE, url, team.id, 'trust', '--open', 'sh', '-c', 'printf "Do you trust the files in this folder?\\n ❯ 1. Yes, proceed\\n   2. No, exit"; cat'],
     { cwd: root, env: { ...process.env, PROTO_TOKEN: 'tok-alice' }, stdio: ['ignore', 'ignore', 'inherit'] }));
   const lane = (await asking).find(l => l.session === 'trust');
   const answered = nextState(lanes => lanes.find(l => l.id === lane.id)?.status === 'idle');

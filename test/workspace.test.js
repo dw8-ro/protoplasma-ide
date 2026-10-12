@@ -90,7 +90,7 @@ test('the push guard stops shared-team agents pushing to main or force-pushing, 
   const push = (cwd, extra, ...args) => execFileSync('git', ['push', '-q', ...args], { cwd, env: { ...env, ...extra }, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
   commit(aliceTree, 'more.js', 'export const more = 3;\n');
   assert.throws(() => push(aliceTree, agent, 'origin', 'HEAD:main'), /don't push straight to main/);
-  assert.throws(() => push(aliceTree, agent, '--force', 'origin', 'HEAD:session/fix-login'), /overwrite commits/, "would drop Bob's commit");
+  assert.throws(() => push(aliceTree, agent, '--force', 'origin', 'HEAD:session/fix-login'), /replace commits/, "would drop Bob's commit");
   push(aliceTree, agent, 'origin', 'HEAD:refs/heads/session/elsewhere'); // a new session branch is fine
   push(aliceTree, {}, 'origin', 'HEAD:refs/heads/main'); // a person (no PROTO_SHARED_TEAM) isn't stopped
 
@@ -134,4 +134,48 @@ test('pushed work still counts as changed until it reaches main, and main moving
   const after = await gitStatus(dir, { env, fetch: true });
   assert.deepEqual(after.local, ['mine.js'], "the teammate's new file isn't counted as ours");
   assert.equal(after.behind, 2, "main's commit and the teammate's");
+});
+
+test('two agents starting one new session at once share one folder', async () => {
+  const [a, b] = await Promise.all([sessionWorktree(alice, 'Same time', env), sessionWorktree(alice, 'Same time', env)]);
+  assert.equal(a.dir, b.dir);
+  assert.equal(git(a.dir, 'branch', '--show-current'), 'session/same-time');
+});
+
+test('git status keeps odd file names whole', async () => {
+  const { dir } = await sessionWorktree(alice, 'Odd names', env);
+  fs.writeFileSync(path.join(dir, 'say "hi".txt'), 'x\n');
+  fs.writeFileSync(path.join(dir, ' leading space.txt'), 'x\n');
+  const status = await gitStatus(dir, { env });
+  assert.ok(status.changed.includes('say "hi".txt'), JSON.stringify(status.changed));
+  assert.ok(status.changed.includes(' leading space.txt'), JSON.stringify(status.changed));
+});
+
+test('a folder holding ignored files that aren\'t build output is kept', async () => {
+  const { dir } = await sessionWorktree(alice, 'Has env', env);
+  fs.writeFileSync(path.join(dir, '.gitignore'), '.env\nnode_modules/\n');
+  git(dir, 'add', '.gitignore');
+  git(dir, 'commit', '-qm', 'ignore');
+  fs.mkdirSync(path.join(dir, 'node_modules'));
+  fs.writeFileSync(path.join(dir, 'node_modules', 'x.js'), '');
+  fs.writeFileSync(path.join(dir, '.env'), 'SECRET=1\n');
+  await assert.rejects(removeSessionWorktree(alice, 'Has env', env), /\.env/);
+  assert.ok(fs.existsSync(path.join(dir, '.env')), 'nothing was deleted');
+  fs.rmSync(path.join(dir, '.env'));
+  assert.equal(await removeSessionWorktree(alice, 'Has env', env), true, 'build output alone doesn\'t stop it');
+});
+
+test('new sessions still start after the default branch is renamed on the remote', async () => {
+  const remote = path.join(tmp, 'remote.git');
+  git(remote, 'branch', '-m', 'main', 'trunk');
+  git(remote, 'symbolic-ref', 'HEAD', 'refs/heads/trunk');
+  try {
+    const { dir } = await sessionWorktree(alice, 'After rename', env);
+    assert.ok(fs.existsSync(path.join(dir, 'README.md')), 'started from the renamed default branch');
+  } finally {
+    git(remote, 'branch', '-m', 'trunk', 'main');
+    git(remote, 'symbolic-ref', 'HEAD', 'refs/heads/main');
+    git(alice, 'fetch', '-q', '--prune');
+    git(alice, 'remote', 'set-head', 'origin', 'main');
+  }
 });

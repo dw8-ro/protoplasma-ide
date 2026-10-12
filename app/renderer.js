@@ -177,12 +177,15 @@ $('#start').oncancel = e => { if (!currentTeam) e.preventDefault(); };
 $('#start').addEventListener('close', () => requestAnimationFrame(() => { if (!currentTeam && !$('#start').open) $('#start').showModal(); }));
 $('#closeStart').onclick = () => $('#start').close();
 $('#signin').onclick = async () => {
+  $('#signin').disabled = true; // one sign-in at a time: a second click would open GitHub twice
   try {
-    const { code, url } = await proto.signIn();
-    signInUrl = url;
-    $('#userCode').textContent = code;
+    const flow = await proto.signIn();
+    if (!flow) return; // cancelled meanwhile
+    signInUrl = flow.url;
+    $('#userCode').textContent = flow.code;
     showView('codeView');
   } catch (e) { $('#err').textContent = errorText(e); }
+  finally { $('#signin').disabled = false; }
 };
 $('#reopen').onclick = () => proto.openExternal(signInUrl);
 $('#cancelSignin').onclick = () => { proto.cancelSignIn(); showView('signinView'); };
@@ -516,7 +519,8 @@ async function startAgent({ session, cmd, open, source, task, resume = false }) 
     if (created && task) proto.deleteSession(team.key, session).catch(() => {}); // don't leave an empty session behind
     throw e;
   }
-  const { id, repo } = started;
+  const { id, repo, notice } = started;
+  if (notice) setTimeout(() => alert(notice));
   local.set(id, { teamKey: team.key, session, cmd, open, ...source, repo, login: me.login, name: me.name, avatar: me.avatar, began: Date.now() });
   store.set(sourceKey(session, team), JSON.stringify(source));
   store.set(lastAgentKey(session, team), cmd);
@@ -1522,7 +1526,8 @@ async function openSettings(pane = 'general') {
 }
 $('#settingsBtn').onclick = () => openSettings();
 const showUpdateStatus = u => {
-  if ($('#updateStatus')) $('#updateStatus').textContent = !u ? 'Couldn\'t reach GitHub' : u.available ? `${u.latest} is available` : u.latest ? 'Up to date' : 'No releases yet';
+  if ($('#updateStatus')) $('#updateStatus').textContent = staged ? `${update.latest} goes in when Protoplasma quits` : downloading ? 'Downloading…'
+    : !u || u.error ? 'Couldn\'t reach GitHub' : u.available ? `${u.latest} is available` : u.latest ? 'Up to date' : 'No releases yet';
 };
 $('#settingsDone').onclick = () => $('#settings').close();
 $('#settings').addEventListener('close', () => render());

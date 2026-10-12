@@ -75,6 +75,7 @@ contextBridge.exposeInMainWorld('proto', {
   shell: {
     start: (root, cols, rows) => ipcRenderer.invoke('shell:start', root, cols, rows),
     write: (id, d) => ipcRenderer.send('shell:write', id, d),
+    kill: id => ipcRenderer.send('shell:kill', id),
     resize: (id, cols, rows) => ipcRenderer.send('shell:resize', id, cols, rows),
     onData: listen('shell:data'),
     onExit: listen('shell:exit'),

@@ -1,5 +1,10 @@
 // Electron main process: GitHub sign-in, team management and the agents running on this machine.
 const { app, BrowserWindow, Menu, ipcMain, dialog, shell, clipboard, nativeTheme } = require('electron');
+
+// One copy at a time: a second would start its own agents and hub beside this one's. Checked before anything else runs
+// (the login shell, the local network).
+if (!app.requestSingleInstanceLock()) { app.quit(); return; }
+
 const fs = require('fs');
 const path = require('path');
 const { execFile } = require('child_process');
@@ -19,16 +24,23 @@ const onlineHub = process.env.PROTO_ONLINE_HUB ?? config.onlineHub;
 
 // Agents and gh run with the user's login-shell environment. Apps launched from Finder get a minimal PATH, and a launch
 // from inside Claude Code would leak that session's CLAUDE_* variables. Loaded async so startup isn't blocked.
+// If the shell fails, takes too long or never runs the command (an rc that execs another shell), the app's own
+// environment is used. A Finder launch has no LANG, and CLIs then mangle anything that isn't ASCII.
+const withLang = env => ({ ...env, LANG: env.LANG || 'en_US.UTF-8' });
 const agentEnv = new Promise(resolve => {
   const { HOME, USER, LOGNAME, SHELL = '/bin/zsh' } = process.env;
+  const done = env => { clearTimeout(limit); resolve(withLang(env)); };
+  const limit = setTimeout(() => done(process.env), 6000); // the shell's own timeout can't end a child keeping its output open
   const child = execFile(SHELL, ['-ilc', 'printf __ENV__; env -0'], { encoding: 'utf8', timeout: 5000,
     env: { HOME, USER, LOGNAME, SHELL, TERM: 'xterm-256color' } }, (err, out) => {
-    if (err) return resolve(process.env);
+    if (err || !out.includes('__ENV__')) return done(process.env);
     const env = Object.fromEntries(out.split('__ENV__').pop().split('\0').filter(kv => kv.includes('='))
       .map(kv => [kv.slice(0, kv.indexOf('=')), kv.slice(kv.indexOf('=') + 1)]));
-    process.env.PATH = env.PATH || process.env.PATH; // node-pty resolves commands against our PATH
-    env.LANG ||= 'en_US.UTF-8'; // a Finder launch has none, and CLIs then mangle anything that isn't ASCII
-    resolve(env);
+    if (!env.PATH) return done(process.env);
+    // What macOS gives the app session-wide and a login shell doesn't set: the ssh agent, the per-user temp folder.
+    for (const k of ['SSH_AUTH_SOCK', 'TMPDIR']) if (!env[k] && process.env[k]) env[k] = process.env[k];
+    process.env.PATH = env.PATH; // node-pty resolves commands against our PATH
+    done(env);
   });
   child.stdin.end();
 });
@@ -41,8 +53,11 @@ let unsaved = 0; // files with unsaved edits in the code view, for the quit warn
 
 // Lanes can outlive the window during quit, and sending to a destroyed window throws.
 const toWindow = (channel, ...args) => { if (win && !win.isDestroyed()) win.webContents.send(channel, ...args); };
+// A team's key is where it lives and its id, not its hub's address: a hub on this Mac gets a new port every launch, and
+// the renderer keeps per-team things (the last team, each session's folder) under this key.
+const keyOf = t => `${t.where}|${t.id}`;
 // Every listing refreshes the open team too, so who is on it (and so the push guard for new agents) stays current.
-const remember = t => { const key = `${t.hub}|${t.id}`; known.set(key, t); if (team && `${team.hub}|${team.id}` === key) team = t; return { ...t, key }; };
+const remember = t => { const key = keyOf(t); known.set(key, t); if (team && keyOf(team) === key) team = t; return { ...t, key }; };
 const teamFor = key => { const t = known.get(key); if (!t) throw new Error('That team isn\'t available any more.'); return t; };
 const signedIn = fn => async (_, ...args) => {
   if (!session) throw new Error('Sign in with GitHub first.');
@@ -55,6 +70,7 @@ ipcMain.handle('auth:start', async () => {
   signInAbort?.abort(); // only one sign-in at a time
   const abort = signInAbort = new AbortController();
   const flow = await github.startSignIn(config.githubClientId);
+  if (abort.signal.aborted) return null; // cancelled, or another attempt started, while GitHub answered
   clipboard.writeText(flow.user_code);
   shell.openExternal(flow.verification_uri);
   // A cancelled or superseded attempt reports nothing, so it can't reset the screen for the current one.
@@ -64,11 +80,21 @@ ipcMain.handle('auth:start', async () => {
   return { code: flow.user_code, url: flow.verification_uri };
 });
 ipcMain.handle('auth:cancel', () => signInAbort?.abort());
-ipcMain.handle('auth:signOut', () => { signInAbort?.abort(); github.signOut(); session = team = null; known.clear(); stopWatching(); });
+ipcMain.handle('auth:signOut', async () => {
+  signInAbort?.abort();
+  github.signOut();
+  session = team = null;
+  known.clear();
+  stopWatching();
+  folders.clear();
+  for (const term of shells.values()) term.kill();
+  await teams.stopHosting(); // the next person to sign in hosts this Mac's teams as themselves
+});
 
 // ---- Teams ----
 ipcMain.handle('teams:list', signedIn(async (o = {}) => {
   const { teams: list, unreachable } = await teams.listTeams(session, onlineHub, { nearby: !!o?.nearby });
+  if (!o?.nearby) for (const [key, t] of known) if (t.nearby && keyOf(team || {}) !== key) known.delete(key);
   return { teams: list.map(remember), unreachable, online: !!onlineHub };
 }));
 ipcMain.handle('teams:create', signedIn(async o => remember(await teams.createTeam(session, onlineHub, { name: String(o.name), online: !!o.online }))));
@@ -92,7 +118,7 @@ ipcMain.handle('steps:remove', signedIn((key, name, id) => teams.removeStep(sess
 ipcMain.handle('comments:remove', signedIn((key, name, id) => teams.removeComment(session, teamFor(key), String(name), String(id))));
 ipcMain.handle('teams:remove', signedIn(async (key, login) => remember({ ...teamFor(key), ...await teams.removeMember(session, teamFor(key), String(login)) })));
 // Leaving or deleting closes the team here too.
-const forget = key => { known.delete(key); if (team && `${team.hub}|${team.id}` === key) team = null; };
+const forget = key => { known.delete(key); if (team && keyOf(team) === key) team = null; };
 ipcMain.handle('teams:leave', signedIn(async key => { await teams.removeMember(session, teamFor(key), session.user.login); forget(key); }));
 ipcMain.handle('teams:delete', signedIn(async key => { await teams.deleteTeam(session, teamFor(key)); forget(key); }));
 
@@ -104,7 +130,8 @@ ipcMain.handle('openExternal', (_, url) => { if (/^https:\/\/github\.com\//.test
 ipcMain.handle('repo:reveal', async (_, repo) => {
   const dir = github.clonePath(String(repo));
   if (!fs.existsSync(dir)) throw new Error('That repo isn\'t cloned on this Mac yet. It will be once you start a session in it.');
-  await shell.openPath(dir);
+  const failed = await shell.openPath(dir); // an error message, not a rejection
+  if (failed) throw new Error(failed);
 });
 ipcMain.on('theme', (_, theme) => { if (['dark', 'light', 'system'].includes(theme)) nativeTheme.themeSource = theme; });
 ipcMain.handle('app:info', () => ({ version: require('../package.json').version, onlineHub })); // app.getVersion() is Electron's when run from source
@@ -119,15 +146,18 @@ let release = null; // a newer release found by the last check
 ipcMain.handle('updates:check', async () => {
   const current = require('../package.json').version;
   if (!app.isPackaged) return { current, available: false }; // running from source: git pull instead
-  const latest = await updates.latestRelease(await agentEnv);
+  let latest;
+  try { latest = await updates.latestRelease(await agentEnv); } catch (e) { return { current, error: e.message }; }
   release = latest && updates.isNewer(latest.version, current) ? latest : null;
   return { current, latest: latest?.version ?? null, available: !!release, canInstall: !!updates.ownBundle(app.getPath('exe')),
     url: latest?.url || `https://github.com/${updates.REPO}/releases` };
 });
+let staging = null; // an update being downloaded or waiting for quit: never two
 ipcMain.handle('updates:install', async () => {
   const bundle = updates.ownBundle(app.getPath('exe'));
   if (!release || !bundle) throw new Error('There\'s no update this copy of Protoplasma can install itself. Download it from GitHub instead.');
-  await updates.stage(release, bundle, process.pid, await agentEnv);
+  staging ??= updates.stage(release, bundle, process.pid, await agentEnv).catch(e => { staging = null; throw e; });
+  await staging;
   app.quit(); // asks first if agents are running; if that's cancelled, the update goes in at the next quit
 });
 ipcMain.handle('pickFolder', async (_, from) => (await dialog.showOpenDialog(win,
@@ -137,26 +167,32 @@ ipcMain.handle('pickFolder', async (_, from) => (await dialog.showOpenDialog(win
 // Which agent CLIs this Mac can run, so the app only offers the ones that will start.
 ipcMain.handle('agents:status', async () => { const env = await agentEnv; return AGENTS.map(cmd => ({ cmd, installed: installed(cmd, env) })); });
 ipcMain.handle('startLane', signedIn(async o => {
-  const team = openTeam(); // as it is now: another may be opened while the repo is fetched
+  const team = openTeam(), { token } = session; // as they are now: another team may be opened while the repo is fetched
   if (!team) throw new Error('Open a team first.');
   if (!AGENTS.includes(o.cmd)) throw new Error(`Unknown agent: ${o.cmd}`);
   const env = await agentEnv;
   // A renamed session keeps its original folder and branch, which `folderKey` names.
-  const cwd = o.repo ? await github.sessionFolder(String(o.repo), String(o.folderKey || o.session), env, { worktree: o.worktree !== false }) : String(o.cwd);
+  const folder = o.repo ? await github.sessionFolder(String(o.repo), String(o.folderKey || o.session), env, { worktree: o.worktree !== false }) : { dir: String(o.cwd), guarded: true };
+  const cwd = folder.dir;
   // Codex and OpenCode have no hooks to ask with, so on a shared team the push guard in app-made clones stops them instead.
   const shared = o.cmd !== 'claude' && team.members?.length > 0;
-  const lane = startLane({ hub: team.hub, team: team.id, token: session.token, session: String(o.session), cmd: o.cmd, cwd, args: o.resume ? RESUME[o.cmd] : [],
+  const notice = shared && !folder.guarded ? 'This repo has its own Git hooks, so Protoplasma\'s push guard isn\'t installed: this agent can push to main or force-push without being stopped.' : '';
+  const lane = startLane({ hub: team.hub, team: team.id, token, session: String(o.session), cmd: o.cmd, cwd, args: o.resume ? RESUME[o.cmd] : [],
     open: !!o.open, env: shared ? { ...env, PROTO_SHARED_TEAM: '1' } : env, onRefused: reason => toWindow('lane:refused', lane.id, reason) });
   lanes.set(lane.id, lane);
   folders.add(cwd);
   lane.cwd = cwd;
   lane.term.onData(d => toWindow('lane:data', lane.id, d));
   lane.term.onExit(() => { lanes.delete(lane.id); toWindow('lane:exit', lane.id); });
-  return { id: lane.id, repo: lane.repo };
+  return { id: lane.id, repo: lane.repo, notice };
 }));
 ipcMain.on('lane:write', (_, id, d) => lanes.get(id)?.write(d));
 ipcMain.handle('sessions:folder', (_, repo, name) => github.sessionFolderPath(String(repo), String(name)));
-ipcMain.handle('sessions:removeFolder', signedIn(async (repo, name) => github.removeSessionFolder(String(repo), String(name), await agentEnv)));
+ipcMain.handle('sessions:removeFolder', signedIn(async (repo, name) => {
+  const dir = github.sessionFolderPath(String(repo), String(name));
+  await github.removeSessionFolder(String(repo), String(name), await agentEnv);
+  folders.delete(dir);
+}));
 ipcMain.on('lane:resize', (_, id, cols, rows) => lanes.get(id)?.resize(cols, rows));
 ipcMain.on('lane:kill', (_, id) => lanes.get(id)?.term.kill());
 ipcMain.on('lanes:rejoin', () => { for (const lane of lanes.values()) lane.rejoin(); }); // e.g. after being invited back
@@ -173,15 +209,15 @@ ipcMain.handle('code:root', (_, o) => {
 });
 const inFolder = fn => async (_, root, ...args) => {
   if (!folders.has(root)) throw new Error('That folder isn\'t open here.');
-  return fn(root, await agentEnv, ...args);
+  return fn(root, ...args);
 };
-ipcMain.handle('code:list', inFolder((root, env) => files.list(root, env)));
-ipcMain.handle('code:status', inFolder((root, env) => files.status(root, env)));
-ipcMain.handle('code:read', inFolder((root, env, rel) => files.read(root, rel)));
-ipcMain.handle('code:committed', inFolder((root, env, rel) => files.committed(root, rel, env)));
-ipcMain.handle('code:write', inFolder((root, env, rel, text) => files.write(root, rel, text)));
-ipcMain.handle('code:search', inFolder((root, env, query) => files.search(root, query, env)));
-ipcMain.handle('code:commit', inFolder((root, env, message) => files.commitAndPush(root, message, env)));
+ipcMain.handle('code:list', inFolder(async root => files.list(root, await agentEnv)));
+ipcMain.handle('code:status', inFolder(async root => files.status(root, await agentEnv)));
+ipcMain.handle('code:read', inFolder((root, rel) => files.read(root, rel)));
+ipcMain.handle('code:committed', inFolder(async (root, rel) => files.committed(root, rel, await agentEnv)));
+ipcMain.handle('code:write', inFolder((root, rel, text) => files.write(root, rel, text)));
+ipcMain.handle('code:search', inFolder(async (root, query) => files.search(root, query, await agentEnv)));
+ipcMain.handle('code:commit', inFolder(async (root, message) => files.commitAndPush(root, message, await agentEnv)));
 // A file one of your agents changed, for a teammate who asked to see it (the renderer checks you share files).
 ipcMain.handle('code:readLane', (_, id, rel) => {
   const root = lanes.get(id)?.cwd;
@@ -195,7 +231,8 @@ ipcMain.handle('code:watch', inFolder(root => {
 
 // The Terminal tab: a plain shell in the session's folder, only on this Mac (never shared with the team).
 const shells = new Map();
-ipcMain.handle('shell:start', inFolder((root, env, cols, rows) => {
+ipcMain.handle('shell:start', inFolder(async (root, cols, rows) => {
+  const env = await agentEnv;
   const term = pty.spawn(env.SHELL || '/bin/zsh', ['-l'], { name: 'xterm-256color', cwd: root, cols, rows, env: { ...env, COLORTERM: 'truecolor' } });
   const id = String(term.pid);
   shells.set(id, term);
@@ -204,6 +241,7 @@ ipcMain.handle('shell:start', inFolder((root, env, cols, rows) => {
   return id;
 }));
 ipcMain.on('shell:write', (_, id, d) => shells.get(id)?.write(d));
+ipcMain.on('shell:kill', (_, id) => shells.get(id)?.kill());
 ipcMain.on('shell:resize', (_, id, cols, rows) => { if (cols > 0 && rows > 0) try { shells.get(id)?.resize(cols, rows); } catch {} }); // it may have just exited
 
 // Shortcuts live in the native menu so they work while a terminal has focus.
@@ -248,13 +286,9 @@ Menu.setApplicationMenu(Menu.buildFromTemplate([
 const boundsFile = () => path.join(app.getPath('userData'), 'window.json');
 const savedBounds = () => { try { return JSON.parse(fs.readFileSync(boundsFile(), 'utf8')); } catch { return {}; } };
 
-// One copy at a time: a second would start its own agents and hub beside this one's.
-const firstCopy = app.requestSingleInstanceLock();
-if (!firstCopy) app.quit();
 app.on('second-instance', () => { if (win) { if (win.isMinimized()) win.restore(); win.show(); win.focus(); } });
 
 app.whenReady().then(() => {
-  if (!firstCopy) return;
   if (!app.isPackaged) app.dock?.setIcon(path.join(__dirname, '../build/icon.png'));
   win = new BrowserWindow({ width: 1440, height: 900, ...savedBounds(), minWidth: 900, minHeight: 560, backgroundColor: '#0b0b0c',
     titleBarStyle: 'hiddenInset', trafficLightPosition: { x: 18, y: 18 },
@@ -268,8 +302,9 @@ app.whenReady().then(() => {
     const running = lanes.size;
     const plural = (n, one, many) => (n === 1 ? one : `${n} ${many}`);
     const what = [running && plural(running, 'An agent is still running', 'agents are still running'),
-      unsaved && plural(unsaved, 'a file has unsaved changes', 'files have unsaved changes')].filter(Boolean);
-    if (what.length && dialog.showMessageBoxSync(win, { type: 'warning', buttons: ['Quit', 'Cancel'], defaultId: 1, cancelId: 1,
+      unsaved && plural(unsaved, 'a file has unsaved changes', 'files have unsaved changes'),
+      shells.size && plural(shells.size, 'a terminal is open', 'terminals are open')].filter(Boolean);
+    if (!terminated && what.length && dialog.showMessageBoxSync(win, { type: 'warning', buttons: ['Quit', 'Cancel'], defaultId: 1, cancelId: 1,
       message: `${what.join(', and ')}`.replace(/^./, c => c.toUpperCase()),
       detail: [running && `Quitting Protoplasma stops ${running === 1 ? 'it' : 'them'}. A Claude Code conversation can be picked up again later with /resume.`,
         unsaved && 'Unsaved changes are lost.', shells.size && 'Terminals open in the code view close too.'].filter(Boolean).join(' ') }) === 1) return e.preventDefault();
@@ -277,8 +312,16 @@ app.whenReady().then(() => {
   });
 });
 app.on('window-all-closed', () => app.quit());
-app.on('will-quit', () => {
+// Told to stop (kill, logging out, the playground's Ctrl+C): no question to answer, it just quits.
+let terminated = false;
+process.on('SIGTERM', () => { terminated = true; app.quit(); });
+let leaving = false;
+app.on('will-quit', e => {
   for (const lane of lanes.values()) lane.term.kill();
   for (const term of shells.values()) term.kill();
-  teams.stopAnnouncing();
+  if (leaving) return;
+  // Waits (a second at most) for the network goodbye, so other Macs stop listing this one at once.
+  leaving = true;
+  e.preventDefault();
+  teams.stopAnnouncing().finally(() => app.quit());
 });

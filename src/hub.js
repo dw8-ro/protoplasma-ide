@@ -140,8 +140,9 @@ function startHub({ port = 7681, host = '0.0.0.0', dataDir, owners, verifyUser =
   // What another lane has touched, as `lane` should see it. A lane in the same folder only counts for the edits it made
   // itself, since that folder's changes could just as well be `lane`'s own. Checkouts of the same branch share its
   // pushed commits, so between them only what isn't pushed yet counts.
+  // (An agent's own edits come first: they're the freshest, and the list an agent is told about is cut at 15.)
   const touchedBy = (o, lane) => (o.tree === lane.tree ? o.files
-    : o.branch && o.branch === lane.branch ? new Set([...o.local, ...[...o.files].filter(f => !o.changed.has(f))]) : filesOf(o));
+    : o.branch && o.branch === lane.branch ? new Set([...[...o.files].filter(f => !o.changed.has(f)), ...o.local]) : filesOf(o));
   const notesFor = (lane, file = '') => teams.get(lane.team).memories.filter(m => m.file === file && (!m.repo || same(m.repo, lane.repo)));
   function views(teamId) {
     const ls = teamLanes(teamId);

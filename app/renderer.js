@@ -778,7 +778,7 @@ async function deleteSession(name) {
   // Its own folder (and only that: never a folder you picked yourself) can go too, if you say so.
   const folder = source?.repo && source.worktree !== false && await proto.sessionFolder(source.repo, key);
   if (folder && confirm(`Also remove its folder on this Mac?\n\n${folder}\n\nThe session's branch is kept, and a folder with uncommitted changes is never removed. Ignored files in it (like node_modules or .env) are removed.`)) {
-    proto.removeSessionFolder(source.repo, key).catch(err => alert(errorText(err)));
+    proto.removeSessionFolder(source.repo, key).then(() => forgetFolder(folder), err => alert(errorText(err)));
   }
 }
 const toggleDone = name => {
@@ -1458,6 +1458,7 @@ function createTerminal(l) {
 function applyPrefs() {
   document.documentElement.dataset.theme = effectiveTheme();
   proto.setTheme(prefs.theme);
+  window.codePrefs?.(); // the editor and the Terminal tabs (code.js; not loaded yet on the first call)
   for (const [id, t] of terms) {
     t.term.options.theme = terminalTheme();
     t.term.options.minimumContrastRatio = contrastFloor();

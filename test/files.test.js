@@ -60,7 +60,9 @@ test('mid-rebase, conflicts are marked and nothing gets committed', async () => 
 test('nothing outside the session folder can be read or written, symlinks included', () => {
   fs.symlinkSync(os.homedir(), path.join(david, 'home-link'));
   for (const rel of ['../max/lobby.js', '/etc/hosts', 'home-link']) {
-    assert.throws(() => files.read(david, rel), /outside the session folder|ENOENT/, rel);
+    const got = files.read(david, rel); // says why it can't be shown, instead of showing it
+    assert.ok(got.outside || got.gone, `${rel}: ${JSON.stringify(got)}`);
+    assert.equal(got.text, undefined, rel);
     assert.throws(() => files.write(david, rel, 'x'), /outside the session folder|ENOENT/, rel);
   }
   assert.equal(files.read(david, 'lobby.js').text, 'one\nDAVID\nthree\n');

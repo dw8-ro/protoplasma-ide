@@ -19,6 +19,7 @@ const code = {
   pane: 'explorer',     // explorer | search | changes
   expanded: new Set(),
   unpushed: 0,          // commits on the branch that aren't pushed
+  prefix: '',           // where the folder sits in its repo: teammates' paths start at the repo's top
   dock: 'agent',        // what the panel underneath shows: agent | terminal
   dockHidden: false,
 };
@@ -29,6 +30,11 @@ const base = p => p.slice(p.lastIndexOf('/') + 1);
 const dirOf = p => p.slice(0, Math.max(0, p.lastIndexOf('/')));
 // A byte-order mark at the start of a file: Monaco leaves it out of the text, so it's kept aside and saved back.
 const unbom = text => text.replace(/^\ufeff/, '');
+// Why a file isn't shown, from what files.read() said about it.
+const noteFor = (file, path) => (file.binary ? 'This file isn\'t text, so it isn\'t shown here.' : file.tooBig ? 'This file is too big to open here.'
+  : file.notUtf8 ? 'This file isn\'t UTF-8 text, so it isn\'t opened here: saving it would change its characters.'
+  : file.outside ? 'This is a link to something outside the session folder, so it isn\'t opened here.'
+  : file.gone ? (code.files.includes(path) ? 'This file has been deleted.' : 'This file isn\'t in your folder.') : file.error || '');
 const isDirty = entry => !!entry?.model && !entry.theirs && entry.model.getAlternativeVersionId() !== entry.saved;
 /** Files with unsaved edits, in every session (for the quit warning). */
 const unsavedFiles = () => [...models, ...[...parked.values()].flatMap(p => [...p.models])].filter(([, e]) => isDirty(e)).map(([p]) => p);
@@ -71,6 +77,16 @@ function editorTheme() {
 new MutationObserver(() => { editorTheme(); for (const s of shells.values()) Object.assign(s.term.options, { theme: terminalTheme(), minimumContrastRatio: contrastFloor() }); })
   .observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
 
+/** Font settings, applied to the editor and the Terminal tabs (renderer.js applyPrefs calls this). */
+function codePrefs() {
+  const font = { fontFamily: terminalFont(), fontSize: prefs.fontSize + 0.5 };
+  editor?.updateOptions(font);
+  diffEditor?.updateOptions(font);
+  for (const s of shells.values()) {
+    Object.assign(s.term.options, { fontFamily: terminalFont(), fontSize: prefs.fontSize, lineHeight: prefs.lineHeight });
+    if (!s.el.hidden) s.fit.fit();
+  }
+}
 async function ensureEditor() {
   await loadMonaco();
   if (editor) return;
@@ -98,9 +114,21 @@ async function ensureEditor() {
 /** Shows the code (or hides it, with `on` false). Resolves to whether there's a folder to show. */
 async function showCode(on = true) {
   if (!on || view !== 'session') { code.on = false; render(); return false; }
+  const wasOn = code.on;
   code.on = true;
   render();
-  await Promise.all([openRoot(), ensureEditor()]);
+  let opened;
+  try { [opened] = await Promise.all([openRoot(), ensureEditor()]); } catch (e) {
+    code.on = false;
+    render();
+    alert(`The code view couldn't open: ${errorText(e)}`);
+    return false;
+  }
+  // Back to a folder whose changes weren't followed while the code was hidden.
+  if (!opened && !wasOn && code.root) {
+    refreshFiles().catch(() => {});
+    for (const p of code.open) if (!theirsOf(p)) reload(p);
+  }
   render();
   return !!code.root;
 }
@@ -117,9 +145,10 @@ async function sessionFiles() {
   if (root && root === code.root && code.files.length) return code.files;
   return root ? proto.code.list(root).catch(() => null) : null;
 }
+/** Switches the code view to the open session's folder. Resolves to whether it switched. */
 async function openRoot() {
   const root = await rootFor(current);
-  if (root === code.root) return;
+  if (root === code.root && (root || code.session === current)) { code.session = current; return false; }
   rememberView();
   editor?.setModel(null);
   diffEditor?.setModel(null);
@@ -135,19 +164,24 @@ async function openRoot() {
   $('#codeQuery').value = $('#commitMessage').value = $('#commitNote').textContent = '';
   setHTML($('#codeHits'), '');
   if (code.dock === 'terminal') showShell(); // the Terminal tab follows the session
-  if (!root) return;
-  await refreshFiles();
-  proto.code.watch(root);
+  if (!root) return true;
+  await refreshFiles().catch(() => {});
+  proto.code.watch(root).catch(() => {});
   if (back) {
     render();
     showActive();
     for (const p of back.models.keys()) reload(p); // an agent may have changed them meanwhile: that shows as "changed on disk"
   }
+  return true;
+}
+/** Forgets unsaved edits kept for a folder that's gone (its session or folder was deleted). */
+function forgetFolder(root) {
+  if (parked.delete(root)) renderTabs();
 }
 async function refreshFiles({ list = true } = {}) {
   const root = code.root;
   const [files, status] = await Promise.all([list ? proto.code.list(root) : null, proto.code.status(root)]);
-  const { branch, unpushed, underWay, changes } = status;
+  const { branch, unpushed, underWay, changes, prefix = '', notGit = false, error = '' } = status;
   if (root !== code.root) return;
   if (!list && JSON.stringify(status) === refreshFiles.last) return;
   refreshFiles.last = JSON.stringify(status);
@@ -157,46 +191,51 @@ async function refreshFiles({ list = true } = {}) {
   }
   // New changes since, or a rebase that has ended: the note on screen no longer applies.
   if (changes.length > code.changes.size || (code.underWay && !underWay)) $('#commitNote').textContent = '';
-  code.branch = branch;
-  code.unpushed = unpushed;
-  code.underWay = underWay;
+  const diffedBefore = code.diff && code.changes.get(code.diff);
+  Object.assign(code, { branch, unpushed, underWay, prefix, notGit, statusError: error });
   code.changes = new Map(changes.map(c => [c.path, c.state]));
+  // The file shown as changes was committed or changed again (by an agent, say): its diff is redone.
+  if (code.diff === code.active && code.diff && code.changes.get(code.diff) !== diffedBefore && !code.against) showActive();
   code.changedDirs = new Set(changes.flatMap(c => c.path.split('/').slice(0, -1).map((_, i, parts) => parts.slice(0, i + 1).join('/'))));
   render();
 }
 // Files changed on disk: by your agent, a teammate's pull, or you in another editor.
 let refreshTimer;
 proto.code.onChanged((root, paths) => {
-  if (root !== code.root) return;
+  if (root !== code.root || !code.on || view !== 'session') return; // caught up when the code is shown again
   for (const p of paths) if (models.has(p)) reload(p);
   clearTimeout(refreshTimer);
-  refreshTimer = setTimeout(refreshFiles, 250);
+  refreshTimer = setTimeout(() => refreshFiles().catch(() => {}), 250);
 });
 setInterval(() => { if (code.on && code.root && view === 'session' && !document.hidden) refreshFiles({ list: false }).catch(() => {}); }, 3000);
 async function reload(path, { force = false } = {}) {
   const entry = models.get(path);
   if (!entry?.model) return;
-  const file = await proto.code.read(code.root, path).catch(() => ({ gone: true }));
-  if (file.text == null) { entry.note = file.gone ? 'This file has been deleted. Saving puts it back.' : entry.note; return render(); }
+  const file = await proto.code.read(code.root, path).catch(e => ({ error: errorText(e) }));
+  if (file.text == null) {
+    // Gone, or now something the editor can't show: said so, and a save over it is asked about first.
+    entry.note = file.gone ? 'This file has been deleted. Saving puts it back.' : noteFor(file, path);
+    if (!file.gone) entry.stale = true;
+    return render();
+  }
   if (entry.note) { entry.note = ''; render(); }
-  const bom = file.text.startsWith('\ufeff');
+  entry.bom = file.text.startsWith('\ufeff'); // as it is on disk
   file.text = unbom(file.text);
-  // What you just saved coming back from disk isn't someone else's change.
+  // What you just saved coming back from disk isn't someone else's change (and a change undone on disk isn't one either).
+  if (file.text === entry.savedText && entry.stale && !force) { entry.stale = false; render(); }
   if (file.text === entry.model.getValue() || (file.text === entry.savedText && !force)) return;
   if (isDirty(entry) && !force) { entry.stale = true; return render(); }
   replaceText(entry.model, file.text);
-  Object.assign(entry, { saved: entry.model.getAlternativeVersionId(), savedText: file.text, bom }); // as it is on disk now
+  Object.assign(entry, { saved: entry.model.getAlternativeVersionId(), savedText: file.text }); // as it is on disk now
 }
 
 // ---- Opening, showing and saving files ----
 
 async function modelFor(path) {
   if (models.has(path)) return models.get(path);
-  const file = await proto.code.read(code.root, path);
+  const file = await proto.code.read(code.root, path).catch(e => ({ error: errorText(e) }));
   if (models.has(path)) return models.get(path); // opened twice at once (a double click)
-  const entry = { note: file.binary ? 'This file isn\'t text, so it isn\'t shown here.' : file.tooBig ? 'This file is too big to open here.'
-    : file.notUtf8 ? 'This file isn\'t UTF-8 text, so it isn\'t opened here: saving it would change its characters.'
-    : file.gone ? 'This file has been deleted.' : '' };
+  const entry = { note: noteFor(file, path) };
   if (file.text != null) {
     entry.bom = file.text.startsWith('\ufeff');
     entry.model = monaco.editor.createModel(unbom(file.text), undefined, monaco.Uri.file(`${code.root}/${path}`));
@@ -226,22 +265,36 @@ function rememberView() {
 let committedModel = null; // the last commit's version shown in a diff, ours to dispose
 let compareNote = '';      // why a comparison with a teammate shows the last commit instead
 async function showActive(line, match, endLine) {
-  const entry = code.active && models.get(code.active);
+  const path = code.active, entry = path && models.get(path);
   const [plain, changes] = $('#codeEditor').children;
+  const still = () => code.active === path; // another file may have been opened during a wait
   compareNote = '';
-  if (entry?.model && code.diff === code.active) {
+  if (entry?.model && code.diff === path) {
     let theirs = null;
     if (code.against) {
-      const answer = await theirModel(code.against, code.active);
+      const against = code.against, answer = await theirModel(against, path);
+      if (!still() || code.diff !== path) return;
       theirs = answer.model;
-      if (!theirs) { compareNote = `${answer.note || 'Their version isn\'t available.'} This shows your changes since the last commit instead.`; code.against = null; renderTabs(); }
+      if (!theirs && code.against === against) { compareNote = `${answer.note || 'Their version isn\'t available.'} This shows your changes since the last commit instead.`; code.against = null; renderTabs(); }
     }
-    const before = theirs || monaco.editor.createModel(await proto.code.committed(code.root, code.active), entry.model.getLanguageId());
+    const text = theirs ? null : await proto.code.committed(code.root, path);
+    if (!still() || code.diff !== path) return;
+    const before = theirs || monaco.editor.createModel(text, entry.model.getLanguageId());
     diffEditor.setModel({ original: before, modified: entry.model });
     committedModel?.dispose();
     committedModel = theirs ? null : before;
     [plain.hidden, changes.hidden] = [true, false];
     diffEditor.getModifiedEditor().focus();
+  } else if (!entry?.model && code.diff === path && entry && /deleted/.test(entry.note)) {
+    // Deleted since the last commit: how it was, read-only.
+    const text = await proto.code.committed(code.root, path);
+    if (!still()) return;
+    committedModel?.dispose();
+    committedModel = monaco.editor.createModel(text, undefined, monaco.Uri.from({ scheme: 'committed', path: `/${path}` }));
+    editor.setModel(committedModel);
+    editor.updateOptions({ readOnly: true });
+    compareNote = 'Deleted since the last commit. This is how it was.';
+    [plain.hidden, changes.hidden] = [false, true];
   } else {
     editor.setModel(entry?.model || null);
     editor.updateOptions({ readOnly: !!entry?.theirs });
@@ -253,7 +306,7 @@ async function showActive(line, match, endLine) {
       const at = match ? entry.model.getLineContent(line).toLowerCase().indexOf(match.toLowerCase()) : -1;
       const last = Math.min(Math.max(endLine || line, line), entry.model.getLineCount());
       editor.setSelection(at >= 0 ? new monaco.Selection(line, at + 1, line, at + 1 + match.length)
-        : last > line ? new monaco.Selection(line, 1, last, entry.model.getLineMaxColumn(last)) : new monaco.Selection(line, 1, line, 1));
+        : new monaco.Selection(line, 1, last, entry.model.getLineMaxColumn(last)));
       editor.revealLinesInCenter(line, last);
     }
     if (entry?.model) editor.focus();
@@ -268,6 +321,7 @@ function closeFile(path) {
   if (shown && entry?.model && [shown.original, shown.modified].includes(entry.model)) diffEditor.setModel(null);
   if (editor?.getModel() === entry?.model) editor.setModel(null);
   entry?.model?.dispose();
+  if (entry) entry.model = null; // an answer arriving later for it does nothing
   models.delete(path);
   const at = code.open.indexOf(path);
   code.open.splice(at, 1);
@@ -301,7 +355,7 @@ function renderCode() {
   $('#codeToggle').classList.toggle('on', on);
   const shell = on && code.dock === 'terminal';
   $('#shellPane').hidden = !shell;
-  if (shell) for (const id of ['#lanes', '#replayPanel', '#ghPanel', '#memoryPanel', '#backBar']) $(id).hidden = true;
+  if (shell) for (const id of ['#lanes', '#replayPanel', '#ghPanel', '#memoryPanel', '#planPanel', '#backBar']) $(id)?.setAttribute('hidden', '');
   for (const b of $('#dockTabs').children) b.classList.toggle('on', b.dataset.dock === code.dock);
   if (!on) return;
   // An agent started since the code was opened brings the session's folder with it.
@@ -317,7 +371,9 @@ function renderCode() {
   const pushOnly = !code.changes.size && code.unpushed > 0;
   $('#commitBtn').textContent = pushOnly ? `Push ${code.unpushed} commit${code.unpushed === 1 ? '' : 's'}` : 'Commit & Push';
   $('#commitMessage').hidden = pushOnly;
-  $('#commitBtn').disabled = !!code.underWay || committing;
+  $('#commitBtn').disabled = !!code.underWay || committing === code.root || code.notGit;
+  if (code.notGit) $('#commitNote').textContent = 'This folder isn\'t a git repository, so there\'s nothing to commit or push.';
+  else if (code.statusError) $('#commitNote').textContent = `Git couldn't read this folder's changes: ${code.statusError}`;
   if (code.underWay) $('#commitNote').textContent = `A ${code.underWay} is under way${[...code.changes.values()].includes('C') ? ', with conflicts in the files marked C' : ''}. `
     + `Finish it or abort it in the Terminal tab (git ${code.underWay} --continue or --abort), then commit.`;
   $('#codeWelcomeText').textContent = code.root ? 'Start working in this repository'
@@ -384,7 +440,9 @@ function teammatesFiles() {
   for (const l of hubLanes) {
     if (local.has(l.id) || same(l.login, me.login) || !(roomRepo ? same(l.repo || '', roomRepo) : l.session === current)) continue;
     // On your branch, only what they haven't pushed: the rest is in your checkout too.
-    for (const f of l.branch && l.branch === code.branch ? l.local || l.files : l.files) theirs.set(f, [...(theirs.get(f) || []), l]);
+    for (const f of l.branch && l.branch === code.branch ? l.local || l.files : l.files) {
+      if (f.startsWith(code.prefix)) theirs.set(f.slice(code.prefix.length), [...(theirs.get(f.slice(code.prefix.length)) || []), l]);
+    }
   }
   return theirs;
 }
@@ -412,7 +470,7 @@ function askFile(lane, path) {
     if (ws?.readyState !== WebSocket.OPEN) return resolve({ error: 'Not connected to the team right now.' });
     const ask = String(++askCount);
     asks.set(ask, resolve);
-    ws.send(JSON.stringify({ t: 'file:get', lane, path, ask }));
+    ws.send(JSON.stringify({ t: 'file:get', lane, path: code.prefix + path, ask })); // agents' paths start at the repo's top
     setTimeout(() => { if (asks.delete(ask)) resolve({ error: `${laneName(lane)}'s app didn't answer.` }); }, 12_000);
   });
 }
@@ -422,6 +480,7 @@ async function theirModel(lane, path) {
   const entry = models.get(key) || { theirs: true };
   models.set(key, entry);
   const answer = await askFile(lane, path);
+  if (models.get(key) !== entry) return entry; // closed (or switched away from) while waiting
   if (answer.text == null) {
     entry.note = answer.error;
     if (entry.model) { // they stopped sharing, or the agent stopped: their copy goes
@@ -434,7 +493,7 @@ async function theirModel(lane, path) {
   } else {
     entry.note = '';
     const text = unbom(answer.text);
-    if (!entry.model) entry.model = monaco.editor.createModel(text, undefined, monaco.Uri.parse(`theirs://${lane}/${path}`));
+    if (!entry.model) entry.model = monaco.editor.createModel(text, undefined, monaco.Uri.from({ scheme: 'theirs', authority: lane, path: `/${path}` }));
     else if (entry.model.getValue() !== text) replaceText(entry.model, text);
   }
   return entry;
@@ -471,10 +530,12 @@ setInterval(async () => {
 function conflictRows() {
   const merges = [...code.changes].filter(([, state]) => state === 'C').map(([path]) => path);
   const mine = hubLanes.filter(l => local.has(l.id) && l.session === current);
-  const both = [...new Set(mine.flatMap(l => l.overlaps))].filter(f => !merges.includes(f));
+  const here = f => f.startsWith(code.prefix) ? f.slice(code.prefix.length) : null; // from the repo's top to this folder
+  const both = [...new Set(mine.flatMap(l => l.overlaps).map(here).filter(f => f !== null))].filter(f => !merges.includes(f));
+  const sameRepo = o => (roomRepo ? same(o.repo || '', roomRepo) : o.session === current);
   const html = merges.map(path => `<div class="conflict" title="A merge conflict in your checkout">${fileRow(path, 0, base(path), dirOf(path))}</div>`).join('')
     + both.map(path => {
-      const others = [...new Map(hubLanes.filter(o => !local.has(o.id) && o.overlaps.includes(path)).map(o => [o.tree, o])).values()];
+      const others = [...new Map(hubLanes.filter(o => !local.has(o.id) && sameRepo(o) && o.overlaps.includes(code.prefix + path)).map(o => [o.tree, o])).values()];
       return `<div class="conflict">${fileRow(path, 0, base(path), dirOf(path))}
         ${others.map(o => `<button class="btn small" data-compare="${esc(o.id)}" data-path="${esc(path)}">Compare with ${esc(o.name)}'s</button>`).join('')}</div>`;
     }).join('');
@@ -511,7 +572,7 @@ function linesOf(c, model) {
   const whole = line => !c.snippet.includes('\n') || blockAt(model, line, line + span) === c.snippet;
   // Nearest to where it was: first where the whole block still matches, else where its first line does.
   for (const check of [line => starts(line) && whole(line), starts]) {
-    for (let d = 0; d < count; d++) {
+    for (let d = 0; d < Math.max(count, c.line); d++) { // a file that shrank: the old line may be past its end
       for (const line of [c.line - d, c.line + d]) if (check(line)) return { line, endLine: Math.min(count, line + span) };
     }
   }
@@ -546,8 +607,10 @@ $('#codeQuery').oninput = () => {
   clearTimeout(searchTimer);
   searchTimer = setTimeout(async () => {
     const query = $('#codeQuery').value, root = code.root;
-    const hits = root && query.trim() ? await proto.code.search(root, query).catch(() => []) : [];
+    let failed = '';
+    const hits = root && query.trim() ? await proto.code.search(root, query).catch(e => { failed = errorText(e); return []; }) : [];
     if (root !== code.root || query !== $('#codeQuery').value) return;
+    if (failed) return setHTML($('#codeHits'), `<p class="panel-empty">${esc(`The search failed: ${failed}`)}</p>`);
     const byFile = new Map();
     for (const hit of hits) byFile.set(hit.path, [...(byFile.get(hit.path) || []), hit]);
     setHTML($('#codeHits'), [...byFile].map(([path, list]) => `<div class="hit-file" title="${esc(path)}">${esc(path)}</div>`
@@ -570,27 +633,28 @@ function goToFile() {
 
 // ---- Commit & Push ----
 
-let committing = false;
+let committing = null; // the folder being committed (it can take a while; another session's button stays usable)
 async function commit() {
-  if (committing || code.underWay) return;
+  if (committing === code.root || code.underWay || code.notGit) return;
   const pushOnly = !code.changes.size && code.unpushed > 0;
   const message = pushOnly ? '' : $('#commitMessage').value.trim(), note = $('#commitNote');
   if (!pushOnly && code.changes.size && !message) { note.textContent = 'Write what the commit is for first.'; return $('#commitMessage').focus(); }
   if (!pushOnly && !code.changes.size) { note.textContent = 'There\'s nothing to commit.'; return; }
   if ([...models.values()].some(isDirty)) { note.textContent = 'Save your open files first (⌘S).'; return; }
+  if ([...code.changes.values()].includes('C')) { note.textContent = 'Some files still have conflicts (marked C). Sort them out first.'; return; }
   if (/^(main|master)$/.test(code.branch) && !confirm(`Commit and push straight to ${code.branch}?`)) return;
-  committing = $('#commitBtn').disabled = true;
+  const root = committing = code.root;
+  $('#commitBtn').disabled = true;
   note.textContent = 'Committing…';
-  try {
-    note.textContent = await proto.code.commit(code.root, message);
-    $('#commitMessage').value = '';
-  } catch (e) {
-    note.textContent = errorText(e);
-  } finally {
-    committing = $('#commitBtn').disabled = false;
-    await refreshFiles();
-    if (code.diff) { code.diff = null; render(); showActive(); } // its changes are committed now
-  }
+  let said;
+  try { said = await proto.code.commit(root, message); } catch (e) { said = errorText(e); }
+  committing = null;
+  if (code.root !== root) return; // another session is open now; this one's status is read when it's opened again
+  note.textContent = said;
+  if (!/couldn't|refused|conflict/i.test(said)) $('#commitMessage').value = '';
+  $('#commitBtn').disabled = false;
+  await refreshFiles().catch(() => {});
+  if (code.diff && !code.against) { code.diff = null; render(); showActive(); } // its changes are committed now
 }
 $('#commitBtn').onclick = commit;
 $('#commitMessage').oninput = () => { if (!code.underWay) $('#commitNote').textContent = ''; };
@@ -600,8 +664,9 @@ $('#commitMessage').onkeydown = e => { if (e.key === 'Enter' && e.metaKey) { e.p
 
 const shells = new Map(); // root -> { id, term, el }
 async function showShell() {
-  for (const [root, s] of shells) s.el.hidden = root !== code.root;
-  if (!code.root) return;
+  for (const [root, s] of shells) { s.el.hidden = root !== code.root; gpu(s, !s.el.hidden); } // only the one on screen draws with the GPU
+  $('#shellEmpty')?.remove();
+  if (!code.root) return $('#shellPane').insertAdjacentHTML('beforeend', '<p id="shellEmpty" class="panel-empty">This session\'s code isn\'t on this Mac yet, so there\'s no folder for a terminal.</p>');
   let s = shells.get(code.root);
   if (!s) {
     const root = code.root;
@@ -614,9 +679,9 @@ async function showShell() {
     const fit = new FitAddon.FitAddon();
     term.loadAddon(fit);
     term.open(el);
-    gpu({ term }, true);
     fit.fit();
-    s = { term, el, id: null };
+    s = { term, el, fit, id: null };
+    gpu(s, true);
     shells.set(root, s); // before the await, so a second click doesn't start a second shell
     try { s.id = await proto.shell.start(root, term.cols, term.rows); } catch (e) {
       term.dispose(); el.remove(); shells.delete(root);
@@ -630,8 +695,12 @@ async function showShell() {
 }
 proto.shell.onData((id, d) => { for (const s of shells.values()) if (s.id === id) s.term.write(d); });
 proto.shell.onExit(id => {
-  for (const [root, s] of shells) if (s.id === id) { s.term.dispose(); s.el.remove(); shells.delete(root); }
-  if (code.dock === 'terminal') { code.dock = 'agent'; render(); }
+  for (const [root, s] of shells) {
+    if (s.id !== id) continue;
+    if (s.webgl) gpu(s, false);
+    s.term.dispose(); s.el.remove(); shells.delete(root);
+    if (root === code.root && code.dock === 'terminal') { code.dock = 'agent'; render(); } // only the shell on screen flips the view
+  }
 });
 
 // ---- Clicks and keys ----
@@ -644,7 +713,7 @@ $('.activity').onclick = e => {
   code.pane = pane;
   render();
   if (pane === 'search') $('#codeQuery').focus();
-  if (pane === 'changes') refreshFiles();
+  if (pane === 'changes' && code.root) refreshFiles().catch(() => {});
 };
 $('.code-side').onclick = e => {
   const tabbed = e.target.closest('[data-explorer]');

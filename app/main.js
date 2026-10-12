@@ -218,11 +218,14 @@ ipcMain.handle('code:committed', inFolder(async (root, rel) => files.committed(r
 ipcMain.handle('code:write', inFolder((root, rel, text) => files.write(root, rel, text)));
 ipcMain.handle('code:search', inFolder(async (root, query) => files.search(root, query, await agentEnv)));
 ipcMain.handle('code:commit', inFolder(async (root, message) => files.commitAndPush(root, message, await agentEnv)));
-// A file one of your agents changed, for a teammate who asked to see it (the renderer checks you share files).
-ipcMain.handle('code:readLane', (_, id, rel) => {
-  const root = lanes.get(id)?.cwd;
-  if (!root) throw new Error('That agent has stopped.');
-  return files.read(root, rel);
+// A file one of your agents changed, for a teammate who asked to see it (the renderer checks you share files). Its
+// path is from the repo's top, as agents report them; the agent may work in a folder further down.
+ipcMain.handle('code:readLane', async (_, id, rel) => {
+  const lane = lanes.get(id);
+  if (!lane) throw new Error('That agent has stopped.');
+  lane.prefix ??= await files.prefixOf(lane.cwd, await agentEnv);
+  rel = String(rel);
+  return rel.startsWith(lane.prefix) ? files.read(lane.cwd, rel.slice(lane.prefix.length)) : { outside: true };
 });
 ipcMain.handle('code:watch', inFolder(root => {
   stopWatching();

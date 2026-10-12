@@ -257,12 +257,14 @@ test('pushing to main or force-pushing needs a person to confirm', async () => {
     "sh -c 'git push origin main'", '(git push origin main)', 'ssh box "cd repo && git push origin main"', '/usr/bin/git push origin main',
     'git -C ../app push origin main', 'echo $(git push origin main)', 'git push \\\n  origin main',
     'git -C "path with spaces" push origin main', "git -c user.name='a b' push origin main", 'GIT_DIR=/srv/git git push origin main',
-    'sudo -u git git push origin main', 'git submodule foreach git push origin main', 'out=$(git push origin main)', 'git push 2>&1 origin main']) {
+    'sudo -u git git push origin main', 'git submodule foreach git push origin main', 'out=$(git push origin main)', 'git push 2>&1 origin main',
+    'bash -lc "git push origin main"', "zsh -ic 'git push origin main'", 'git checkout main && git push']) {
     assert.match((await push(onBranch, command))?.permissionDecisionReason || '', /straight to main/, command);
   }
   for (const command of ['git push', 'git push -u origin session/fix', 'git push origin --delete session/old', 'git status', 'echo push main',
     'git stash push -m wip', 'git push --tags', 'git commit -m "fix push to main"', 'git commit -m "Never git push --force to main"',
-    'git log --grep="git push origin main"']) {
+    'git log --grep="git push origin main"', 'echo done # git push origin main',
+    'git commit -m "$(cat <<\'EOF\'\nwip\ngit push --force origin main\nEOF\n)"', 'git commit -m "first line\ngit push origin main"']) {
     assert.equal(await push(onBranch, command), null, `fine: ${command}`);
   }
   assert.equal(await push(onMain, 'git stash push'), null, 'a stash is not a push, on main either');
@@ -589,9 +591,43 @@ test('the hub keeps going when GitHub or its disk lets it down', async () => {
   assert.equal((await once(ws, 'close'))[0], 1013, 'a connection is told to try again');
   down = false;
 
+  const big = new WebSocket(`${u.replace('http', 'ws')}/lane`);
+  await once(big, 'open');
+  big.send('x'.repeat(6 * 1024 * 1024)); // over the frame limit: that socket closes, the hub doesn't
+  await once(big, 'close');
+  const raw = require('node:net').connect(h.port, '127.0.0.1');
+  raw.write('GET /nope HTTP/1.1\r\nHost: x\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\n\r\n');
+  raw.resetAndDestroy();
+  await new Promise(r => setTimeout(r, 200));
+  assert.equal((await fetch(u)).status, 200, 'still answering after a bad frame and a reset');
+
   fs.rmSync(path.join(dataDir, 'teams.json'));
   fs.mkdirSync(path.join(dataDir, 'teams.json.tmp')); // saving now fails
   assert.equal((await call('tok-alice', 'POST', { name: 'Unsaved' })).status, 201, 'a failed save is logged, not fatal');
   assert.equal((await fetch(u)).status, 200);
   await h.close();
+});
+
+test('session names made of dots are refused, and other bad requests get clear answers', async () => {
+  const sessions = `/teams/${team.id}/sessions`;
+  for (const name of ['.', '..', '...']) assert.equal((await api('tok-alice', 'POST', sessions, { name })).status, 400, name);
+  assert.equal((await api('tok-alice', 'DELETE', `/teams/${team.id}/members/nobody-here`)).status, 404, 'removing someone who isn\'t on the team');
+  const res = await fetch(`${url}/teams`, { method: 'POST', headers: { authorization: 'Bearer tok-alice' }, body: '{not json' });
+  assert.equal(res.status, 400, 'JSON that doesn\'t parse');
+});
+
+test('the shell-write check asks only about files a command really writes', async () => {
+  const theirs = await rawLane('w-bob', { token: 'tok-bob', repo: 'acme/web', branch: 'b', root: '/b', git: { changed: ['src/a.js', 'src/match/queue.ts'] } });
+  const mine = await rawLane('w-alice', { repo: 'acme/web', branch: 'a' });
+  const asks = async command => (await mine.hook({ hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_input: { command } }))?.permissionDecision === 'ask';
+  for (const command of ['node src/a.js 2>&1 | tail', 'git diff src/a.js 2>/dev/null', 'cat src/a.js > /dev/null', 'cp src/a.js /tmp/x',
+    'perl -MList::Util=sum -e 1 src/a.js', 'git checkout -- src/a.js']) { // the last only undoes this folder's own change
+    assert.equal(await asks(command), false, `reads only: ${command}`);
+  }
+  for (const command of ['echo x > src/a.js', 'rm -rf src', 'rm -rf ./src/match/', 'sed --in-place s/a/b/ src/a.js', 'npx prettier --write src/a.js',
+    'mv src/a.js src/b.js', 'cp /tmp/x src/a.js', 'bash -lc "rm src/a.js"']) {
+    assert.equal(await asks(command), true, `writes: ${command}`);
+  }
+  await mine.close();
+  await theirs.close();
 });

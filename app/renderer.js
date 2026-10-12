@@ -650,8 +650,12 @@ $('#pick').onclick = async () => {
 // A name that matches an existing session apart from case and punctuation joins it, since both would get the same
 // branch and folder. Same rule as slug() in src/shared.js.
 // Letters of any script stay; a name with none (all emoji) gets a short code of its own instead of a shared one.
-const slug = name => String(name).normalize('NFC').replace(/[\uFE00-\uFE0F\u200D\u20E3]/g, '').toLowerCase().replace(/[^\p{L}\p{M}\p{N}._-]+|\.{2,}/gu, '-').replace(/^[-.]+|[-.]+$/g, '').replace(/\.lock$/, '')
-  || `session-${[...String(name)].reduce((h, c) => (h * 33 + c.codePointAt(0)) >>> 0, 5381).toString(36)}`;
+// Punctuation runs become one hyphen, so "fix - login" and "fix-login" are the same session.
+const slug = name => {
+  const s = String(name).toLowerCase().normalize('NFC').replace(/[\uFE00-\uFE0F\u200D\u20E3]/g, '');
+  return s.replace(/[^\p{L}\p{M}\p{N}._-]+|\.{2,}/gu, '-').replace(/-{2,}/g, '-').replace(/^[-.]+|[-.]+$/g, '').replace(/(\.lock)+$/, '')
+    || `session-${[...s].reduce((h, c) => (h * 33 + c.codePointAt(0)) >>> 0, 5381).toString(36)}`;
+};
 const existingSession = name => sessionList(board).find(s => slug(s.name) === slug(name))?.name;
 $('#agentForm').onsubmit = async e => {
   e.preventDefault();

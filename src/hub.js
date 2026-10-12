@@ -1,5 +1,6 @@
 // Coordination server. Hosts teams (an owner plus invited GitHub users), relays agent terminals to teammates,
-// and answers Claude Code hooks with team context. It never runs agents or sees code.
+// and answers Claude Code hooks with team context. It never runs agents or stores files; it does relay terminal output,
+// prompts and (when their owner shares them) changed files, and keeps sessions, notes and comments.
 // Protocol: see the README.
 const http = require('http');
 const fs = require('fs');
@@ -19,6 +20,7 @@ const MAX_MEMORIES = 200;
 const MAX_MEMORY = 500;
 const MAX_SESSIONS = 200; // per team; the oldest finished ones are dropped first
 const MAX_COMMENTS = 100; // per session; the oldest go first
+const MAX_EARLY_BYTES = 1024 * 1024; // what a socket may send while its sign-in is checked
 const MAX_STOPPED = 20; // stopped agents whose last screen is kept, per team (in memory only)
 const MAX_COMMENT = 500;
 const MAX_STEPS = 50;            // per session plan
@@ -34,6 +36,7 @@ const lanAddresses = () => Object.values(os.networkInterfaces()).flat()
 
 /** Resolves a GitHub token to its user. Only reads the public profile, so a token with no scopes works. */
 async function githubUser(token) {
+  if (!/^(gh[opusr]_|github_pat_)\w{20,255}$|^[0-9a-f]{40}$/.test(token)) return null; // not a GitHub token: no need to ask
   const res = await fetch('https://api.github.com/user', { signal: AbortSignal.timeout(8000),
     headers: { authorization: `Bearer ${token}`, accept: 'application/vnd.github+json', 'user-agent': 'protoplasma' },
   });
@@ -56,18 +59,24 @@ function startHub({ port = 7681, host = '0.0.0.0', dataDir, owners, verifyUser =
   const same = (a, b) => String(a).toLowerCase() === String(b).toLowerCase();
   const send = (ws, msg) => ws.readyState === ws.OPEN && ws.send(JSON.stringify(msg));
   const parse = raw => { try { return JSON.parse(raw); } catch { return null; } };
-  const str = (v, max) => String(v ?? '').slice(0, max);
+  const str = (v, max) => (typeof v === 'string' ? v.slice(0, max) : ''); // a number or object sent where text belongs is nothing
+  const onlyDots = name => /^\.+$/.test(name); // "." and ".." vanish from a URL, so a session can't be called that
 
   // ---- Teams (persisted) ----
   const teamsFile = dataDir && path.join(dataDir, 'teams.json');
   if (dataDir) fs.mkdirSync(dataDir, { recursive: true });
   let saved = [];
-  try { saved = teamsFile && fs.existsSync(teamsFile) ? JSON.parse(fs.readFileSync(teamsFile, 'utf8')) : []; } catch (e) {
-    // A damaged file is kept aside for a person to look at, rather than stopping the hub from starting.
+  try {
+    saved = teamsFile && fs.existsSync(teamsFile) ? JSON.parse(fs.readFileSync(teamsFile, 'utf8')) : [];
+    if (!Array.isArray(saved) || !saved.every(t => t && typeof t.id === 'string' && typeof t.owner === 'string')) throw new Error('not a list of teams');
+  } catch (e) {
+    // A damaged or unexpected file is kept aside for a person to look at; the hub starts empty rather than not at all.
     fs.renameSync(teamsFile, `${teamsFile}.bad-${Date.now()}`);
     console.error(`teams.json couldn't be read (${e.message}), so it was moved aside and the hub started empty.`);
+    saved = [];
   }
-  const teams = new Map(saved.map(t => [t.id, { memories: [], sessions: [], ...t }]));
+  const list = v => (Array.isArray(v) ? v : []);
+  const teams = new Map(saved.map(t => [t.id, { ...t, members: list(t.members), memories: list(t.memories), sessions: list(t.sessions) }]));
   // Written to a temporary file first, so a crash mid-write can't leave a half-written teams.json behind. A failed write
   // (full disk) is logged and retried on the next change; the teams stay in memory meanwhile.
   const saveTeams = () => {
@@ -118,7 +127,7 @@ function startHub({ port = 7681, host = '0.0.0.0', dataDir, owners, verifyUser =
 
   // ---- Live state ----
   const stopped = new Map();  // team id -> recently stopped agents, newest first, with the last of their output
-  const stoppedViews = teamId => (stopped.get(teamId) || []).map(({ history, ...rest }) => rest);
+  const stoppedViews = teamId => (stopped.get(teamId) || []).map(({ id, session, login, name, avatar, cmd, cols, rows, endedAt }) => ({ id, session, login, name, avatar, cmd, cols, rows, endedAt }));
   const lanes = new Map();    // id -> { id, team, login, name, avatar, session, cmd, root, repo, branch, cols, rows, open, status, lastActive, files: Set, history, hookSecret, ws }
   const watchers = new Set(); // app windows: ws.team, ws.login, ws.user, ws.session
   const teamLanes = teamId => [...lanes.values()].filter(l => l.team === teamId);
@@ -133,7 +142,6 @@ function startHub({ port = 7681, host = '0.0.0.0', dataDir, owners, verifyUser =
   // pushed commits, so between them only what isn't pushed yet counts.
   const touchedBy = (o, lane) => (o.tree === lane.tree ? o.files
     : o.branch && o.branch === lane.branch ? new Set([...o.local, ...[...o.files].filter(f => !o.changed.has(f))]) : filesOf(o));
-  const othersOn = (lane, file) => inSameRepo(lane).filter(o => touchedBy(o, lane).has(file));
   const notesFor = (lane, file = '') => teams.get(lane.team).memories.filter(m => m.file === file && (!m.repo || same(m.repo, lane.repo)));
   function views(teamId) {
     const ls = teamLanes(teamId);
@@ -177,11 +185,11 @@ function startHub({ port = 7681, host = '0.0.0.0', dataDir, owners, verifyUser =
         ...record.steps.map(s => `- [${s.done ? 'x' : ' '}] ${s.text}${s.owner ? ` (${s.owner})` : ''}`)].join('\n'));
     }
     if (others.length) {
-      parts.push(['Teammates working in this repo right now (from Protoplasma):',
+      parts.push(['Other agents working in this repo right now (from Protoplasma):',
         ...others.map(o => { const files = [...touchedBy(o, lane)], more = files.length - MAX_CONTEXT_FILES;
-          return `- ${o.name}'s ${o.cmd} agent, session "${o.session}", ${o.status}`
+          return `- ${same(o.login, lane.login) ? 'Your own' : `${o.name}'s`} ${o.cmd} agent, session "${o.session}", ${o.status}`
             + (files.length ? `, has changed: ${files.slice(0, MAX_CONTEXT_FILES).join(', ')}${more > 0 ? ` and ${more} more` : ''}` : ''); }),
-        'Check with the user before editing files a teammate has edited.'].join('\n'));
+        'Check with the user before editing files another agent has edited.'].join('\n'));
     }
     if (general.length) parts.push(`Team notes for this repo (from Protoplasma):\n${notes(general)}`);
     if (lane.git?.behind) {
@@ -191,17 +199,38 @@ function startHub({ port = 7681, host = '0.0.0.0', dataDir, owners, verifyUser =
     return parts.join('\n\n') || null;
   }
 
-  // A shell command as the commands it runs: its parts between ; | & and newlines, plus what's inside quotes, $( ) and
-  // backticks (bash -c "git push", out=$(git push)), each read again on its own. Words keep quoted spaces together.
-  // Quoted text is only read as a command when something runs it (bash -c, eval, ssh host), not a commit message.
-  const commandsIn = command => {
+  // The commands in a piece of shell text: split at ; | & and line ends outside quotes, with # comments and heredoc
+  // bodies left out (a commit message that mentions a push is not a push).
+  function partsOf(text) {
+    const parts = [];
+    let cur = '', quote = null, heredoc = null;
+    for (const line of text.split('\n')) {
+      if (heredoc) { if (line.trim() === heredoc) heredoc = null; continue; }
+      for (let i = 0; i < line.length; i++) {
+        const c = line[i];
+        if (quote) { cur += c; if (c === quote) quote = null; continue; }
+        if (c === '"' || c === "'" || c === '`') { quote = c; cur += c; continue; }
+        if (c === '#' && (i === 0 || /\s/.test(line[i - 1]))) break;
+        if (c === '|' || c === ';' || c === '&') { parts.push(cur); cur = ''; continue; }
+        const doc = c === '<' && /^<<-?\s*(['"]?)(\w+)\1/.exec(line.slice(i));
+        if (doc) { heredoc = doc[2]; i += doc[0].length - 1; cur += ' '; continue; }
+        cur += c;
+      }
+      if (quote) cur += '\n'; else { parts.push(cur); cur = ''; }
+    }
+    parts.push(cur);
+    return parts.filter(p => p.trim());
+  }
+  // A shell command as the commands it runs, plus what's inside quotes that something runs (bash -lc "...", eval,
+  // ssh host "..."), $( ) and backticks, each read again on its own. Words keep quoted spaces together.
+  const commandsIn = (command, wanted) => {
     // ponytail: the first 20,000 characters; a longer command is generated, and reading all of it would hold up the hub.
     const text = command.slice(0, 20_000).replace(/\\\r?\n/g, ' ').replace(/\d*>&\d+/g, ' '); // continuations, and 2>&1 (not an &)
-    const runs = before => { const part = before.split(/[|;&\n]/).pop(); return /(^|\s)(-c|eval)\s*$/.test(part) || /^\s*(sudo\s+)?ssh\s/.test(part); };
+    const runs = before => { const part = before.split(/[|;&\n]/).pop(); return /(^|\s)(-\w*c|eval)\s*$/.test(part) || /^\s*(sudo\s+)?ssh\s/.test(part); };
     const inner = [...text.matchAll(/"([^"]*)"|'([^']*)'|\$\(([^)]*)\)|`([^`]*)`/g)]
       .filter(m => m[3] !== undefined || m[4] !== undefined || runs(text.slice(0, m.index)))
-      .map(m => m[1] ?? m[2] ?? m[3] ?? m[4]).filter(t => /\bgit\b/.test(t));
-    return [...text.split(/[|;&\n]+/), ...inner.flatMap(commandsIn)];
+      .map(m => m[1] ?? m[2] ?? m[3] ?? m[4]).filter(t => wanted.test(t));
+    return [...partsOf(text), ...inner.flatMap(t => commandsIn(t, wanted))];
   };
   const wordsOf = text => (text.match(/(?:[^\s"']+|"[^"]*"|'[^']*'|["'])+/g) || []).map(w => w.replace(/^[$('"`]+|[)'"`]+$/g, '')).filter(Boolean);
   // Where git's subcommand is, after options like -C <dir> or -c <key=value>: `git -C repo push`, not `git commit -m "push"`.
@@ -216,18 +245,20 @@ function startHub({ port = 7681, host = '0.0.0.0', dataDir, owners, verifyUser =
   // ponytail: a reading of the words, not a shell parser; a script that pushes without saying so isn't caught.
   function pushRisk(lane, command) {
     if (!teams.get(lane.team).members.length) return null;
-    for (const part of commandsIn(command)) {
+    let branch = lane.branch; // what HEAD is: switching earlier in the same command (git checkout main && git push) counts
+    for (const part of commandsIn(command, /\bgit\b/)) {
       const words = wordsOf(part);
       for (let at = 0; at < words.length; at++) { // every git in it: sudo -u git git push, submodule foreach git push
         if (!isGit(words[at])) continue;
-        const push = subcommandAt(words, at);
-        const reason = words[push] === 'push' && pushRiskOf(lane, words.slice(push + 1));
+        const sub = subcommandAt(words, at), next = words.slice(sub + 1).find(w => !w.startsWith('-'));
+        if (['checkout', 'switch'].includes(words[sub]) && next && !words.includes('--')) branch = next;
+        const reason = words[sub] === 'push' && pushRiskOf(lane, words.slice(sub + 1), branch);
         if (reason) return reason;
       }
     }
     return null;
   }
-  function pushRiskOf(lane, words) {
+  function pushRiskOf(lane, words, branch = lane.branch) {
     const flags = words.filter(w => w.startsWith('-'));
     const refspecs = words.filter(w => !w.startsWith('-')).slice(1); // after the remote
     if (!refspecs.length && flags.includes('--tags')) return null; // only tags
@@ -240,7 +271,7 @@ function startHub({ port = 7681, host = '0.0.0.0', dataDir, owners, verifyUser =
     }
     // No refspec pushes the current branch; otherwise the part after ":" (or the name itself) is the destination.
     const deleting = flags.some(f => f === '--delete' || f === '-d');
-    const targets = (refspecs.length ? refspecs : ['HEAD']).map(r => r.split(':').pop().replace(/^refs\/heads\//, '')).map(t => (t === 'HEAD' ? lane.branch : t));
+    const targets = (refspecs.length ? refspecs : ['HEAD']).map(r => r.split(':').pop().replace(/^refs\/heads\//, '')).map(t => (t === 'HEAD' ? branch : t));
     const target = targets.find(t => PROTECTED_BRANCHES.includes(t));
     if (target && (deleting || refspecs.some(r => r.startsWith(':')))) return `this deletes ${target} on the remote, which your team shares. Confirm it's intended.`;
     const theirs = (deleting || refspecs.some(r => r.startsWith(':'))) && inSameRepo(lane).filter(o => targets.includes(o.branch));
@@ -249,19 +280,51 @@ function startHub({ port = 7681, host = '0.0.0.0', dataDir, owners, verifyUser =
     return target ? `this pushes straight to ${target}, which your team shares. Push a branch and open a pull request instead, or confirm.` : null;
   }
 
-  const whoOn = others => others.map(o => `${o.name} (session "${o.session}")`).join(', ');
-  // A shell command that writes a file a teammate has changed: sed -i, a redirect, tee, mv, rm and the like.
-  // ponytail: a heuristic over the words of the command; a script that writes files it doesn't name isn't caught.
+  // Who else touched a file (or, for a folder, anything in it; '' is the whole checkout), as `lane` sees them.
+  const othersOn = (lane, rel) => inSameRepo(lane).filter(o => [...touchedBy(o, lane)].some(f => !rel || f === rel || f.startsWith(`${rel}/`)));
+  const whoOn = (lane, others) => [...new Map(others.map(o => [`${o.login}|${o.session}`, same(o.login, lane.login)
+    ? `your agent in session "${o.session}"` : `${o.name} (session "${o.session}")`])).values()].join(', ');
+  // The files and folders one shell command writes: redirect targets, what rm/mv/cp/tee/truncate act on, files edited in
+  // place (sed -i, perl -i, formatters with --write/--fix/-w), download targets, and what git checkout/restore/reset/
+  // stash/clean put back ('.' is everything; marked `here`: undoing work only matters to another agent in this same
+  // folder). Commands that only read (node x.js 2>&1, cat x > /dev/null) write nothing.
+  const FORMATTERS = ['prettier', 'eslint', 'gofmt', 'goimports', 'black', 'rustfmt', 'rubocop', 'stylelint', 'biome', 'ruff'];
+  function writtenBy(words) {
+    const out = [], plain = [], write = p => out.push({ path: p }), undo = p => out.push({ path: p, here: true });
+    for (let i = 0; i < words.length; i++) {
+      const redirect = /^\d*>>?(.*)$/.exec(words[i]);
+      if (!redirect) { plain.push(words[i]); continue; }
+      const target = redirect[1] || words[++i];
+      if (target && !target.startsWith('&') && !target.startsWith('/dev/')) write(target);
+    }
+    while (plain.length && (/^\w+=/.test(plain[0]) || ['sudo', 'npx', 'command', 'xargs', 'env'].includes(plain[0]))) plain.shift();
+    const cmd = (plain[0] || '').split('/').pop(), rest = plain.slice(1), args = rest.filter(w => !w.startsWith('-'));
+    const after = flag => { const at = rest.findIndex(w => w === flag); return at >= 0 && rest[at + 1] ? [rest[at + 1]] : []; };
+    if (['rm', 'mv', 'tee', 'truncate', 'shred', 'unlink', 'rmdir'].includes(cmd)) args.forEach(write);
+    else if (['cp', 'install', 'ln', 'rsync'].includes(cmd) && args.length > 1) write(args.at(-1));
+    else if ((cmd === 'sed' || cmd === 'perl') && rest.some(w => w.startsWith('--in-place') || /^-(?![Mm])[a-zA-Z]*i/.test(w))) args.slice(1).forEach(write); // the first is the script
+    else if (FORMATTERS.includes(cmd) && rest.some(w => /^(--write|--fix|-w|--in-place|-i)$/.test(w))) args.forEach(write);
+    else if (cmd === 'curl') [...after('-o'), ...after('--output')].forEach(write);
+    else if (cmd === 'wget') after('-O').forEach(write);
+    else if (cmd === 'dd') rest.filter(w => w.startsWith('of=')).forEach(w => write(w.slice(3)));
+    else if (isGit(cmd)) {
+      const at = subcommandAt(plain, 0), sub = plain[at], subArgs = plain.slice(at + 1).filter(w => !w.startsWith('-'));
+      if (sub === 'checkout' || sub === 'restore') (plain.includes('--') ? plain.slice(plain.indexOf('--') + 1) : subArgs).forEach(undo);
+      else if ((sub === 'reset' && plain.includes('--hard')) || (sub === 'stash' && !['list', 'show'].includes(subArgs[0])) || sub === 'clean') undo('.');
+    }
+    return out;
+  }
+  // A shell command that writes a file a teammate has changed (or a folder holding one).
   function shellWriteRisk(lane, command, cwd) {
-    const writes = segment => /\b(sed|perl)\b/.test(segment) && /\s-[a-zA-Z]*i/.test(segment);
-    if (!/>|\b(tee|mv|rm|cp|truncate)\b/.test(command) && !command.split(/[|;&\n]+/).some(writes)) return null;
-    // ponytail: the first 300 path-like words; a longer command is mostly generated and not worth the hub's time.
-    for (const word of command.split(/[\s;|&<>()'"=]+/).filter(w => /\/|\.\w+$/.test(w)).slice(0, 300)) {
-      const full = path.resolve(cwd || lane.root, word);
-      const root = lane.roots.find(r => full.startsWith(r + path.sep)) || lane.root;
+    // ponytail: the first 300 written paths; a longer command is generated and not worth the hub's time.
+    const targets = commandsIn(command, /./).flatMap(part => writtenBy(wordsOf(part))).slice(0, 300);
+    for (const target of targets) {
+      const full = path.resolve(cwd || lane.root, target.path);
+      const root = lane.roots.find(r => full === r || full.startsWith(r + path.sep)) || lane.root;
       const rel = path.relative(root, full);
-      const others = rel && !rel.startsWith('..') ? othersOn(lane, rel) : [];
-      if (others.length) return `${whoOn(others)} already edited ${rel}, and this command changes it. Coordinate before running it.`;
+      if (rel.startsWith('..') || path.isAbsolute(rel)) continue; // outside the checkout
+      const others = othersOn(lane, rel).filter(o => !target.here || o.tree === lane.tree);
+      if (others.length) return `${whoOn(lane, others)} already edited ${rel || 'files in this folder'}, and this command changes ${rel ? 'it' : 'them'}. Coordinate before running it.`;
     }
     return null;
   }
@@ -271,7 +334,8 @@ function startHub({ port = 7681, host = '0.0.0.0', dataDir, owners, verifyUser =
     const file = ev.tool_input?.file_path || ev.tool_input?.notebook_path;
     const full = file && path.resolve(ev.cwd || lane.root, file);
     const root = full && (lane.roots.find(r => full === r || full.startsWith(r + path.sep)) || lane.root);
-    const rel = full && path.relative(root, full);
+    const relative = full && path.relative(root, full);
+    const rel = relative && !relative.startsWith('..') && !path.isAbsolute(relative) ? relative : null; // outside the checkout: not its file
     lane.lastActive = new Date().toISOString();
     switch (ev.hook_event_name) {
       case 'UserPromptSubmit': {
@@ -294,7 +358,7 @@ function startHub({ port = 7681, host = '0.0.0.0', dataDir, owners, verifyUser =
         const out = { hookEventName: 'PreToolUse' };
         if (pinned.length) out.additionalContext = `Team notes about ${rel} (from Protoplasma):\n${notes(pinned)}`;
         if (others.length) {
-          Object.assign(out, { permissionDecision: 'ask', permissionDecisionReason: `Protoplasma: ${whoOn(others)} already edited ${rel}. Coordinate before changing it.` });
+          Object.assign(out, { permissionDecision: 'ask', permissionDecisionReason: `Protoplasma: ${whoOn(lane, others)} already edited ${rel}. Coordinate before changing it.` });
         }
         return { hookSpecificOutput: out };
       }
@@ -310,10 +374,13 @@ function startHub({ port = 7681, host = '0.0.0.0', dataDir, owners, verifyUser =
 
   // ---- HTTP: team API and hooks ----
   const readBody = (req, max) => new Promise((resolve, reject) => {
-    let body = '';
-    req.setEncoding('utf8');
-    req.on('data', chunk => { body += chunk; if (body.length > max) { body = ''; req.pause(); reject(Object.assign(new Error('Too large.'), { status: 413 })); } });
-    req.on('end', () => resolve(body));
+    const chunks = [];
+    let bytes = 0;
+    req.on('data', chunk => {
+      bytes += chunk.length;
+      if (bytes > max) { chunks.length = 0; req.pause(); reject(Object.assign(new Error('Too large.'), { status: 413 })); } else chunks.push(chunk);
+    });
+    req.on('end', () => resolve(Buffer.concat(chunks).toString('utf8')));
   });
   const bearer = req => str(req.headers.authorization, 600).replace(/^Bearer /, '');
   const secretMatches = (a, b) => { const x = Buffer.from(a), y = Buffer.from(b); return x.length === y.length && crypto.timingSafeEqual(x, y); };
@@ -343,7 +410,9 @@ function startHub({ port = 7681, host = '0.0.0.0', dataDir, owners, verifyUser =
     if (resource !== 'teams') return json(404, { error: 'Not found.' });
     const user = await identify(bearer(req)).catch(e => { throw Object.assign(e, { github: true }); });
     if (!user) return json(401, { error: 'Sign in with GitHub first.' });
-    const body = req.method === 'POST' ? parse(await readBody(req, MAX_API_BODY)) || {} : {};
+    const raw = req.method === 'POST' ? await readBody(req, MAX_API_BODY) : '';
+    const body = raw.trim() ? parse(raw) : {};
+    if (!body || typeof body !== 'object' || Array.isArray(body)) return json(400, { error: 'That request wasn\'t valid JSON.' });
 
     if (!id && req.method === 'GET') return json(200, [...teams.values()].filter(t => onTeam(t, user.login)).map(teamView));
     if (!id && req.method === 'POST') {
@@ -401,7 +470,8 @@ function startHub({ port = 7681, host = '0.0.0.0', dataDir, owners, verifyUser =
         if (!leafId && req.method === 'POST') {
           const text = str(body.text, MAX_COMMENT).trim();
           if (!text) return json(400, { error: 'Write the comment first.' });
-          const file = str(body.file, 300).trim(), line = Math.max(0, body.line | 0), endLine = Math.max(line, body.endLine | 0);
+          const lineOf = v => Math.min(10_000_000, Math.max(0, Math.floor(Number(v)) || 0));
+          const file = str(body.file, 300).trim(), line = lineOf(body.line), endLine = Math.max(line, lineOf(body.endLine));
           session.comments.push({ id: crypto.randomBytes(6).toString('base64url'), author: user.login, text, at: new Date().toISOString(),
             ...(file && line ? { file, line, endLine, snippet: str(body.snippet, 300) } : {}) });
           session.comments.splice(0, session.comments.length - MAX_COMMENTS);
@@ -441,6 +511,7 @@ function startHub({ port = 7681, host = '0.0.0.0', dataDir, owners, verifyUser =
       if (!subId && req.method === 'POST') {
         const name = str(body.name, 60).trim();
         if (!name) return json(400, { error: 'Name the session.' });
+        if (onlyDots(name)) return json(400, { error: 'A session name needs a letter or a number.' });
         const existed = findSession(team, name);
         if (!existed && team.sessions.length >= MAX_SESSIONS && !team.sessions.some(x => x.done && !running(x.name))) {
           return json(409, { error: `A team holds ${MAX_SESSIONS} sessions. Mark some done or delete them first.` });
@@ -460,12 +531,13 @@ function startHub({ port = 7681, host = '0.0.0.0', dataDir, owners, verifyUser =
           // Running agents move with it, and its old name keeps finding it (they rejoin under the name they started with).
           const name = str(body.rename, 60).trim();
           if (!name) return json(400, { error: 'Give the session a name.' });
+          if (onlyDots(name)) return json(400, { error: 'A session name needs a letter or a number.' });
           const clash = team.sessions.find(x => x !== session && (x.name === name || slug(x.name) === slug(name) || keyOf(x) === slug(name)
             || (x.aliases || []).some(a => slug(a) === slug(name))));
           if (clash) return json(409, { error: `There's already a session called ${clash.name}.` });
           for (const s of stopped.get(team.id) || []) if (s.session === session.name) s.session = name;
           for (const l of teamLanes(team.id)) if (l.session === session.name) l.session = name;
-          session.aliases = [...new Set([...(session.aliases || []), session.name])].slice(-5);
+          session.aliases = [...new Set([...(session.aliases || []), session.name])].slice(-50);
           session.key = keyOf(session); // its branch and folders keep the original name
           session.name = name;
         } else if (req.method === 'DELETE') {
@@ -495,6 +567,7 @@ function startHub({ port = 7681, host = '0.0.0.0', dataDir, owners, verifyUser =
     }
     if (subId && req.method === 'DELETE') {
       if (same(subId, team.owner)) return json(400, { error: 'The owner can\'t leave. Delete the team instead.' });
+      if (!team.members.some(m => same(m, subId))) return json(404, { error: `${subId} isn't on the team.` });
       team.members = team.members.filter(m => !same(m, subId));
       saveTeams();
       // Disconnect them now rather than on their next reconnect.
@@ -520,17 +593,24 @@ function startHub({ port = 7681, host = '0.0.0.0', dataDir, owners, verifyUser =
   const size = (v, min, max, fallback) => Math.min(max, Math.max(min, v | 0 || fallback)); // terminal cols and rows
   function onLane(ws, user, team, hello) {
     const existing = lanes.get(hello.id);
+    // A recently stopped agent's id stays its owner's, so nobody else can take it while it reconnects.
+    const before = existing || (stopped.get(team.id) || []).find(s => s.id === hello.id);
+    const name = str(hello.session, 60).trim();
     if (typeof hello.id !== 'string' || !/^[\w-]{1,64}$/.test(hello.id) || typeof hello.hookSecret !== 'string' || hello.hookSecret.length < 16
-      || !str(hello.session, 60).trim() || (existing && !same(existing.login, user.login))) {
+      || !name || onlyDots(name) || (before && !same(before.login, user.login))) {
       return ws.close(4000, 'Bad hello.');
     }
     existing?.ws.terminate(); // the same agent reconnecting before its old connection timed out
     const lane = { id: hello.id, team: team.id, login: user.login, name: user.name, avatar: user.avatar,
       session: str(hello.session, 60).trim(), cmd: str(hello.cmd, 40), root: str(hello.root, 1000), repo: str(hello.repo, 200), branch: str(hello.git?.branch || hello.branch, 100),
       roots: (Array.isArray(hello.roots) ? hello.roots.slice(0, 4) : []).map(r => str(r, 1000)).filter(Boolean),
-      cols: size(hello.cols, 20, 500, 120), rows: size(hello.rows, 5, 200, 36), open: !!hello.open, status: str(hello.cmd, 40) === 'claude' ? 'idle' : 'running', lastActive: new Date().toISOString(), startedAt: existing?.startedAt || new Date().toISOString(), files: new Set(), changed: changedFiles(hello.git), local: changedFiles(hello.git?.local ? { changed: hello.git.local } : hello.git),
+      cols: size(hello.cols, 20, 500, 120), rows: size(hello.rows, 5, 200, 36), open: !!hello.open, status: str(hello.cmd, 40) === 'claude' ? 'idle' : 'running', lastActive: new Date().toISOString(), startedAt: before?.startedAt || new Date().toISOString(), files: new Set(), changed: changedFiles(hello.git), local: changedFiles(hello.git?.local ? { changed: hello.git.local } : hello.git),
       git: gitStats(hello.git), history: typeof hello.history === 'string' ? hello.history.slice(-SCROLLBACK) : '', hookSecret: hello.hookSecret, ws };
-    lane.tree = crypto.createHash('sha256').update(`${lane.login}\n${lane.root}`).digest('hex').slice(0, 12); // one per checkout
+    // One per checkout: the same path on two of someone's Macs is two checkouts.
+    lane.tree = crypto.createHash('sha256').update(`${lane.login}\n${str(hello.machine, 64)}\n${lane.root}`).digest('hex').slice(0, 12);
+    // Back after a dropped connection: it's still doing what it was (its next hook or report updates it).
+    if (before) Object.assign(lane, { status: before.status || lane.status, prompt: before.prompt, typedBy: before.typedBy, typedAt: before.typedAt,
+      files: new Set([...(before.files || [])].filter(f => lane.changed.has(f))) });
     lanes.set(lane.id, lane);
     stopped.set(team.id, (stopped.get(team.id) || []).filter(s => s.id !== lane.id)); // it reconnected
     const session = ensureSession(team, lane.session, user.login);
@@ -547,9 +627,10 @@ function startHub({ port = 7681, host = '0.0.0.0', dataDir, owners, verifyUser =
         lane.history = appendScrollback(lane.history, m.d);
         toTeam(team.id, { t: 'out', lane: lane.id, d: m.d });
       } else if (m?.t === 'size') {
+        const was = `${lane.cols}x${lane.rows}`;
         lane.cols = size(m.cols, 20, 500, lane.cols);
         lane.rows = size(m.rows, 5, 200, lane.rows);
-        broadcastState(team.id);
+        if (`${lane.cols}x${lane.rows}` !== was) broadcastState(team.id);
       } else if (m?.t === 'git') {
         lane.git = gitStats(m);
         lane.changed = changedFiles(m);
@@ -567,8 +648,9 @@ function startHub({ port = 7681, host = '0.0.0.0', dataDir, owners, verifyUser =
     ws.on('close', () => {
       if (lanes.get(lane.id) !== lane) return;
       lanes.delete(lane.id);
-      const { id, session, login, name, avatar, cmd, cols, rows, history } = lane;
-      const list = [{ id, session, login, name, avatar, cmd, cols, rows, history, endedAt: new Date().toISOString() }, ...(stopped.get(team.id) || []).filter(s => s.id !== id)];
+      const { id, session, login, name, avatar, cmd, cols, rows, history, startedAt, status, prompt, typedBy, typedAt, files } = lane;
+      const list = [{ id, session, login, name, avatar, cmd, cols, rows, history, endedAt: new Date().toISOString(), startedAt, status, prompt, typedBy, typedAt, files: [...files] },
+        ...(stopped.get(team.id) || []).filter(s => s.id !== id)];
       stopped.set(team.id, list.slice(0, MAX_STOPPED));
       broadcastState(team.id);
     });
@@ -576,21 +658,26 @@ function startHub({ port = 7681, host = '0.0.0.0', dataDir, owners, verifyUser =
 
   // A teammate's file, for viewing: the request goes to the app of whoever runs the agent, which answers only if they
   // share files (it's their setting) and only for files that agent's checkout has changed. Passed through, never kept.
-  const fileAsks = new Map(); // request id -> { from: requester's socket, owner: login }
+  const fileAsks = new Map(); // request id -> { from: requester's socket, ask, owner: login, waiting: owner windows not yet answered, timer }
   function relayFile(ws, user, team, m) {
     if (m.t === 'file:get') {
-      const lane = lanes.get(m.lane), req = crypto.randomBytes(8).toString('base64url');
-      const owners = lane?.team === team.id ? [...watchers].filter(w => w.team === team.id && same(w.login, lane.login)) : [];
+      const found = lanes.get(m.lane), lane = found?.team === team.id ? found : null; // another team's agent is no agent here
+      const req = crypto.randomBytes(8).toString('base64url');
+      const owners = lane ? [...watchers].filter(w => w.team === team.id && same(w.login, lane.login)) : [];
       if (!owners.length) return send(ws, { t: 'file:put', ask: m.ask, error: lane ? `${lane.name}'s app isn't open.` : 'That agent has stopped.' });
-      fileAsks.set(req, { from: ws, ask: m.ask, owner: lane.login, waiting: owners.length });
-      setTimeout(() => { if (fileAsks.delete(req)) send(ws, { t: 'file:put', ask: m.ask, error: `${lane.name}'s app didn't answer.` }); }, 10_000);
+      const timer = setTimeout(() => { if (fileAsks.delete(req)) send(ws, { t: 'file:put', ask: m.ask, error: `${lane.name}'s app didn't answer.` }); }, 10_000);
+      timer.unref();
+      fileAsks.set(req, { from: ws, ask: m.ask, owner: lane.login, waiting: new Set(owners), timer });
       for (const w of owners) send(w, { t: 'file:get', req, lane: lane.id, path: str(m.path, 300), from: user.name || user.login });
       return;
     }
     const ask = fileAsks.get(m.req);
     if (!ask || !same(ask.owner, user.login)) return; // only the agent's owner answers
-    if (typeof m.text !== 'string' && --ask.waiting > 0) return; // another of their windows may have the agent
+    // An error from one of their windows waits only for their other windows that are still open (one may have the agent).
+    ask.waiting.delete(ws);
+    if (typeof m.text !== 'string' && [...ask.waiting].some(w => w.readyState === w.OPEN)) return;
     fileAsks.delete(m.req);
+    clearTimeout(ask.timer);
     const text = typeof m.text === 'string' && m.text.length <= MAX_SHARED_FILE ? m.text : undefined;
     send(ask.from, { t: 'file:put', ask: ask.ask, text, error: text === undefined ? str(m.error || 'That file is too big to share.', 300) : undefined });
   }
@@ -602,7 +689,11 @@ function startHub({ port = 7681, host = '0.0.0.0', dataDir, owners, verifyUser =
     for (const l of teamLanes(team.id)) send(ws, { t: 'out', lane: l.id, d: l.history });
     ws.on('message', raw => {
       const m = parse(raw);
-      if (m?.t === 'look') { ws.session = m.session == null ? null : str(m.session, 60); return broadcastState(team.id); }
+      if (m?.t === 'look') {
+        const session = typeof m.session === 'string' ? str(m.session, 60) : null;
+        if (session !== ws.session) { ws.session = session; broadcastState(team.id); }
+        return;
+      }
       if (m?.t === 'replay') { // the last screen of a stopped agent
         const agent = (stopped.get(team.id) || []).find(s => s.id === m.id);
         return agent && send(ws, { t: 'replay', id: agent.id, d: agent.history });
@@ -621,13 +712,20 @@ function startHub({ port = 7681, host = '0.0.0.0', dataDir, owners, verifyUser =
   }
 
   // The first message carries the token and team. Messages that arrive while it's being verified are queued and replayed.
+  // Too much sent before then closes the socket (1013, so an agent reconnects and resends its screen in its hello)
+  // rather than dropping some of it.
   function authenticate(ws, role) {
     const early = [];
-    let first = true;
-    const timer = setTimeout(() => ws.close(4001, 'Sign-in timed out.'), 10_000);
+    let first = true, earlyBytes = 0, checking = false;
+    const timer = setTimeout(() => ws.close(checking ? 1013 : 4001, checking ? 'GitHub is slow to answer. Trying again.' : 'Sign-in timed out.'), 10_000);
     ws.on('message', async function gate(raw) {
-      if (!first) return early.length < 100 && early.push(raw);
+      if (!first) {
+        earlyBytes += raw.length;
+        if (earlyBytes > MAX_EARLY_BYTES) return ws.close(1013, 'Too much before signing in. Trying again.');
+        return early.push(raw);
+      }
       first = false;
+      checking = true;
       try {
         const m = parse(raw);
         const user = await identify(m?.token).catch(() => undefined);
@@ -649,11 +747,13 @@ function startHub({ port = 7681, host = '0.0.0.0', dataDir, owners, verifyUser =
 
   const wss = new WebSocketServer({ noServer: true, maxPayload: MAX_HOOK_BODY });
   server.on('upgrade', (req, sock, head) => {
+    sock.on('error', () => {}); // a connection reset mid-upgrade is the client's problem, not the hub's
     let route = null;
     try { route = new URL(req.url, 'http://x').pathname; } catch {} // a malformed address ("//") is just not found
     const role = { '/lane': onLane, '/watch': onWatcher }[route];
     if (!role) return sock.end('HTTP/1.1 404 Not Found\r\n\r\n');
     wss.handleUpgrade(req, sock, head, ws => {
+      ws.on('error', () => {}); // an oversized or malformed frame closes that socket (ws does), and only that socket
       ws.alive = true;
       ws.on('pong', () => { ws.alive = true; });
       authenticate(ws, role);
@@ -676,7 +776,10 @@ function startHub({ port = 7681, host = '0.0.0.0', dataDir, owners, verifyUser =
   });
 
   return new Promise((resolve, reject) => {
-    server.once('error', reject).listen(port, host, () => resolve({ port: server.address().port, close }));
+    server.once('error', reject).listen(port, host, () => {
+      server.off('error', reject).on('error', e => console.error(`Hub server error: ${e.message}`));
+      resolve({ port: server.address().port, close });
+    });
   });
 }
 
@@ -685,6 +788,9 @@ module.exports = { startHub, githubUser, lanAddresses };
 // Standalone: PORT, DATA_DIR, PROTO_OWNERS (comma-separated GitHub logins allowed to create teams).
 if (require.main === module) {
   const owners = process.env.PROTO_OWNERS?.split(',').map(s => s.trim()).filter(Boolean);
-  startHub({ port: +process.env.PORT || 7681, host: process.env.HOST, dataDir: process.env.DATA_DIR, owners })
-    .then(({ port }) => console.log(`Protoplasma hub on port ${port}${owners ? `, teams created by ${owners.join(', ')}` : ''}`));
+  startHub({ port: +process.env.PORT || 7681, host: process.env.HOST, dataDir: process.env.DATA_DIR, owners: owners?.length ? owners : undefined })
+    .then(({ port }) => {
+      console.log(`Protoplasma hub on port ${port}${owners?.length ? `, teams created by ${owners.join(', ')}` : ''}`);
+      if (!process.env.DATA_DIR) console.log('No DATA_DIR set: teams are kept in memory only and are lost when the hub restarts.');
+    });
 }

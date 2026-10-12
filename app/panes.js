@@ -4,6 +4,7 @@
 const MAX_PANES = 3;
 let panes = [];            // session names, null for an empty pane
 let paneShape = '';        // the panes the columns were built for
+let backToPanes = false;   // an agent being started from a pane's New session form comes back here
 
 const panesKey = () => `panes:${currentTeam.key}`;
 function openPanes(list) {
@@ -22,7 +23,16 @@ const paneLane = (lanes, name) => lanes.filter(l => l.session === name).sort((a,
 // Which terminals are on screen in pane mode (renderRoom keeps the rest hidden).
 const paneLaneIds = () => panes.map(name => name && paneLane(board, name)?.id).filter(Boolean);
 
+// A pane follows its session through a rename, and goes when the session is deleted (once the team's sessions are known).
+function followPanes(lanes) {
+  if (!gotState) return;
+  const now = name => recordFor(name)?.name || sessionRecords.find(r => (r.aliases || []).includes(name))?.name
+    || (lanes.some(l => l.session === name) ? name : undefined);
+  const next = panes.map(name => (name === null ? null : now(name))).filter(name => name !== undefined);
+  if (JSON.stringify(next) !== JSON.stringify(panes)) { panes = next; savePanes(); }
+}
 function renderPanes(lanes) {
+  followPanes(lanes);
   const on = view === 'panes';
   $('#panesView').hidden = !on;
   if (!on) { // terminals go back to the session view
@@ -57,7 +67,7 @@ function renderPanes(lanes) {
     setHTML(empty, t ? '' : name
       ? `<p>No agents are running in ${esc(name)}.</p><button class="btn small primary" data-pane-add="${esc(name)}">Add agent</button>`
       : `${choices.length ? `<div class="pane-pick">${choices.map(s => `<button class="panel-row" data-pane-pick="${i}" data-name="${esc(s.name)}"><b>${esc(s.name)}</b>${pill(s.status)}</button>`).join('')}</div>`
-        : '<p>Every session is already open in a pane.</p>'}<button class="btn small" data-pane-new>New session</button>`);
+        : '<p>No other sessions are running.</p>'}<button class="btn small" data-pane-new>New session</button>`);
   });
   requestAnimationFrame(fitTeammates); // teammates' terminals scale to the pane they're in now
 }
@@ -73,6 +83,12 @@ $('#paneGrid').onclick = e => {
     return panes.length ? render() : go('sessions');
   }
   if (panePick !== undefined) { panes[Number(panePick)] = name; savePanes(); return render(); }
-  if (paneAdd) { current = paneAdd; return addAgent(prefs.agent).then(() => openPanes(panes)); }
+  if (paneAdd) {
+    const cmd = isInstalled(prefs.agent) ? prefs.agent : agents.find(a => a.installed)?.cmd;
+    if (!cmd) return alert('No agent CLI is installed on this Mac. Install Claude Code, Codex or OpenCode first.');
+    current = paneAdd;
+    if (!sourceFor(paneAdd)) backToPanes = true; // the New session form asks for its folder first
+    return addAgent(cmd).then(() => { if (!$('#agent').open) openPanes(panes); });
+  }
   if (e.target.closest('[data-pane-new]')) openNewAgent();
 };

@@ -169,6 +169,7 @@ ipcMain.handle('agents:status', async () => { const env = await agentEnv; return
 ipcMain.handle('startLane', signedIn(async o => {
   const team = openTeam(), { token } = session; // as they are now: another team may be opened while the repo is fetched
   if (!team) throw new Error('Open a team first.');
+  if (o.teamKey && keyOf(team) !== o.teamKey) throw new Error('Another team was opened while this agent was starting. Start it again.');
   if (!AGENTS.includes(o.cmd)) throw new Error(`Unknown agent: ${o.cmd}`);
   const env = await agentEnv;
   // A renamed session keeps its original folder and branch, which `folderKey` names.

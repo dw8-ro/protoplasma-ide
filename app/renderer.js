@@ -41,7 +41,7 @@ const colorFor = login => teamColors.get(login) || PEOPLE_COLORS[hash(login) % P
 const failedAvatars = new Set();
 const avatarUrl = p => ('avatar' in p ? p.avatar : GITHUB_LOGIN.test(p.login || '') ? `https://github.com/${p.login}.png?size=64` : '');
 const avatar = p => {
-  const url = avatarUrl(p), initial = [...(p.name || p.login || '?')][0].toUpperCase(); // a whole emoji, not half of one
+  const url = avatarUrl(p), initial = ([...new Intl.Segmenter().segment(p.name || p.login || '?')][0]?.segment || '?').toUpperCase(); // a whole emoji, flags too
   return `<span class="avatar" style="--c:${colorFor(p.login)}" title="${esc(p.name || p.login)}" data-initial="${esc(initial)}">${
     url && !failedAvatars.has(url) ? `<img src="${esc(url)}" alt="">` : esc(initial)}</span>`;
 };
@@ -64,7 +64,7 @@ const people = lanes => {
 // "David & Max", or "2 of David's agents" when one person runs several.
 const whoEdited = names => {
   const people = [...new Set(names)];
-  return people.length > 1 ? people.join(' & ') : `${names.length} of ${people[0]}'s agents`;
+  return people.length > 1 ? people.join(' & ') : names.length > 1 ? `${names.length} of ${people[0]}'s agents` : people[0] || '';
 };
 const ago = iso => {
   const s = (Date.now() - Date.parse(iso)) / 1000;
@@ -194,7 +194,9 @@ proto.onSignedIn(({ user, error }) => {
   showTeams(user);
 });
 // Forget everything that belonged to the team that was open.
+let gotState = false; // the open team's sessions have arrived from its hub (until then, none look gone)
 function clearTeamView() {
+  gotState = false;
   hubLanes = [];
   teamWatchers = [];
   memories = [];
@@ -206,17 +208,20 @@ function clearTeamView() {
   for (const id of [...terms.keys()]) if (!local.has(id)) dropTerminal(id);
 }
 
-// Disconnects from the open team and empties the board.
-// Removed from the team (or it was deleted) while it was open: back to your teams, saying what happened.
+// Removed from the team (or it was deleted) while it was open: back to your teams, saying what happened. Agents of a
+// deleted team stop (there's nothing to rejoin); after a removal they keep running unshared and rejoin on a new invite.
 function removedFromTeam(reason) {
-  const team = currentTeam, running = [...local.values()].filter(l => l.teamKey === team?.key).length;
+  const team = currentTeam, theirs = [...local].filter(([, l]) => l.teamKey === team?.key).map(([id]) => id);
+  const deleted = /deleted/i.test(reason);
+  if (deleted) for (const id of theirs) { stopping.add(id); proto.kill(id); }
   for (const d of document.querySelectorAll('dialog[open]:not(#start)')) d.close(); // nothing of the team stays open
   closeTeam();
   showTeams(me);
   $('#removedNote').hidden = false;
-  $('#removedNote').textContent = `${team ? `${team.name}: ` : ''}${reason}`
-    + (running ? ` Your agents there keep running on this Mac without being shared, and rejoin if you're invited back.` : '');
+  $('#removedNote').textContent = `${team ? `${team.name}: ` : ''}${reason}` + (!theirs.length ? '' : deleted ? ' Your agents in it were stopped.'
+    : ' Your agents there keep running on this Mac without being shared (quit or sign out to stop them), and rejoin if you\'re invited back.');
 }
+// Disconnects from the open team and empties the board.
 function closeTeam() {
   watchGeneration++;
   ws?.close();
@@ -234,7 +239,11 @@ $('#signout').onclick = async () => {
   await proto.signOut();
   closeTeam();
   me = null;
-  repos = null; // the next person's repos aren't these
+  repos = null; reposError = ''; // the next person's repos aren't these
+  listedTeams = new Map(); renderTeamList.last = '';
+  setHTML($('#teamList'), '');
+  $('#teamsNote').textContent = $('#teamName').value = '';
+  if (prefs.shareFiles) { prefs.shareFiles = false; savePrefs(); } // sharing is each person's own choice
   $('#removedNote').hidden = true;
   store.set('team', '');
   $('.side-foot').hidden = true;
@@ -249,7 +258,7 @@ async function leaveOrDeleteTeam(team) {
   const deleting = ownsTeam(team);
   const unpushed = hubLanes.filter(l => local.get(l.id)?.teamKey === team.key && (l.git?.unpushed || l.local?.length)).length;
   const work = unpushed ? ` Some of your agents' folders have work that isn't pushed; it stays on this Mac.` : '';
-  if (!confirm(deleting ? `Delete the team "${team.name}"? Its sessions and notes go with it, for everyone on it.${work}`
+  if (!confirm(deleting ? `Delete the team "${team.name}"? Its sessions and notes go with it, for everyone on it, and your agents in it stop.${work}`
     : `Leave "${team.name}"? Your agents in it stop, and you'd need a new invite to come back.${work}`)) return;
   leavingTeam = team.key; // the hub then disconnects us, which isn't news
   try { await (deleting ? proto.deleteTeam(team.key) : proto.leaveTeam(team.key)); }
@@ -285,12 +294,15 @@ async function refreshTeams() {
     if (!me || !$('#start').open || $('#teamsView').hidden) return; // signed out or moved on meanwhile
     onlineReady = online;
     renderTeamList(teams);
-    const last = reopenLast && listedTeams.get(store.get('team')); // on launch, go straight back to the last team
-    reopenLast = false;
-    if (last) return openTeam(last);
+    $('#err').textContent = '';
     syncWhere();
     $('#teamsNote').textContent = unreachable.length ? `Couldn't reach ${unreachable.join(', ')} right now.` : '';
-  } catch (e) { $('#err').textContent = errorText(e); }
+    const last = reopenLast && listedTeams.get(store.get('team')); // on launch, go straight back to the last team
+    reopenLast = false;
+    teamsTimer = setTimeout(refreshTeams, 4000); // still polling if opening it fails
+    if (last) openTeam(last);
+    return;
+  } catch (e) { if (me && $('#start').open) $('#err').textContent = errorText(e); }
   teamsTimer = setTimeout(refreshTeams, 4000);
 }
 
@@ -344,6 +356,7 @@ async function openTeam(team) {
   try {
     const conn = await proto.openTeam(team.key);
     $('#removedNote').hidden = true;
+    $('#peopleErr').textContent = '';
     currentTeam = team;
     store.set('team', team.key);
     clearTeamView();
@@ -374,8 +387,9 @@ function renderPeople() {
 $('#memberList').onclick = async e => {
   const login = e.target.dataset.remove;
   if (!login || !confirm(`Remove ${login} from ${currentTeam.name}? Their agents here are disconnected.`)) return;
-  try { currentTeam = await proto.removeMember(currentTeam.key, login); $('#peopleErr').textContent = ''; render(); }
-  catch (err) { $('#peopleErr').textContent = errorText(err); }
+  const team = currentTeam;
+  try { const next = await proto.removeMember(team.key, login); if (currentTeam?.key === team.key) { currentTeam = next; $('#peopleErr').textContent = ''; render(); } }
+  catch (err) { if (currentTeam?.key === team.key) $('#peopleErr').textContent = errorText(err); }
 };
 
 $('#inviteBtn').onclick = () => {
@@ -391,7 +405,8 @@ $('#inviteForm').onsubmit = async e => {
   e.preventDefault();
   const login = $('#inviteLogin').value.trim().replace(/^@/, '');
   if (!GITHUB_LOGIN.test(login)) { $('#inviteErr').textContent = login ? 'GitHub usernames are letters, numbers and single hyphens, up to 39 characters.' : 'Enter a GitHub username.'; return; }
-  try { currentTeam = await proto.invite(currentTeam.key, login); $('#inviteDlg').close(); render(); }
+  const team = currentTeam;
+  try { const next = await proto.invite(team.key, login); if (currentTeam?.key === team.key) currentTeam = next; $('#inviteDlg').close(); render(); }
   catch (err) { $('#inviteErr').textContent = errorText(err); }
 };
 
@@ -421,11 +436,15 @@ function watch(conn) {
         if ([...local.values()].some(l => l.refused)) proto.rejoin(); // invited back: agents that were turned away try now
       }
       if (m.t === 'state') {
+        gotState = true;
         hubLanes = m.lanes;
         followRenames(m.sessions || []);
         for (const l of hubLanes) if (local.get(l.id)?.refused) delete local.get(l.id).refused;
         teamWatchers = m.watchers || [];
-        if (m.members && currentTeam) currentTeam = { ...currentTeam, members: m.members }; // someone joined, left or was removed
+        if (m.members && currentTeam) {
+          currentTeam = { ...currentTeam, members: m.members }; // someone joined, left or was removed
+          if ($('#settings').open) renderTeamPane();
+        }
         memories = m.memories || [];
         sessionRecords = m.sessions || [];
         stoppedAgents = m.stopped || [];
@@ -512,8 +531,11 @@ const lastAgentKey = (session, team = currentTeam) => `lastAgent:${team.key}:${s
 async function startAgent({ session, cmd, open, source, task, resume = false }) {
   const team = currentTeam; // the team it was started in, even if another is opened while it starts
   const created = !recordFor(session);
-  if (task && recordFor(session)?.task !== task) sessionRecords = await proto.saveSession(team.key, { name: session, task });
-  const opts = { session, cmd, open, resume, folderKey: recordFor(session)?.key, ...source };
+  if (task && recordFor(session)?.task !== task) {
+    const records = await proto.saveSession(team.key, { name: session, task });
+    if (currentTeam?.key === team.key) sessionRecords = records;
+  }
+  const opts = { session, cmd, open, resume, folderKey: recordFor(session)?.key, teamKey: team.key, ...source };
   let started;
   try { started = await proto.startLane(opts); } catch (e) {
     if (created && task) proto.deleteSession(team.key, session).catch(() => {}); // don't leave an empty session behind
@@ -524,7 +546,9 @@ async function startAgent({ session, cmd, open, source, task, resume = false }) 
   local.set(id, { teamKey: team.key, session, cmd, open, ...source, repo, login: me.login, name: me.name, avatar: me.avatar, began: Date.now() });
   store.set(sourceKey(session, team), JSON.stringify(source));
   store.set(lastAgentKey(session, team), cmd);
-  if (currentTeam?.key === team.key) openSession(sessionRecords.find(r => r.name === session || (r.aliases || []).includes(session))?.name || session, id);
+  if (currentTeam?.key !== team.key) return;
+  if (backToPanes) { backToPanes = false; return openPanes(panes); } // started from a pane: back to the panes
+  openSession(sessionRecords.find(r => r.name === session || (r.aliases || []).includes(session))?.name || session, id);
 }
 // The agent this Mac last ran in a session, if it can pick that conversation back up.
 // Your agent that stopped most recently in this session, or else the last kind you started here.
@@ -548,7 +572,8 @@ function syncAgents() {
   if ($('input[name=cmd]:checked')?.disabled) (document.querySelector('input[name=cmd]:not(:disabled)') || {}).checked = true;
   const missing = [...document.querySelectorAll('input[name=cmd]:disabled')].map(i => agentName(i.value));
   $('#agentHint').hidden = !missing.length;
-  $('#agentHint').textContent = missing.length ? `${missing.join(' and ')} ${missing.length === 1 ? 'isn\'t' : 'aren\'t'} installed on this Mac.` : '';
+  const names = missing.length > 1 ? `${missing.slice(0, -1).join(', ')} and ${missing.at(-1)}` : missing[0];
+  $('#agentHint').textContent = missing.length ? `${names} ${missing.length === 1 ? 'isn\'t' : 'aren\'t'} installed on this Mac.` : '';
 }
 
 // With `session`, the form adds an agent to that session; without, it starts a new one.
@@ -565,6 +590,8 @@ async function openNewAgent(session) {
   $('#repo').value = $('#repo').value || store.get('repo');
   if (!$('#cwd').value) showFolder(store.get('cwd'));
   $(`input[name=source][value=${store.get('sourceKind') === 'folder' ? 'folder' : 'repo'}]`).checked = true;
+  yourSource = null;
+  sourcePicked = false;
   const known = session && showSource(session); // an existing session keeps the source it already uses
   $('#agentErr').textContent = '';
   $(`input[name=cmd][value=${prefs.agent}]`).checked = true;
@@ -583,7 +610,8 @@ async function openNewAgent(session) {
     repos = await proto.repos();
   } catch (e) {
     reposError = errorText(e);
-    if (!known?.repo) { $('input[name=source][value=folder]').checked = true; syncSource(); } // a repo session keeps its repo
+    // Without a repo list, a folder is the likely way on, unless a repo was already chosen or typed.
+    if (!known?.repo && !sourcePicked && !REPO.test($('#repo').value.trim())) { $('input[name=source][value=folder]').checked = true; syncSource(); }
   }
   renderRepoPicker();
 }
@@ -609,7 +637,7 @@ function renderRepoPicker() {
 $('#repo').oninput = renderRepoPicker;
 $('#repoPicker').onclick = e => {
   const row = e.target.closest('[data-repo]');
-  if (row) { $('#repo').value = row.dataset.repo; renderRepoPicker(); }
+  if (row) { $('#repo').value = row.dataset.repo; renderRepoPicker(); $('#repo').focus(); }
 };
 // A long path is shown from its end, which is the part that tells folders apart.
 const showFolder = dir => { const el = $('#cwd'); el.value = el.title = dir; el.scrollLeft = el.scrollWidth; };
@@ -630,15 +658,28 @@ const syncSource = () => {
   $('#folderField').hidden = fromRepo;
   showFolder($('#cwd').value);
 };
-for (const r of document.querySelectorAll('input[name=source]')) r.onchange = syncSource;
+let yourSource = null;    // the dialog's repo/folder from before a typed name matched a session
+let sourcePicked = false; // the source was chosen by hand since the dialog opened
+for (const r of document.querySelectorAll('input[name=source]')) r.onchange = () => { sourcePicked = true; syncSource(); };
 // The dialog follows the name typed: an existing session gets an agent added (with its goal), a new name starts one.
 function syncSessionName() {
   const name = existingSession($('#session').value.trim()), rec = recordFor(name);
   const adding = !!rec || hubLanes.some(l => l.session === name);
-  if (rec) $('#task').value = rec.task || '';
-  else if ($('#task').dataset.from) $('#task').value = ''; // a goal filled in from another session doesn't carry over
-  $('#task').dataset.from = rec ? rec.name : '';
-  if (adding) showSource(name);
+  const prefilled = !!$('#task').dataset.from;
+  if (rec && (prefilled || !$('#task').value.trim())) $('#task').value = rec.task || ''; // a goal you typed stays
+  else if (!rec && prefilled) $('#task').value = ''; // a goal filled in from another session doesn't carry over
+  $('#task').dataset.from = rec && (prefilled || $('#task').value === (rec.task || '')) ? rec.name : '';
+  if (adding) {
+    yourSource ??= { repo: $('#repo').value, cwd: $('#cwd').value, kind: $('input[name=source]:checked').value };
+    showSource(name);
+  } else if (yourSource) { // the name no longer matches: your own repo or folder comes back
+    $('#repo').value = yourSource.repo;
+    showFolder(yourSource.cwd);
+    $(`input[name=source][value=${yourSource.kind}]`).checked = true;
+    syncSource();
+    renderRepoPicker();
+    yourSource = null;
+  }
   $('#agentTitle').textContent = adding ? 'Add an agent' : 'New session';
   $('#startAgent').textContent = adding ? 'Start agent' : 'Start the session';
 }
@@ -646,6 +687,7 @@ $('#session').oninput = syncSessionName;
 $('#task').oninput = () => { $('#task').dataset.from = ''; };
 $('#new').onclick = () => openNewAgent();
 $('#cancel').onclick = () => $('#agent').close();
+$('#agent').addEventListener('close', () => { backToPanes = false; }); // cancelled from a pane: nothing to go back to
 $('#agent').oncancel = e => { if ($('#startAgent').disabled) e.preventDefault(); }; // Esc while it starts
 $('#pick').onclick = async () => {
   const dir = await proto.pickFolder($('#cwd').value);
@@ -660,22 +702,33 @@ const slug = name => {
   return s.replace(/[^\p{L}\p{M}\p{N}._-]+|\.{2,}/gu, '-').replace(/-{2,}/g, '-').replace(/^[-.]+|[-.]+$/g, '').replace(/(\.lock)+$/, '')
     || `session-${[...s].reduce((h, c) => (h * 33 + c.codePointAt(0)) >>> 0, 5381).toString(36)}`;
 };
-const existingSession = name => sessionList(board).find(s => slug(s.name) === slug(name))?.name;
+// The session a typed name means, matched as the hub matches it: the name written any way, its original key, or a name
+// it had before a rename. Its current name, or undefined for a new one.
+const existingSession = name => {
+  const want = slug(name);
+  const rec = sessionRecords.find(r => r.name === name)
+    || sessionRecords.find(r => slug(r.name) === want || (r.key || slug(r.name)) === want || (r.aliases || []).some(a => slug(a) === want));
+  return rec?.name || sessionList(board).find(s => slug(s.name) === want)?.name;
+};
 $('#agentForm').onsubmit = async e => {
   e.preventDefault();
   const fromRepo = $('input[name=source]:checked').value === 'repo';
   const typed = $('#session').value.trim();
   const session = typed && (existingSession(typed) ?? typed);
-  const source = fromRepo ? { repo: $('#repo').value.trim(), worktree: prefs.sessionBranches } : { cwd: $('#cwd').value };
+  const known = session && sourceFor(session), repo = $('#repo').value.trim();
+  // An existing session keeps whether it has its own branch; a new one follows the setting.
+  const source = fromRepo ? { repo, worktree: known?.repo && same(known.repo, repo) ? known.worktree !== false : prefs.sessionBranches } : { cwd: $('#cwd').value };
+  const rec = recordFor(session), task = $('#task').value.trim();
   const button = $('#startAgent'), label = button.textContent;
   $('#agentErr').textContent = '';
   try {
     if (!session) throw new Error('Name the session.');
     if (fromRepo && !REPO.test(source.repo)) throw new Error('Pick a repo, like owner/name.');
     if (!fromRepo && !source.cwd) throw new Error('Choose a folder.');
+    if (rec && task !== (rec.task || '') && !canManage(rec)) throw new Error(`Only ${rec.createdBy} or the team's owner can change this session's goal.`);
     button.disabled = $('#cancel').disabled = true;
     button.textContent = fromRepo ? 'Getting the repo…' : 'Starting…';
-    await startAgent({ session, cmd: $('input[name=cmd]:checked').value, open: $('#open').checked, source, task: $('#task').value.trim() });
+    await startAgent({ session, cmd: $('input[name=cmd]:checked').value, open: $('#open').checked, source, task });
     if (fromRepo) store.set('repo', source.repo);
     store.set('sourceKind', fromRepo ? 'repo' : 'folder');
     $('#agent').close();
@@ -686,6 +739,7 @@ $('#agentForm').onsubmit = async e => {
   } finally {
     button.disabled = $('#cancel').disabled = false;
     button.textContent = label;
+    if ($('#agent').open) button.focus(); // after a failure, Enter tries again
   }
 };
 
@@ -699,26 +753,37 @@ async function addAgent(cmd) {
 function agentMenu(anchor) {
   refreshAgents();
   const last = resumable(current);
-  showMenu(anchor, [...(last ? [{ text: `Resume ${agentName(last)}`, hint: 'last conversation', run: resumeAgent }] : []),
+  showMenu(anchor, [...(last ? [{ text: `Resume ${agentName(last)}`, hint: isInstalled(last) ? 'last conversation' : 'Not installed', disabled: !isInstalled(last), run: resumeAgent }] : []),
     { label: 'Add an agent' }, ...['claude', 'codex', 'opencode'].map(cmd =>
     ({ text: agentName(cmd), disabled: !isInstalled(cmd), hint: isInstalled(cmd) ? '' : 'Not installed', run: () => addAgent(cmd) }))]);
 }
 
 // A small pop-up menu under a button. Items are { text, hint, disabled, run }, or { label } for a heading.
-const closeMenu = () => document.querySelector('.menu')?.remove();
+let menuAnchor = null;
+const closeMenu = () => { document.querySelector('.menu')?.remove(); menuAnchor = null; };
+// Opened from the keyboard it takes the focus, and the arrow keys move through it.
 function showMenu(anchor, items) {
+  if (menuAnchor === anchor) return closeMenu(); // its button again: closed
   closeMenu();
+  menuAnchor = anchor;
   const menu = document.createElement('div');
   menu.className = 'menu';
+  menu.setAttribute('role', 'menu');
   menu.innerHTML = items.map((it, i) => (it.label ? `<div class="menu-label">${esc(it.label)}</div>`
-    : `<button data-i="${i}" ${it.disabled ? 'disabled' : ''}>${esc(it.text)}${it.hint ? `<span>${esc(it.hint)}</span>` : ''}</button>`)).join('');
-  menu.onclick = e => { const it = items[e.target.closest('button')?.dataset.i]; if (it) { closeMenu(); it.run(); } };
+    : `<button role="menuitem" data-i="${i}" ${it.disabled ? 'disabled' : ''}>${esc(it.text)}${it.hint ? `<span>${esc(it.hint)}</span>` : ''}</button>`)).join('');
+  menu.onclick = e => { const it = items[e.target.closest('button')?.dataset.i]; if (it && !it.disabled) { closeMenu(); it.run(); } };
+  menu.onkeydown = e => {
+    const buttons = [...menu.querySelectorAll('button:not(:disabled)')], at = buttons.indexOf(document.activeElement);
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); buttons[(at + (e.key === 'ArrowDown' ? 1 : buttons.length - 1)) % buttons.length]?.focus(); }
+  };
   document.body.append(menu);
   const r = anchor.getBoundingClientRect();
   menu.style.top = `${Math.min(r.bottom + 4, innerHeight - menu.offsetHeight - 8)}px`;
   menu.style.left = `${Math.max(8, Math.min(r.right - menu.offsetWidth, innerWidth - menu.offsetWidth - 8))}px`;
+  menu.querySelector('button:not(:disabled)')?.focus({ preventScroll: true });
 }
-addEventListener('pointerdown', e => { if (!e.target.closest('.menu')) closeMenu(); }, true);
+// A click elsewhere closes it (a click on its own button is left to that button, which toggles it).
+addEventListener('pointerdown', e => { if (!e.target.closest('.menu') && !(menuAnchor && menuAnchor.contains(e.target))) closeMenu(); }, true);
 
 // ---- Navigation ----
 
@@ -769,7 +834,7 @@ const sessionAction = async action => {
   catch (err) { alert(errorText(err)); return false; }
 };
 async function deleteSession(name) {
-  if (!confirm(`Delete the session "${name}"? Its agents have already stopped; this removes it from the board.`)) return;
+  if (!confirm(`Delete the session "${name}"? It goes from the board with its goal, plan and comments.`)) return;
   const source = sourceFor(name), key = recordFor(name)?.key || name;
   if (!await sessionAction(() => proto.deleteSession(currentTeam.key, name))) return;
   if (current === name) go('sessions');
@@ -789,16 +854,20 @@ const toggleDone = name => {
 // A session renamed (by anyone) keeps your agents in it, what this Mac remembers about it, and you on it if it's open.
 function followRenames(sessions) {
   const renamed = old => sessions.find(r => r.name !== old && (r.aliases || []).includes(old))?.name;
+  const carry = (from, to) => { for (const key of [sourceKey, lastAgentKey]) if (store.get(key(from)) && !store.get(key(to))) store.set(key(to), store.get(key(from))); };
   for (const l of hubLanes) {
     const o = local.get(l.id);
     if (!o || o.session === l.session) continue;
-    for (const key of [sourceKey, lastAgentKey]) if (store.get(key(o.session)) && !store.get(key(l.session))) store.set(key(l.session), store.get(key(o.session)));
+    carry(o.session, l.session);
     o.session = l.session;
   }
+  // Renamed while none of your agents ran in it: what this Mac knows about it (its folder, the last agent) follows too.
+  for (const r of sessions) for (const old of r.aliases || []) carry(old, r.name);
   if (current && !sessions.some(r => r.name === current)) current = renamed(current) || current;
 }
 
-// Renaming only changes the name people see (the hub refuses while agents run); branch and folders keep the original.
+// Renaming only changes the name people see: running agents move with it, its old name still finds it, and its branch
+// and folders keep the original name.
 let renaming = null;
 function openRename(name) {
   renaming = name;
@@ -810,15 +879,17 @@ function openRename(name) {
 $('#renameCancel').onclick = () => $('#renameDlg').close();
 $('#renameForm').onsubmit = async e => {
   e.preventDefault();
-  const next = $('#renameInput').value.trim();
-  if (!next || next === renaming) return $('#renameDlg').close();
+  const old = renaming, team = currentTeam, next = $('#renameInput').value.trim(); // as they were: another rename may start meanwhile
+  if (!next || next === old) return $('#renameDlg').close();
   try {
-    sessionRecords = await proto.renameSession(currentTeam.key, renaming, next);
+    const records = await proto.renameSession(team.key, old, next);
+    if (currentTeam?.key !== team.key) return;
+    sessionRecords = records;
     for (const key of [sourceKey, lastAgentKey]) {
-      const value = store.get(key(renaming));
-      if (value) { store.set(key(next), value); store.set(key(renaming), ''); }
+      const value = store.get(key(old));
+      if (value) { store.set(key(next), value); store.set(key(old), ''); }
     }
-    if (current === renaming) current = next;
+    if (current === old) current = next;
     $('#renameDlg').close();
     render();
   } catch (err) { $('#renameErr').textContent = errorText(err); }
@@ -833,7 +904,8 @@ function stopAgent(id) {
 const statusOf = l => (stopping.has(l.id) ? 'stopping' : l.status);
 // "Claude Code", or "Claude Code 2" for a person's second agent of the same kind in a session.
 const agentLabel = (l, inRoom) => {
-  const nth = inRoom.filter(o => o.login === l.login && o.cmd === l.cmd).sort((a, b) => (a.startedAt || '\uffff').localeCompare(b.startedAt || '\uffff')) // one the hub hasn't reported yet is newest.indexOf(l);
+  // (One the hub hasn't reported yet has no start time: it's the newest.)
+  const nth = inRoom.filter(o => o.login === l.login && o.cmd === l.cmd).sort((a, b) => (a.startedAt || '\uffff').localeCompare(b.startedAt || '\uffff')).indexOf(l);
   return agentName(l.cmd) + (nth > 0 ? ` ${nth + 1}` : '');
 };
 
@@ -844,7 +916,7 @@ function render() {
   // Hub state plus any local lanes it hasn't reported yet (just started, hub down, or refused).
   const mine = [...local].filter(([id, o]) => o.teamKey === currentTeam.key && !hubLanes.some(l => l.id === id));
   const lanes = board = [...hubLanes, ...mine.map(([id, o]) => ({ id, ...o, status: o.refused ? `Not shared: ${o.refused}` : 'not synced', files: [], overlaps: [] }))];
-  assignColors(lanes.map(l => l.login));
+  assignColors([currentTeam.owner, ...currentTeam.members, ...lanes.map(l => l.login)]); // the whole team, so nobody's colour moves
   const looking = view === 'session' ? current : null;
   if (lookedAt !== looking && ws?.readyState === WebSocket.OPEN) { ws.send(JSON.stringify({ t: 'look', session: looking })); lookedAt = looking; }
   const inSettings = $('#settings').open;
@@ -867,8 +939,10 @@ const canAnswer = l => local.has(l.id) || l.open;
 function renderAlerts(lanes) {
   const waiting = lanes.filter(l => l.status === 'needs you' && canAnswer(l)).map(l => `
     <button class="alert" data-session="${esc(l.session)}" data-lane="${esc(l.id)}"><b>${local.has(l.id) ? 'Your agent needs you' : `${esc(l.name)}'s agent is waiting for an answer`}</b><span>${esc(l.session)}</span></button>`);
-  const clashes = [...new Set(lanes.flatMap(l => l.overlaps))].map(file => {
-    const who = lanes.filter(l => l.overlaps.includes(file));
+  // One alert per repo and file: package.json clashing in two repos is two clashes.
+  const codebase = l => l.repo || l.tree;
+  const clashes = [...new Set(lanes.flatMap(l => l.overlaps.map(f => `${codebase(l)}|${f}`)))].map(key => {
+    const file = key.slice(key.indexOf('|') + 1), who = lanes.filter(l => l.overlaps.includes(file) && `${codebase(l)}|${file}` === key);
     return `<button class="alert overlap" data-session="${esc(who[0].session)}" data-file="${esc(file)}"><b>${esc(whoEdited(who.map(l => l.name)))} edited</b><span>${esc(file)}</span></button>`;
   });
   setHTML($('#alerts'), [...waiting, ...clashes].slice(0, 4).join(''));
@@ -887,14 +961,14 @@ function notifyChanges(lanes) {
     const before = lastStatus.get(l.id);
     lastStatus.set(l.id, l.status);
     if (before === undefined || before === l.status) continue;
-    if (document.hasFocus() && view === 'session' && current === l.session && tab === 'agents') continue;
+    if (document.hasFocus() && ((view === 'session' && current === l.session && tab === 'agents') || (view === 'panes' && paneLaneIds().includes(l.id)))) continue;
     const mine = local.has(l.id);
     let title;
     if (l.status === 'needs you' && canAnswer(l) && prefs.notifyNeeds) title = mine ? 'Your agent needs you' : `${l.name}'s agent needs you`;
     else if (mine && before === 'working' && l.status === 'idle' && prefs.notifyDone) title = 'Your agent finished';
     if (!title) continue;
-    const note = new Notification(title, { body: l.session });
-    note.onclick = () => { proto.focus(); openSession(l.session, l.id); };
+    const note = new Notification(title, { body: l.session }), teamKey = currentTeam?.key;
+    note.onclick = () => { proto.focus(); if (currentTeam?.key === teamKey) openSession(l.session, l.id); };
   }
   for (const id of lastStatus.keys()) if (!lanes.some(l => l.id === id)) lastStatus.delete(id);
   proto.setBadge(prefs.badge ? lanes.filter(l => l.status === 'needs you' && canAnswer(l)).length : 0);
@@ -966,8 +1040,9 @@ function renderSessions(lanes) {
 $('#sessions').onclick = e => {
   const menu = e.target.closest('[data-menu]');
   if (menu) return sessionMenu(menu, menu.dataset.menu);
-  const card = e.target.closest('[data-session]');
+  const card = e.target.closest('[data-session]'), file = e.target.closest('[data-open-file]');
   if (card) openSession(card.dataset.session);
+  if (card && file) openFile(file.dataset.openFile);
 };
 $('#sessions').onkeydown = e => {
   if ((e.key === 'Enter' || e.key === ' ') && e.target.matches('[data-session]')) { e.preventDefault(); openSession(e.target.dataset.session); }
@@ -984,11 +1059,12 @@ function sessionMenu(anchor, name) {
 }
 
 // Uncommitted changes, as the agents' git status reports them. Agents sharing a checkout are counted once.
-// Checkouts of the same branch share its pushed commits, so they count once (the one with the most changes).
+// Checkouts of the same session branch share its pushed commits, so they count once (the one with the most changes).
 const diffStat = lanes => {
   const size = x => x.added + x.removed, byBranch = new Map();
   for (const l of lanes.filter(l => l.git)) {
-    const key = l.branch ? `${(l.repo || l.tree).toLowerCase()}|${l.branch}` : l.tree || l.id;
+    // Only a session branch is one piece of shared work; on main (or a picked folder) each checkout's numbers are its own.
+    const key = l.branch?.startsWith('session/') ? `${(l.repo || l.tree).toLowerCase()}|${l.branch}` : l.tree || l.id;
     if (!byBranch.has(key) || size(l.git) > size(byBranch.get(key))) byBranch.set(key, l.git);
   }
   const g = [...byBranch.values()];
@@ -1014,10 +1090,13 @@ function fileList(lanes, max = 4) {
   const editors = new Map();
   for (const l of lanes) for (const f of l.files) editors.set(f, [...(editors.get(f) || []), l.name]);
   const clash = f => lanes.some(l => l.overlaps.includes(f));
+  // Who a clash is with: everyone on the file in that repo, in this session or any other.
+  const clashers = f => { const at = lanes.filter(l => l.overlaps.includes(f)), repos = new Set(at.map(l => l.repo || l.tree));
+    return board.filter(o => o.overlaps.includes(f) && repos.has(o.repo || o.tree)).map(o => o.name); };
   const files = [...editors.keys()].sort((a, b) => clash(b) - clash(a));
   if (!files.length) return '';
   return `<ul class="files">${files.slice(0, max).map(f => `
-    <li class="${clash(f) ? 'overlap' : ''}" data-open-file="${esc(f)}" title="Open ${esc(f)}"><span class="path" title="${esc(f)}">${esc(f)}</span>${clash(f) ? `<span class="who">${esc(whoEdited(lanes.filter(l => l.overlaps.includes(f)).map(l => l.name)))}</span>` : ''}</li>`).join('')}
+    <li class="${clash(f) ? 'overlap' : ''}" data-open-file="${esc(f)}" title="Open ${esc(f)}"><span class="path" title="${esc(f)}">${esc(f)}</span>${clash(f) ? `<span class="who">${esc(whoEdited(clashers(f)))}</span>` : ''}</li>`).join('')}
     ${files.length > max ? `<li class="more">${files.length - max} more</li>` : ''}</ul>`;
 }
 
@@ -1036,6 +1115,7 @@ function renderRoom(lanes) {
 
   for (const id of terms.keys()) if (!lanes.some(l => l.id === id) && !local.has(id)) dropTerminal(id);
   for (const t of terms.values()) t.el.hidden = true; // local lanes on other teams stay alive, just hidden
+  if (replayGpu) gpu(replayGpu, view === 'session' && tab === 'replay');
   for (const l of lanes) {
     const t = terms.get(l.id) || createTerminal(l);
     const mine = local.has(l.id);
@@ -1054,6 +1134,7 @@ function renderRoom(lanes) {
       (mine && l.typedBy && Date.now() - Date.parse(l.typedAt) < 10 * 60_000 ? `<span class="typed" title="${esc(l.typedBy)} typed into this agent">${esc(l.typedBy)} typed, ${ago(l.typedAt)}</span>` : '') +
       `<span class="access" title="${access}">${access}</span>${mine && !stopping.has(l.id) ? `<button class="btn ghost small" data-stop="${esc(l.id)}">Stop</button>` : ''}`);
   }
+  for (const t of terms.values()) if (t.el.hidden) gpu(t, false); // only terminals on screen hold a WebGL context
   if (!showing) return renderCode();
 
   const shown = inRoom.find(l => l.id === focus);
@@ -1080,7 +1161,7 @@ function renderRoom(lanes) {
   $('#planPanel').hidden = tab !== 'plan';
   if (tab === 'plan') renderPlan();
   $('#ghPanel').hidden = tab !== 'pulls' && tab !== 'issues';
-  if (tab === 'memory') renderMemory(lanes);
+  if (tab === 'memory') renderMemory();
   $('#empty').hidden = inRoom.length > 0;
   const last = resumable(current);
   $('#resumeBtn').hidden = !last;
@@ -1121,7 +1202,7 @@ function stoppedRows() {
   return ended.length ? '<div class="panel-label">Stopped agents</div>' + ended.map(s => `
     <button class="panel-row" data-replay="${esc(s.id)}"><b>${esc(whose(s))} ${esc(agentName(s.cmd))}</b><span title="${esc(new Date(s.endedAt).toLocaleString())}">stopped ${new Date(s.endedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span></button>`).join('') : '';
 }
-let replayTerm;
+let replayTerm, replayGpu;
 function openReplay(id) {
   replaying = id;
   tab = 'replay';
@@ -1130,7 +1211,7 @@ function openReplay(id) {
     replayTerm = new Terminal({ fontSize: prefs.fontSize, lineHeight: prefs.lineHeight, fontFamily: terminalFont(), theme: terminalTheme(),
       minimumContrastRatio: contrastFloor(), disableStdin: true, scrollback: 5000 });
     replayTerm.open($('#replayScreen'));
-    gpu({ term: replayTerm }, true);
+    gpu(replayGpu = { term: replayTerm }, true);
   }
   replayTerm.reset();
   if (ws?.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ t: 'replay', id }));
@@ -1146,8 +1227,7 @@ function showReplay(m) {
 // Like a teammate's pane: the owner's dimensions, with the font scaled to fit the stage.
 function fitReplay() {
   if (!replayTerm || $('#replayPanel').hidden) return;
-  const room = $('#replayPanel').clientWidth - 64;
-  replayTerm.options.fontSize = Math.max(8, Math.min(prefs.fontSize, Math.floor(room / (replayTerm.cols * CHAR_WIDTH) * 2) / 2));
+  replayTerm.options.fontSize = fitFont(replayTerm, $('#replayScreen'));
 }
 
 // Someone's profile as this app knows it (picture included), falling back to just their login.
@@ -1175,10 +1255,13 @@ function comments(rec) {
 }
 $('#commentForm').onsubmit = async e => {
   e.preventDefault();
-  const text = $('#commentText').value.trim();
-  if (!text) return;
-  if (await sessionAction(() => proto.addComment(currentTeam.key, current, text, commentRef || undefined))) {
-    $('#commentText').value = '';
+  const text = $('#commentText').value.trim(), session = current, input = $('#commentText');
+  if (!text || input.readOnly) return;
+  input.readOnly = true; // a second Enter while it's sent doesn't post it twice
+  const posted = await sessionAction(() => proto.addComment(currentTeam.key, session, text, commentRef || undefined));
+  input.readOnly = false;
+  if (posted && current === session) {
+    input.value = '';
     setCommentRef(null);
     $('#panelBody').scrollTop = $('#panelBody').scrollHeight;
   }
@@ -1213,7 +1296,7 @@ function environment(inRoom, rec) {
     row('Changes', diffStat(mine.length ? mine : inRoom) || 'None'),
     branches.length ? row('Branch', esc(branches.join(', '))) : '',
     behind ? row('Behind', `${behind} commit${behind === 1 ? '' : 's'}`) : '',
-    ahead ? row('Ahead of main', `${ahead} commit${ahead === 1 ? '' : 's'}`) : '',
+    ahead ? row('Ahead of the default branch', `${ahead} commit${ahead === 1 ? '' : 's'}`) : '',
     unpushed ? row('Not pushed', `${unpushed} commit${unpushed === 1 ? '' : 's'}`) : '',
     fileList(inRoom, 8),
     github ? '<div class="panel-label">GitHub</div>' + row('Repository', esc(roomRepo), `data-url="${esc(github)}"`)
@@ -1232,9 +1315,9 @@ $('#panelBody').onclick = e => {
   const comment = commented && recordFor(current)?.comments?.find(c => c.id === commented.dataset.openComment);
   if (comment) return openComment(comment);
   // Anything that shows agents or a panel underneath the code brings the agents back from the Terminal tab.
-  if (e.target.closest('[data-beside], [data-focus], [data-tab], [data-replay]')) code.dock = 'agent';
   const theirs = e.target.closest('[data-theirs]');
   if (theirs) return openTheirs(theirs.dataset.theirs, theirs.dataset.path);
+  if (e.target.closest('[data-beside], [data-focus], [data-tab], [data-replay]')) code.dock = 'agent';
   if (e.target.dataset.beside) { split = split === e.target.dataset.beside ? null : e.target.dataset.beside; tab = 'agents'; return render(); }
   if (e.target.dataset.stop) return stopAgent(e.target.dataset.stop);
   if (e.target.dataset.uncomment) return sessionAction(() => proto.removeComment(currentTeam.key, current, e.target.dataset.uncomment));
@@ -1250,6 +1333,7 @@ $('#panelBody').onclick = e => {
   if (act === 'delete') deleteSession(current);
 };
 $('#lanes').onclick = e => { if (e.target.dataset.stop) stopAgent(e.target.dataset.stop); };
+$('#panelBody').onkeydown = e => { if ((e.key === 'Enter' || e.key === ' ') && e.target.matches('.agent-card')) { e.preventDefault(); e.target.click(); } };
 $('#emptyNew').onclick = () => agentMenu($('#emptyNew'));
 $('#resumeBtn').onclick = resumeAgent;
 $('#myAgent').onclick = () => { focus = split = null; tab = 'agents'; code.dock = 'agent'; render(); terms.get(focus)?.term.focus(); };
@@ -1323,13 +1407,15 @@ async function answerFile(m) {
   if (!lane.files.includes(m.path)) return reply({ error: `Only the files ${me.name || me.login}'s agents have changed are shared.` });
   try {
     const file = await proto.code.readLane(m.lane, m.path);
-    reply(file.text != null ? { text: file.text } : { error: file.tooBig ? 'That file is too big to share.' : 'That file can\'t be shown.' });
+    // The hub passes along a million characters at most, in a message of 5 MB at most once escaped.
+    const fits = file.text != null && file.text.length <= 1_000_000 && JSON.stringify(file.text).length < 4_500_000;
+    reply(fits ? { text: file.text } : { error: file.tooBig || file.text != null ? 'That file is too big to share.' : 'That file can\'t be shown.' });
   } catch (e) { reply({ error: errorText(e) }); }
 }
 
 // Notes that apply to the open session: its repo's, plus the ones written for every repo.
 const roomNotes = () => memories.filter(m => !m.repo || (roomRepo && same(m.repo, roomRepo)));
-function renderMemory(lanes) {
+function renderMemory() {
   const canRemove = m => [m.author, currentTeam.owner].some(l => l.toLowerCase() === me.login.toLowerCase());
   const notes = roomNotes();
   setHTML($('#memoryList'), notes.length ? `<div class="gh-list">${notes.reverse().map(m => `
@@ -1352,7 +1438,10 @@ $('#memoryForm').onsubmit = async e => {
   if (button.disabled) return;
   button.disabled = true;
   try {
-    const known = note.file && await sessionFiles();
+    // Without a repo a pinned note would apply to that file name in every repo.
+    if (note.file && !roomRepo) { $('#memoryErr').textContent = 'Notes can be pinned to a file only in a session with a GitHub repo. Leave the file empty for a note for every repo.'; return; }
+    const changed = hubLanes.filter(l => l.session === current).flatMap(l => l.files); // a teammate's new file counts too
+    const known = note.file && !changed.includes(note.file) && await sessionFiles();
     if (known && !known.includes(note.file)) {
       // A file's name, or its name without the extension, finds it if only one file has it.
       const like = known.filter(f => f.endsWith(`/${note.file}`) || f.split('/').pop().replace(/\.[^.]*$/, '') === note.file);
@@ -1397,14 +1486,16 @@ async function loadPanel() {
 
 // Block characters (Claude's mascot, box drawing) only join up across line spacing with the WebGL renderer. A page
 // gets about 16 WebGL contexts, so only the terminals on screen have one; a lost context falls back to the DOM renderer.
+// A terminal whose WebGL failed or was lost stays on the plain renderer: retrying on every update would pile up
+// broken contexts (a page gets about 16).
 function gpu(t, on) {
-  if (on === !!t.webgl) return;
+  if (on === !!t.webgl || (on && t.webglFailed)) return;
   if (!on) { t.webgl.dispose(); t.webgl = null; return; }
   try {
     t.webgl = new WebglAddon.WebglAddon();
-    t.webgl.onContextLoss(() => gpu(t, false));
+    t.webgl.onContextLoss(() => { gpu(t, false); t.webglFailed = true; });
     t.term.loadAddon(t.webgl);
-  } catch { t.webgl = null; }
+  } catch { t.webgl?.dispose(); t.webgl = null; t.webglFailed = true; }
 }
 
 function dropTerminal(id) {
@@ -1442,7 +1533,10 @@ function createTerminal(l) {
     resizer.observe(el);
     term.focus();
   } else {
-    term.onData(d => ws?.readyState === WebSocket.OPEN && ws.send(JSON.stringify({ t: 'in', lane: l.id, d })));
+    // xterm also answers the agent's queries (cursor position, device attributes) through onData; those replies come from
+    // the owner's own terminal already, so only typing, in a focused terminal, is sent.
+    const reply = /^(?:\x1b\[[?>]?[\d;]*[Rcn]|\x1b\[[IO]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\))+$/;
+    term.onData(d => { if (document.activeElement === term.textarea && !reply.test(d) && ws?.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ t: 'in', lane: l.id, d })); });
   }
 
   // A click anywhere in the pane, not just on the text, is a click in the terminal.
@@ -1484,7 +1578,7 @@ function showPane(name) {
   for (const b of $('.settings-nav').querySelectorAll('[data-pane]')) b.classList.toggle('on', b.dataset.pane === name);
   for (const pane of $('.settings-body').querySelectorAll('section')) pane.hidden = pane.dataset.pane !== name;
 }
-async function openSettings(pane = 'general') {
+function renderTeamPane() {
   const team = currentTeam;
   $('#teamPane').innerHTML = team ? `
     <div class="group"><div class="setting"><div><b>${esc(team.name)}</b><p>${esc(team.where)}, owned by ${esc(team.owner)}</p></div>
@@ -1494,6 +1588,9 @@ async function openSettings(pane = 'general') {
     <div class="actions" style="justify-content: flex-start; margin-top: 14px"><button class="btn" data-open="teams">Switch team</button>
       <button class="btn ghost" data-drop-team>${ownsTeam(team) ? 'Delete team' : 'Leave team'}</button></div>`
     : '<p class="hint">Open a team to see it here.</p>';
+}
+async function openSettings(pane = 'general') {
+  renderTeamPane();
   $('#accountPane').innerHTML = me ? `
     <div class="group">
       <div class="setting"><div class="profile">${avatar(me)}<div><b>${esc(me.name)}</b><p>${me.name === me.login ? 'Signed in with GitHub' : `${esc(me.login)} on GitHub`}. Protoplasma only reads your public profile.</p></div></div>
@@ -1521,7 +1618,7 @@ async function openSettings(pane = 'general') {
     <div class="group"><div class="setting"><div><b id="updateStatus">Checking…</b><p>New versions come from GitHub releases and install themselves, so there's nothing to download again.</p></div>
       <button class="btn" data-check-updates>Check now</button></div></div>
     <h4>Online hub</h4>
-    <div class="group"><div class="setting"><div><b>${esc(info.onlineHub ? new URL(info.onlineHub).host : 'Not set up')}</b>
+    <div class="group"><div class="setting"><div><b>${esc(info.onlineHub ? (URL.canParse(info.onlineHub) ? new URL(info.onlineHub).host : info.onlineHub) : 'Not set up')}</b>
       <p>Relays terminals and coordination between teammates. It never stores your repos, and keeps only team names, members, notes, and sessions with their goals, repos, plans and comments (Data &amp; privacy has the details).</p></div></div></div>`;
   checkUpdates().then(showUpdateStatus);
 }
@@ -1558,7 +1655,10 @@ let update = null; // the last check's answer: { current, latest, available, can
 let staged = false, downloading = false, dismissed = null; // waiting for quit; under way; a version "Later" was clicked for
 async function checkUpdates() {
   if (staged || downloading) return update;
-  try { update = await proto.checkUpdates(); } catch { return null; }
+  let answer;
+  try { answer = await proto.checkUpdates(); } catch { return null; }
+  if (staged || downloading) return update; // "Update now" was pressed while it asked: the bar is the download's now
+  update = answer;
   $('#updateBar').hidden = !update.available || dismissed === update.latest;
   if (update.available) {
     $('#updateText').textContent = `A Protoplasma update is available (${update.latest}).`;
@@ -1589,9 +1689,8 @@ setInterval(checkUpdates, 6 * 60 * 60_000);
 let switcherItems = [], switcherIndex = 0, switcherSource;
 function switcherCandidates() {
   const list = sessionList(board);
+  // Pages and actions first: they're few, and a long list of sessions mustn't push them out of reach.
   return [
-    ...list.map(s => ({ text: s.name, kind: s.status === 'done' ? 'Session, done' : 'Session', run: () => openSession(s.name) })),
-    ...[...new Set(list.map(s => s.repo).filter(Boolean))].map(repo => ({ text: repo, kind: 'Workspace', run: () => go('sessions', repo) })),
     { text: 'Sessions', kind: 'Page', run: () => go('sessions') },
     { text: 'People', kind: 'Page', run: () => go('people') },
     { text: 'Settings', kind: 'Page', run: () => openSettings() },
@@ -1599,11 +1698,16 @@ function switcherCandidates() {
     ...(ownsTeam(currentTeam) ? [{ text: 'Invite someone', kind: 'Action', run: () => $('#inviteBtn').click() }] : []),
     { text: 'Switch team', kind: 'Action', run: () => showTeams(me) },
     { text: 'Toggle the sidebar', kind: 'Action', run: () => toggleSidebar() },
+    ...list.map(s => ({ text: s.name, kind: s.status === 'done' ? 'Session, done' : 'Session', run: () => openSession(s.name) })),
+    ...[...new Set(list.map(s => s.repo).filter(Boolean))].map(repo => ({ text: repo, kind: 'Workspace', run: () => go('sessions', repo) })),
   ];
 }
 function renderSwitcher() {
   const query = $('#switcherInput').value.trim().toLowerCase();
-  switcherItems = switcherSource().filter(it => !query || it.text.toLowerCase().includes(query)).slice(0, 30);
+  // Best matches first: the name (a file's last part) starting with what's typed, then containing it, then anywhere.
+  const rank = it => { const t = it.text.toLowerCase(), name = t.slice(t.lastIndexOf('/') + 1); return name.startsWith(query) ? 0 : name.includes(query) ? 1 : 2; };
+  const matches = switcherSource().filter(it => !query || it.text.toLowerCase().includes(query));
+  switcherItems = (query ? matches.map((it, i) => [rank(it), i, it]).sort((a, b) => a[0] - b[0] || a[1] - b[1]).map(x => x[2]) : matches).slice(0, 50);
   switcherIndex = Math.min(switcherIndex, Math.max(0, switcherItems.length - 1));
   $('#switcherList').innerHTML = switcherItems.map((it, i) => `
     <button class="switch-row ${i === switcherIndex ? 'on' : ''}" data-i="${i}" role="option" aria-selected="${i === switcherIndex}"><span>${esc(it.text)}</span><small>${esc(it.kind)}</small></button>`).join('')
@@ -1627,7 +1731,7 @@ $('#switcherInput').onkeydown = e => {
     switcherIndex = (switcherIndex + (e.key === 'ArrowDown' ? 1 : -1) + switcherItems.length) % Math.max(1, switcherItems.length);
     renderSwitcher();
   }
-  if (e.key === 'Enter') { e.preventDefault(); runSwitcher(switcherIndex); }
+  if (e.key === 'Enter' && !e.isComposing) { e.preventDefault(); runSwitcher(switcherIndex); } // Enter that ends an IME composition isn't a pick
 };
 $('#switcherList').onclick = e => { const row = e.target.closest('[data-i]'); if (row) runSwitcher(+row.dataset.i); };
 $('#switcher').onclick = e => { if (e.target === $('#switcher')) $('#switcher').close(); }; // a click outside the list
@@ -1644,14 +1748,19 @@ function renderSetup(agentList, gh) {
     const cmd = /Not installed/.test(gh.detail) ? 'brew install gh && gh auth login' : 'gh auth login';
     items.push(`<div class="setup-item"><div><b>GitHub CLI</b><p>${esc(gh.detail)} It's what lists your repos, pull requests and issues; folders work without it.</p></div><button class="btn small" data-copy="${esc(cmd)}">Copy</button></div>`);
   }
-  $('#setup').hidden = !items.length;
-  setHTML($('#setup'), items.length ? `<h2>Finish setting up this Mac</h2><p>Run these in Terminal, then check again.</p>${items.join('')}
-    <div class="actions"><button class="btn small" data-recheck>Check again</button></div>` : '');
+  // Put away with "Not now" until something else is missing.
+  const missing = `${!agentList.some(a => a.installed)}|${gh.ok}`;
+  const shown = items.length && store.get('setupDismissed') !== missing;
+  $('#setup').hidden = !shown;
+  $('#setup').dataset.missing = missing;
+  setHTML($('#setup'), shown ? `<h2>Finish setting up this Mac</h2><p>Run these in Terminal, then check again.</p>${items.join('')}
+    <div class="actions"><button class="btn small ghost" data-dismiss>Not now</button><button class="btn small" data-recheck>Check again</button></div>` : '');
 }
 const checkSetup = () => Promise.all([proto.agents(), proto.ghStatus()]).then(([list, gh]) => { agents = list; renderSetup(list, gh); });
 $('#setup').onclick = e => {
   if (e.target.dataset.copy) { proto.copy(e.target.dataset.copy); e.target.textContent = 'Copied'; }
   if ('recheck' in e.target.dataset) checkSetup();
+  if ('dismiss' in e.target.dataset) { store.set('setupDismissed', $('#setup').dataset.missing); $('#setup').hidden = true; }
 };
 
 // ---- Menu shortcuts ----
@@ -1663,9 +1772,9 @@ const runMenu = action => {
   if (action === 'sidebar') return toggleSidebar();
   if (!me || document.querySelector('dialog[open]:not(#start, #settings)')) return;
   if (action === 'teams') return showTeams(me);
-  if (!currentTeam) return;
+  if (!currentTeam || $('#start').open) return; // the team picker is up: nothing acts on the team behind it
   if (action === 'switcher') return openSwitcher();
-  if (action === 'new-agent') openNewAgent(view === 'session' ? current : undefined);
+  if (action === 'new-agent') openNewAgent(); // a new session; ⇧⌘L adds an agent to the open one
   if (action === 'add-agent') view === 'session' ? addAgent(prefs.agent) : openNewAgent();
   if (action === 'panel' && view === 'session') code.on ? toggleDock() : $('#panelToggle').click();
   if (action === 'code' && view === 'session') showCode(!code.on);
@@ -1684,8 +1793,13 @@ addEventListener('keydown', e => {
 // ---- Start ----
 
 applyPrefs();
-showView('signinView');
-$('#start').showModal();
+// The sign-in screen only for someone who isn't signed in (or if checking takes long).
+const signInLater = setTimeout(() => { showView('signinView'); if (!$('#start').open) $('#start').showModal(); }, 1500);
 refreshAgents();
 setTimeout(checkUpdates, 5000); // after startup, then every few hours
-proto.savedUser().then(user => { if (user) { reopenLast = true; showTeams(user); } });
+proto.savedUser().then(user => {
+  clearTimeout(signInLater);
+  if (user) { reopenLast = true; return showTeams(user); }
+  showView('signinView');
+  if (!$('#start').open) $('#start').showModal();
+});

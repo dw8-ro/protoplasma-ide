@@ -1096,7 +1096,7 @@ function fileList(lanes, max = 4) {
   const files = [...editors.keys()].sort((a, b) => clash(b) - clash(a));
   if (!files.length) return '';
   return `<ul class="files">${files.slice(0, max).map(f => `
-    <li class="${clash(f) ? 'overlap' : ''}" data-open-file="${esc(f)}" title="Open ${esc(f)}"><span class="path" title="${esc(f)}">${esc(f)}</span>${clash(f) ? `<span class="who">${esc(whoEdited(clashers(f)))}</span>` : ''}</li>`).join('')}
+    <li class="${clash(f) ? 'overlap' : ''}" data-open-file="${esc(f)}" title="Open ${esc(f)}"><span class="path" title="${esc(f)}"><bdi>${esc(f)}</bdi></span>${clash(f) ? `<span class="who">${esc(whoEdited(clashers(f)))}</span>` : ''}</li>`).join('')}
     ${files.length > max ? `<li class="more">${files.length - max} more</li>` : ''}</ul>`;
 }
 
@@ -1177,7 +1177,7 @@ function renderRoom(lanes) {
 
 // The panel beside the stage. Session: everyone here and their agents. Environment: the code they're working in.
 function renderPanel(inRoom, rec) {
-  for (const b of $('.panel-tabs').children) b.classList.toggle('on', b.dataset.panel === panelTab);
+  for (const b of $('.panel-tabs').children) b.setAttribute('aria-selected', b.classList.toggle('on', b.dataset.panel === panelTab));
   $('#commentForm').hidden = panelTab !== 'session';
   if (panelTab === 'environment') return setHTML($('#panelBody'), environment(inRoom, rec));
   const notes = roomNotes().length;
@@ -1602,7 +1602,11 @@ async function openSettings(pane = 'general') {
   $('#aboutPane').innerHTML = '<p class="hint">Loading…</p>';
   showPane(pane);
   applyPrefs();
-  if (!$('#settings').open) { $('#settings').show(); $('#settings').focus(); render(); } // a page over the main area, not a modal
+  if (!$('#settings').open) {
+    settingsOpener = document.activeElement;
+    $('.sidebar').inert = $('.main').inert = true; // a page over the main area, not a modal: what's under it can't be reached
+    $('#settings').show(); $('#settings').focus(); render();
+  }
   proto.agents().then(list => {
     agents = list;
     $('#providers').innerHTML = list.map(a => `<div class="setting"><div><b>${esc(agentName(a.cmd))}</b><p>The <kbd>${esc(a.cmd)}</kbd> command on this Mac.</p></div>
@@ -1628,7 +1632,12 @@ const showUpdateStatus = u => {
     : !u || u.error ? 'Couldn\'t reach GitHub' : u.available ? `${u.latest} is available` : u.latest ? 'Up to date' : 'No releases yet';
 };
 $('#settingsDone').onclick = () => $('#settings').close();
-$('#settings').addEventListener('close', () => render());
+let settingsOpener = null;
+$('#settings').addEventListener('close', () => {
+  $('.sidebar').inert = $('.main').inert = false;
+  if (settingsOpener?.isConnected) settingsOpener.focus(); // back where you were
+  render();
+});
 $('#settings').onchange = e => {
   const key = e.target.dataset.pref;
   if (!key) return;

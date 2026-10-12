@@ -356,7 +356,7 @@ function renderCode() {
   const shell = on && code.dock === 'terminal';
   $('#shellPane').hidden = !shell;
   if (shell) for (const id of ['#lanes', '#replayPanel', '#ghPanel', '#memoryPanel', '#planPanel', '#backBar']) $(id)?.setAttribute('hidden', '');
-  for (const b of $('#dockTabs').children) b.classList.toggle('on', b.dataset.dock === code.dock);
+  for (const b of $('#dockTabs').children) b.setAttribute('aria-selected', b.classList.toggle('on', b.dataset.dock === code.dock));
   if (!on) return;
   // An agent started since the code was opened brings the session's folder with it.
   const agentsHere = [...local].filter(([, l]) => l.session === current).map(([id]) => id).join();
@@ -379,7 +379,7 @@ function renderCode() {
   $('#codeWelcomeText').textContent = code.root ? 'Start working in this repository'
     : 'This session\'s code isn\'t on this Mac yet. Add an agent and its folder opens here.';
   $('#codeWelcome').hidden = !!code.active;
-  for (const b of $('#explorerTabs').children) b.classList.toggle('on', b.dataset.explorer === code.explorer);
+  for (const b of $('#explorerTabs').children) b.setAttribute('aria-selected', b.classList.toggle('on', b.dataset.explorer === code.explorer));
   $('#codeTree').hidden = code.explorer !== 'files';
   $('#codeConflicts').hidden = code.explorer !== 'conflicts';
   const conflicts = conflictRows();
@@ -398,7 +398,7 @@ function renderTabs() {
   setHTML($('#codeTabs'), code.open.map(key => {
     const theirs = theirsOf(key), path = theirs?.path || key;
     const note = theirs ? laneName(theirs.lane) : code.diff === key ? (code.against ? `vs ${laneName(code.against)}` : 'changes') : '';
-    return `<div class="code-tab ${key === code.active ? 'on' : ''} ${isDirty(models.get(key)) ? 'dirty' : ''}" data-tab-file="${esc(key)}" title="${esc(theirs ? `${laneName(theirs.lane)}'s ${path}` : path)}" role="tab">
+    return `<div class="code-tab ${key === code.active ? 'on' : ''} ${isDirty(models.get(key)) ? 'dirty' : ''}" data-tab-file="${esc(key)}" title="${esc(theirs ? `${laneName(theirs.lane)}'s ${path}` : path)}" role="tab" tabindex="0" aria-selected="${key === code.active}">
       ${esc(base(path))}${note ? `<small>${esc(note)}</small>` : ''}<span class="x" data-close-file="${esc(key)}" role="button" aria-label="Close ${esc(base(path))}"></span></div>`;
   }).join(''));
   if (code.active !== renderTabs.shown) { renderTabs.shown = code.active; $('#codeTabs .code-tab.on')?.scrollIntoView({ block: 'nearest', inline: 'nearest' }); }
@@ -734,6 +734,13 @@ $('#codeTabs').onclick = e => {
   if (close) return closeFile(close.dataset.closeFile);
   const tab = e.target.closest('[data-tab-file]');
   if (tab && tab.dataset.tabFile !== code.active) { rememberView(); code.active = tab.dataset.tabFile; code.diff = code.against = null; render(); showActive(); }
+};
+// From the keyboard: Enter or Space opens a tab, Delete closes it.
+$('#codeTabs').onkeydown = e => {
+  const tab = e.target.closest('[data-tab-file]');
+  if (!tab) return;
+  if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); tab.click(); }
+  if (e.key === 'Delete' || e.key === 'Backspace') { e.preventDefault(); closeFile(tab.dataset.tabFile); }
 };
 $('#codeTabs').onauxclick = e => { const tab = e.target.closest('[data-tab-file]'); if (e.button === 1 && tab) closeFile(tab.dataset.tabFile); };
 $('#codeBanner').onclick = async e => {

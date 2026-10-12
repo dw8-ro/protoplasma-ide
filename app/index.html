@@ -15,7 +15,7 @@
     --line-strong: #3a3a41;
     --text: #ececef;
     --muted: #8e8e96;
-    --faint: #5d5d65;
+    --faint: #8a8a93; /* 4.6:1 on the page: small text stays readable */
     --live: #6fd6a8;
     --needs: #f2b35b;
     --overlap: #f07a8b;
@@ -36,10 +36,10 @@
     --line-strong: #cfcfd6;
     --text: #17171a;
     --muted: #5d5d66;
-    --faint: #8a8a93;
-    --live: #17875b;
-    --needs: #a86a12;
-    --overlap: #cf3f58;
+    --faint: #6b6b74;
+    --live: #137a52;
+    --needs: #93600f;
+    --overlap: #b8344c;
     --lane: #ffffff;
     --primary: #17171a;
     --primary-hover: #000000;
@@ -84,7 +84,7 @@
     background: var(--canvas); user-select: text;
   }
   input::placeholder { color: var(--faint); }
-  input:focus { outline: none; border-color: var(--muted); }
+  input:not([type=checkbox], [type=radio]):focus { outline: none; border-color: var(--muted); }
   input[readonly] { color: var(--muted); font-family: var(--mono); font-size: 12px; }
   .row { display: flex; gap: 8px; }
   .fine { color: var(--faint); font-size: 12px; line-height: 1.5; }
@@ -176,7 +176,7 @@
   .page-head .spacer { margin-left: auto; }
   .page-head select, .page-head input { height: 30px; border-radius: 8px; border: 1px solid var(--line); background: var(--surface); color: var(--muted); padding: 0 10px; font: inherit; }
   .page-head input { width: 190px; }
-  .chip { display: inline-flex; align-items: center; gap: 8px; height: 26px; padding: 0 6px 0 10px; border-radius: 7px; background: var(--surface); border: 1px solid var(--line); color: var(--muted); font: 12px var(--mono); }
+  .chip { display: inline-flex; align-items: center; gap: 8px; height: 26px; max-width: 100%; padding: 0 6px 0 10px; border-radius: 7px; background: var(--surface); border: 1px solid var(--line); color: var(--muted); font: 12px var(--mono); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .chip button { border: 0; background: none; color: var(--faint); cursor: pointer; padding: 0 4px; font: inherit; }
   .session-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 14px; align-items: start; }
   .session-grid .hint { grid-column: 1 / -1; }
@@ -215,6 +215,7 @@
   .files { list-style: none; margin: 0; padding: 8px 0 0; border-top: 1px solid var(--line); display: grid; gap: 4px; }
   .files li { display: flex; justify-content: space-between; gap: 8px; font-size: 11.5px; color: var(--muted); }
   .files .path { font-family: var(--mono); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; direction: rtl; text-align: left; }
+  .files .path bdi { direction: ltr; unicode-bidi: isolate; } /* the ellipsis cuts the start; ".github/x" still reads as written */
   .files .overlap { color: var(--overlap); }
   .files .who { flex: none; }
   .files .more { color: var(--faint); }
@@ -245,7 +246,7 @@
   .room { flex: 1; display: flex; flex-direction: column; min-width: 0; min-height: 0; }
   .room-head { display: flex; align-items: center; gap: 8px; height: 46px; padding: 0 14px 0 20px; border-bottom: 1px solid var(--line); white-space: nowrap; }
   .crumbs { display: flex; align-items: center; gap: 8px; min-width: 0; font-size: 12.5px; }
-  .crumbs b { font-weight: 600; }
+  .crumbs b { font-weight: 600; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .crumbs .crumb { color: var(--faint); overflow: hidden; text-overflow: ellipsis; }
   .crumbs .crumb::before { content: '/'; margin-right: 8px; color: var(--line-strong); }
   .crumbs .who { font-weight: 600; flex: none; }
@@ -308,6 +309,7 @@
   }
   .lane.mine { order: -1; min-width: 440px; }
   .lane-label { position: absolute; top: -8px; left: 14px; padding: 0 6px; background: var(--main); color: var(--c); font-size: 11px; font-weight: 600; line-height: 16px; }
+  :root[data-theme=light] .lane-label { color: color-mix(in srgb, var(--c) 62%, black); } /* teammates' colours are made for dark */
   .screen { margin: 14px 8px 8px 16px; overflow: hidden; } /* margins, not padding: the fit addon sizes to the padded box */
   .lane .screen { flex: 1; min-height: 0; }
   .lane:not(.mine) .screen { overflow-x: auto; } /* a teammate's terminal too wide for a narrow pane even at the smallest font scrolls sideways */
@@ -445,7 +447,8 @@
   .step.done .text { color: var(--faint); text-decoration: line-through; }
   .step .owner { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); font-size: 12px; }
   .step .owner .avatar { width: 18px; height: 18px; font-size: 9px; }
-  .step .stop { position: static; visibility: hidden; }
+  .step .stop { position: static; opacity: 0; }
+  .step:hover .stop, .step:focus-within .stop { opacity: 1; } /* reachable from the keyboard too */
   .step:hover .stop { visibility: visible; }
   .card-status .steps { margin-left: auto; color: var(--faint); font-size: 12px; }
   /* Comments about lines of a file */
@@ -581,7 +584,8 @@
   .members .login { flex: 1; font-weight: 500; }
   .error { color: var(--overlap); font-size: 12px; margin-top: 12px; overflow-wrap: anywhere; }
   #createErr, #createErr:empty { display: block; min-height: 1.5em; } /* an error appearing doesn't move the dialog */
-  .error:empty { display: none; }
+  .error:empty { margin: 0; } /* still there (empty) for screen readers to announce what goes in */
+  .error, #ghStatus, #updateText, .settings p { user-select: text; } /* to copy into a bug report */
   /* The New session form's footer stays in view when the window is short, and keeps a line for errors so nothing jumps. */
   .foot { position: sticky; bottom: -28px; margin: 4px -28px -28px; padding: 0 28px 28px; background: var(--surface); }
   .foot .error, .foot .error:empty { display: block; min-height: 18px; margin-top: 6px; }
@@ -596,6 +600,7 @@
     border: 0; border-radius: 0; box-shadow: none; background: var(--main); overflow: hidden;
   }
   .settings[open] { display: grid; grid-template-columns: 212px 1fr; animation: none; }
+  body:has(#updateBar:not([hidden])) .settings { top: 85px; } /* below the update bar, whose buttons stay reachable */
   .settings:focus { outline: none; }
   .settings-nav { display: flex; flex-direction: column; gap: 2px; padding: 22px 12px; background: var(--canvas); border-right: 1px solid var(--line); }
   .settings-nav span { padding: 14px 10px 4px; color: var(--faint); font-size: 11.5px; }
@@ -609,7 +614,7 @@
   .settings-body h3 { font-size: 16px; font-weight: 650; letter-spacing: -0.01em; margin: 0 0 16px; }
   .settings-body h4 { margin: 22px 0 8px; color: var(--muted); font-size: 12px; font-weight: 500; }
   .group { border: 1px solid var(--line); border-radius: 12px; background: var(--surface); }
-  .setting { display: flex; align-items: center; justify-content: space-between; gap: 20px; padding: 13px 16px; border-top: 1px solid var(--line); }
+  .setting { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px 20px; padding: 13px 16px; border-top: 1px solid var(--line); }
   .setting:first-child { border-top: 0; }
   .setting b { font-weight: 500; }
   .setting p { color: var(--muted); font-size: 12px; margin-top: 2px; line-height: 1.45; }
@@ -767,7 +772,7 @@
       </div>
       <div id="dockGrip" class="dock-grip" hidden></div>
       <div class="stage">
-        <div id="dockTabs" class="dock-tabs" hidden><button data-dock="agent" class="on">Agent</button><button data-dock="terminal">Terminal</button></div>
+        <div id="dockTabs" class="dock-tabs" role="tablist" hidden><button data-dock="agent" class="on" role="tab">Agent</button><button data-dock="terminal" role="tab">Terminal</button></div>
         <div id="shellPane" class="shell" hidden></div>
         <div id="backBar" class="back-bar" hidden><button id="backToAgents" class="btn small">Back to the agent</button><b id="stageTitle"></b></div>
         <div id="lanes" class="lanes">
@@ -791,7 +796,7 @@
         <div id="memoryPanel" class="gh-panel" hidden>
           <form id="memoryForm" class="memory-form">
             <input id="memoryText" maxlength="500" placeholder="Something every agent on the team should know" aria-label="Note" autocomplete="off">
-            <input id="memoryFile" list="fileList" placeholder="Pin to a file (optional)" aria-label="File" autocomplete="off">
+            <input id="memoryFile" list="fileList" maxlength="300" placeholder="Pin to a file (optional)" aria-label="File" autocomplete="off">
             <datalist id="fileList"></datalist>
             <button class="btn primary">Add note</button>
           </form>
@@ -801,7 +806,7 @@
         </div>
       </div>
       <aside id="panel" class="panel">
-        <div class="panel-tabs"><button data-panel="session" class="on">Session</button><button data-panel="environment">Environment</button></div>
+        <div class="panel-tabs" role="tablist"><button data-panel="session" class="on" role="tab">Session</button><button data-panel="environment" role="tab">Environment</button></div>
         <div id="panelBody" class="panel-body"></div>
         <form id="commentForm" class="comment-form"><div id="commentRef" class="comment-ref" hidden></div><input id="commentText" maxlength="500" placeholder="Comment for the people in this session" aria-label="Comment" autocomplete="off"></form>
         <div id="roomWatching" class="panel-foot"></div>
@@ -854,7 +859,7 @@
   <form id="inviteForm">
     <h2 id="inviteTitle">Invite to <span id="inviteTeam"></span></h2>
     <p class="lede">They sign in with GitHub, and the team shows up in their app.</p>
-    <label class="field"><span>GitHub username</span><input id="inviteLogin" placeholder="octocat" autocomplete="off"></label>
+    <label class="field"><span>GitHub username</span><input id="inviteLogin" maxlength="39" placeholder="octocat" autocomplete="off"></label>
     <p class="fine">Anyone you invite also needs access to the team's repositories on GitHub, or their Protoplasma can't clone them.</p>
     <p id="inviteErr" class="error" role="alert"></p>
     <div class="actions"><button type="button" id="inviteDone" class="btn ghost">Cancel</button><button class="btn primary">Send invite</button></div>
@@ -956,7 +961,7 @@
       <div id="providers" class="group" style="margin-bottom: 14px"></div>
       <div class="group">
         <div class="setting"><div><b>Default agent</b><p>Preselected when you start a session or add an agent.</p></div>
-          <div class="segmented" style="min-width: 330px">
+          <div class="segmented" style="min-width: min(330px, 100%)">
             <label><input type="radio" name="prefAgent" data-pref="agent" value="claude"><span>Claude Code</span></label>
             <label><input type="radio" name="prefAgent" data-pref="agent" value="codex"><span>Codex</span></label>
             <label><input type="radio" name="prefAgent" data-pref="agent" value="opencode"><span>OpenCode</span></label>
@@ -994,12 +999,12 @@
         <div class="setting"><b>Go to a session, page or action</b><kbd>⌘K</kbd></div>
         <div class="setting"><b>Add an agent to the open session</b><kbd>⇧⌘L</kbd></div>
         <div class="setting"><b>Toggle the sidebar</b><kbd>⌘B</kbd></div>
-        <div class="setting"><b>Toggle the session panel</b><kbd>⌘J</kbd></div>
+        <div class="setting"><b>Toggle the panel (with a file open, the agents underneath it)</b><kbd>⌘J</kbd></div>
         <div class="setting"><b>Invite to team</b><kbd>⌘I</kbd></div>
         <div class="setting"><b>Show the code</b><kbd>⇧⌘E</kbd></div>
         <div class="setting"><b>Go to a file</b><kbd>⌘P</kbd></div>
         <div class="setting"><b>Save the file</b><kbd>⌘S</kbd></div>
-        <div class="setting"><b>Comment on the selected lines</b><kbd>⇧⌘M</kbd></div>
+        <div class="setting"><b>Comment on the selected lines (in the editor)</b><kbd>⇧⌘M</kbd></div>
         <div class="setting"><b>Switch team</b><kbd>⇧⌘T</kbd></div>
         <div class="setting"><b>Settings</b><kbd>⌘,</kbd></div>
         <div class="setting"><b>Close a dialog or Settings</b><kbd>Esc</kbd></div>
@@ -1010,8 +1015,8 @@
     <section data-pane="data" hidden>
       <h3>Data &amp; privacy</h3>
       <div class="group">
-        <div class="setting"><div><b>Kept on the hub</b><p>Team names and members, notes, and sessions with their goals, repos, plans and comments. A comment on lines of code keeps the text of those lines (up to 300 characters), so it can find them again.</p></div></div>
-        <div class="setting"><div><b>Passed through the hub</b><p>Terminal output and Claude Code's hook events, live. The last 256 KB of each agent's output is held in memory, so someone joining sees the current screen and a stopped agent's last screen can be looked at (the 20 most recent per team). None of it is written to disk, and it's gone when the hub restarts.</p></div></div>
+        <div class="setting"><div><b>Kept on the hub</b><p>Team names and members, notes, and sessions with their goals, repos, who started them, plans and comments. A comment on lines of code keeps the text of those lines (up to 300 characters), so it can find them again.</p></div></div>
+        <div class="setting"><div><b>Passed through the hub</b><p>While an agent runs: its terminal output (anyone on the team can watch it, so whatever it prints is visible to them), Claude Code's hook events, its latest prompt, its branch and the names of the files its checkout has changed, and its folder's path. Up to 512 KB of each agent's output is held in memory, so someone joining sees the current screen and a stopped agent's last screen can be looked at (the 20 most recent per team). None of it is written to disk, and it's gone when the hub restarts.</p></div></div>
         <div class="setting"><div><b>Not kept on the hub</b><p>Your repos and their files (apart from the lines a comment is about, above). Agents and git run on your Mac, and the GitHub CLI's login stays here too. Some code does pass through without being kept: Claude Code's hook events include what a tool is about to change, and with "Share the files your agents change" on, teammates can open those files.</p></div></div>
         <div class="setting"><div><b>Your GitHub sign-in</b><p>Read-only access to your public profile, used to check who you are. Stored encrypted on this Mac; the hub never saves it.</p></div></div>
         <div class="setting"><div><b>Training or analytics</b></div><span class="where">Never</span></div>

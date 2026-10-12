@@ -2,7 +2,10 @@
 // github.com/david/playground but lives here, and two copies of the app, David's and Max's, each with its own home
 // folder and its own control API (see playground-app.js). Needs no GitHub or Claude account.
 // Usage: npm run playground   (Ctrl+C stops everything and removes it)
+// The control APIs need the token printed at start (also in <folder>/token), sent as an `x-play-token` header, so no web
+// page or other program can drive the apps.
 const { spawn, execFileSync } = require('child_process');
+const crypto = require('crypto');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
@@ -14,7 +17,27 @@ const people = { 'tok-david': { login: 'david', name: 'David', avatar: '' }, 'to
 const verifyUser = async token => people[token] || null;
 const copies = [{ name: 'david', token: 'tok-david', port: 7801 }, { name: 'max', token: 'tok-max', port: 7802 }];
 const root = fs.mkdtempSync(path.join(os.tmpdir(), 'protoplasma-playground-'));
+const token = crypto.randomBytes(16).toString('hex');
+fs.writeFileSync(path.join(root, 'token'), token);
 const git = (cwd, ...args) => execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
+const apps = [];
+
+// The copies quit on SIGTERM without asking (main.js); the folder goes once they're gone (or after 5 s, by force).
+let stopping = false;
+async function stop(code = 0) {
+  if (stopping) return;
+  stopping = true;
+  await Promise.all(apps.map(a => new Promise(resolve => {
+    if (a.exitCode !== null) return resolve();
+    a.once('exit', resolve);
+    a.kill('SIGTERM');
+    setTimeout(() => { a.kill('SIGKILL'); resolve(); }, 5000);
+  })));
+  fs.rmSync(root, { recursive: true, force: true });
+  process.exit(code);
+}
+process.on('SIGINT', () => stop());
+process.on('SIGTERM', () => stop());
 
 (async () => {
   hubModule.githubUser = verifyUser;
@@ -39,7 +62,6 @@ exec sh -c "$(printf '%s' "$last" | sed "s#'[^']*playground.git'#'${origin}'#")"
 `, { mode: 0o755 });
 
   // Each person: a home folder with the app's clone of the repo (~/Protoplasma/david/playground), and a copy of the app.
-  const apps = [];
   for (const c of copies) {
     const home = path.join(root, c.name, 'home');
     const clone = path.join(home, 'Protoplasma', 'david', 'playground');
@@ -53,27 +75,21 @@ exec sh -c "$(printf '%s' "$last" | sed "s#'[^']*playground.git'#'${origin}'#")"
     for (const rc of ['.zshenv', '.bash_profile']) fs.writeFileSync(path.join(home, rc), `export PATH="${path.join(root, c.name, 'bin')}:$PATH"\n`);
     const log = fs.openSync(path.join(root, c.name, 'app.log'), 'a');
     apps.push(spawn(electron, [path.join(__dirname, 'playground-app.js')], { stdio: ['ignore', log, log],
-      env: { ...process.env, HOME: home, PROTO_ONLINE_HUB: hub, PROTO_GITHUB_TOKEN: c.token, PLAY_PORT: String(c.port), PLAY_DIR: path.join(root, c.name) } }));
+      env: { ...process.env, HOME: home, PROTO_ONLINE_HUB: hub, PROTO_GITHUB_TOKEN: c.token, PLAY_PORT: String(c.port), PLAY_DIR: path.join(root, c.name), PLAY_TOKEN: token } }));
   }
   for (const c of copies) {
-    for (let i = 0; i < 100; i++) {
-      const ready = await fetch(`http://127.0.0.1:${c.port}/js`, { method: 'POST', body: 'return !!me' }).then(r => r.json()).catch(() => null);
-      if (ready?.value) break;
-      await new Promise(r => setTimeout(r, 300));
+    let ready = false;
+    for (let i = 0; i < 100 && !ready; i++) {
+      ready = (await fetch(`http://127.0.0.1:${c.port}/js`, { method: 'POST', body: 'return !!me', headers: { 'x-play-token': token } }).then(r => r.json()).catch(() => null))?.value;
+      if (!ready) await new Promise(r => setTimeout(r, 300));
     }
+    if (!ready) throw new Error(`${c.name}'s copy didn't start (is port ${c.port} taken by another playground?). See ${path.join(root, c.name, 'app.log')}.`);
   }
 
   console.log(`Playground ready in ${root}
   hub      ${hub}
   repo     david/playground (pushes go to ${origin})
 ${copies.map(c => `  ${c.name.padEnd(8)} http://127.0.0.1:${c.port}  home ${path.join(root, c.name, 'home')}  log ${path.join(root, c.name, 'app.log')}`).join('\n')}
+  token    ${token}  (send it as the x-play-token header; also in ${path.join(root, 'token')})
 Ctrl+C to stop.`);
-
-  const stop = () => {
-    for (const a of apps) a.kill();
-    fs.rmSync(root, { recursive: true, force: true });
-    process.exit(0);
-  };
-  process.on('SIGINT', stop);
-  process.on('SIGTERM', stop);
-})();
+})().catch(e => { console.error(`The playground couldn't start: ${e.message}`); stop(1); });

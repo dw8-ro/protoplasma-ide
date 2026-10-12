@@ -1,0 +1,33 @@
+name: Package
+
+# Builds the app whenever what goes into it might change, so a packaging mistake shows up here rather than only when
+# a version tag is pushed. Unsigned: signing happens in release.yml.
+on:
+  push:
+    branches: [main]
+    paths: [package.json, package-lock.json, .github/workflows/package.yml, .github/workflows/release.yml, scripts/sign.sh, build/**]
+  pull_request:
+    paths: [package.json, package-lock.json, .github/workflows/package.yml, .github/workflows/release.yml, scripts/sign.sh, build/**]
+
+permissions:
+  contents: read
+
+jobs:
+  dist:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm run dist
+      - name: Check the app has what it needs
+        run: |
+          app=dist/Protoplasma-darwin-arm64/Protoplasma.app/Contents/Resources/app.asar
+          files=$(npx asar list "$app")
+          for f in /app/main.js /app/index.html /src/hub.js /node_modules/monaco-editor/min/vs/loader.js; do
+            echo "$files" | grep -qx "$f" || { echo "missing from the app: $f"; exit 1; }
+          done
+          /usr/libexec/PlistBuddy -c 'Print :NSLocalNetworkUsageDescription' dist/Protoplasma-darwin-arm64/Protoplasma.app/Contents/Info.plist

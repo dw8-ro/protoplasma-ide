@@ -1,5 +1,6 @@
 // One copy of the app for the playground (see playground.js), signed in as PROTO_GITHUB_TOKEN's made-up person, with a
-// small HTTP API on 127.0.0.1:PLAY_PORT for driving it:
+// small HTTP API on 127.0.0.1:PLAY_PORT for driving it. Every request needs the playground's token in an `x-play-token`
+// header (a web page can't send one without asking first), and a local Host:
 //   POST /js     the body is page JavaScript (an async function body; `return` a value)  -> { ok, value | error }
 //   POST /click  { x, y }               a real mouse click at window coordinates (as in /shot images)
 //   POST /key    { key, modifiers }     a real key press, e.g. { "key": "Escape" } or { "key": "k", "modifiers": ["meta"] }
@@ -20,7 +21,7 @@ const path = require('path');
 const hubModule = require('../src/hub');
 const laneModule = require('../src/lane');
 
-const { PLAY_PORT, PLAY_DIR, PROTO_ONLINE_HUB: hub } = process.env;
+const { PLAY_PORT, PLAY_DIR, PLAY_TOKEN, PROTO_ONLINE_HUB: hub } = process.env;
 const people = { 'tok-david': { login: 'david', name: 'David', avatar: '' }, 'tok-max': { login: 'max', name: 'Max', avatar: '' } };
 hubModule.githubUser = async token => people[token] || null;
 app.setPath('userData', path.join(PLAY_DIR, 'userData'));
@@ -59,6 +60,8 @@ let shots = 0;
 
 http.createServer(async (req, res) => {
   const send = (code, body) => { res.writeHead(code, { 'content-type': 'application/json' }); res.end(JSON.stringify(body)); };
+  // Only the playground's own callers: the token, and an address on this Mac (not a rebound domain name).
+  if (!PLAY_TOKEN || req.headers['x-play-token'] !== PLAY_TOKEN || !/^(127\.0\.0\.1|localhost):\d+$/.test(req.headers.host || '')) return send(403, { error: 'Send the playground token as x-play-token.' });
   const raw = await new Promise(resolve => { let s = ''; req.on('data', d => { s += d; }); req.on('end', () => resolve(s)); });
   const win = BrowserWindow.getAllWindows()[0];
   if (!win) return send(503, { error: 'The window isn\'t open yet.' });
@@ -100,7 +103,8 @@ http.createServer(async (req, res) => {
   } catch (e) {
     send(500, { error: e.message });
   }
-}).listen(Number(PLAY_PORT), '127.0.0.1');
+}).on('error', e => { console.error(`The control API couldn't start on port ${PLAY_PORT}: ${e.message}`); app.exit(1); })
+  .listen(Number(PLAY_PORT), '127.0.0.1');
 
 app.on('browser-window-created', (_, win) => {
   win.webContents.setBackgroundThrottling(false); // keep painting, and screenshots current, while the window is hidden

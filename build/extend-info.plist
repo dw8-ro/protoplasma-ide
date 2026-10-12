@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>NSLocalNetworkUsageDescription</key>
+  <string>Protoplasma uses the local network for teams hosted on a Mac: to share yours with teammates nearby, and to find theirs when you turn on "Look for teams on this network".</string>
+  <key>NSBonjourServices</key>
+  <array>
+    <string>_protoplasma._tcp</string>
+  </array>
+</dict>
+</plist>

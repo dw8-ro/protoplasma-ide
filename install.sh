@@ -17,11 +17,22 @@ else
 fi
 
 ditto -x -k "$TMP"/*.zip "$TMP/app"
-# The new copy goes in beside the old one first, so a failed move never leaves you with neither.
-rm -rf /Applications/Protoplasma.app.new
-mv "$TMP/app/Protoplasma.app" /Applications/Protoplasma.app.new
-rm -rf /Applications/Protoplasma.app
-mv /Applications/Protoplasma.app.new /Applications/Protoplasma.app
+# A running copy would keep running the old version: it's asked to quit first (it asks about running agents).
+if pgrep -x Protoplasma >/dev/null 2>&1; then
+  echo "Quitting Protoplasma to replace it..."
+  osascript -e 'tell application "Protoplasma" to quit' 2>/dev/null || true
+  for _ in 1 2 3 4 5 6 7 8 9 10; do pgrep -x Protoplasma >/dev/null 2>&1 || break; sleep 1; done
+  pgrep -x Protoplasma >/dev/null 2>&1 && { echo "Protoplasma is still open. Quit it, then run this again." >&2; exit 1; }
+fi
+# The old copy is moved aside, not deleted, until the new one is in place: a failed move never leaves you with neither.
+rm -rf /Applications/Protoplasma.app.old
+[ -d /Applications/Protoplasma.app ] && mv /Applications/Protoplasma.app /Applications/Protoplasma.app.old
+if mv "$TMP/app/Protoplasma.app" /Applications/Protoplasma.app; then
+  rm -rf /Applications/Protoplasma.app.old
+else
+  [ -d /Applications/Protoplasma.app.old ] && mv /Applications/Protoplasma.app.old /Applications/Protoplasma.app
+  echo "Couldn't put the new version in /Applications." >&2; exit 1
+fi
 xattr -dr com.apple.quarantine /Applications/Protoplasma.app 2>/dev/null || true
 echo "Installed Protoplasma. It keeps itself up to date from now on."
 open /Applications/Protoplasma.app

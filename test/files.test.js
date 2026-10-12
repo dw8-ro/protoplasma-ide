@@ -1,5 +1,5 @@
 // The code view's file access (app/files.js): Commit & Push when a teammate pushed first, and the folder boundary.
-const { test } = require('node:test');
+const { test, after } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const os = require('node:os');
@@ -7,9 +7,10 @@ const path = require('node:path');
 const { execFileSync } = require('node:child_process');
 const files = require('../app/files');
 
-const env = { ...process.env, GIT_AUTHOR_NAME: 'T', GIT_AUTHOR_EMAIL: 't@example.com', GIT_COMMITTER_NAME: 'T', GIT_COMMITTER_EMAIL: 't@example.com' };
+const env = { ...process.env, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1', GIT_AUTHOR_NAME: 'T', GIT_AUTHOR_EMAIL: 't@example.com', GIT_COMMITTER_NAME: 'T', GIT_COMMITTER_EMAIL: 't@example.com' };
 const git = (cwd, ...args) => execFileSync('git', args, { cwd, env, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'protoplasma-files-'));
+after(() => fs.rmSync(tmp, { recursive: true, force: true }));
 const remote = path.join(tmp, 'remote.git');
 git(tmp, 'init', '-q', '--bare', '-b', 'main', remote);
 const seed = path.join(tmp, 'seed');
@@ -59,11 +60,29 @@ test('mid-rebase, conflicts are marked and nothing gets committed', async () => 
 
 test('nothing outside the session folder can be read or written, symlinks included', () => {
   fs.symlinkSync(os.homedir(), path.join(david, 'home-link'));
-  for (const rel of ['../max/lobby.js', '/etc/hosts', 'home-link']) {
+  // A sibling whose name starts with the session folder's ("david-evil" next to "david") is outside it too.
+  fs.mkdirSync(path.join(tmp, 'david-evil'));
+  fs.writeFileSync(path.join(tmp, 'david-evil', 'x.js'), 'secret\n');
+  fs.symlinkSync(path.join(tmp, 'david-evil'), path.join(david, 'evil-link'));
+  for (const rel of ['../max/lobby.js', '/etc/hosts', 'home-link', '../david-evil/x.js', 'evil-link/x.js']) {
     const got = files.read(david, rel); // says why it can't be shown, instead of showing it
     assert.ok(got.outside || got.gone, `${rel}: ${JSON.stringify(got)}`);
     assert.equal(got.text, undefined, rel);
-    assert.throws(() => files.write(david, rel, 'x'), /outside the session folder|ENOENT/, rel);
+    assert.throws(() => files.write(david, rel, 'x'), /outside the session folder/, rel);
   }
+  assert.equal(fs.readFileSync(path.join(tmp, 'david-evil', 'x.js'), 'utf8'), 'secret\n', 'nothing was written through');
   assert.equal(files.read(david, 'lobby.js').text, 'one\nDAVID\nthree\n');
+});
+
+test('saving to a link that points nowhere is refused, rather than creating its target', () => {
+  const target = path.join(tmp, 'nowhere.js');
+  fs.symlinkSync(target, path.join(david, 'nowhere-link'));
+  assert.throws(() => files.write(david, 'nowhere-link', 'x'), /doesn't exist/);
+  assert.ok(!fs.existsSync(target));
+});
+
+test('a renamed file shows once, under its new name', async () => {
+  git(max, 'mv', 'max.js', 'moved.js');
+  assert.deepEqual((await files.status(max, env)).changes, [{ path: 'moved.js', state: 'R' }]);
+  git(max, 'mv', 'moved.js', 'max.js');
 });

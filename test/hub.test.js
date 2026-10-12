@@ -442,6 +442,7 @@ test('a Codex or OpenCode agent is working while it prints and idle once it goes
   const gone = nextState(lanes => !lanes.some(l => l.id === lane.id));
   processes.pop().kill();
   await gone;
+  require('node:fs').rmSync(dir, { recursive: true, force: true });
 });
 
 test('agents without hooks report working and idle themselves', async () => {
@@ -451,7 +452,12 @@ test('agents without hooks report working and idle themselves', async () => {
     lane.socket.send(JSON.stringify({ t: 'status', status }));
     await seen;
   }
+  let sawHacked = false;
+  const working = nextState(lanes => { const s = lanes.find(l => l.id === 'no-hooks')?.status; sawHacked ||= s === 'hacked'; return s === 'working'; });
   lane.socket.send(JSON.stringify({ t: 'status', status: 'hacked' }));
+  lane.socket.send(JSON.stringify({ t: 'status', status: 'working' }));
+  await working;
+  assert.equal(sawHacked, false, 'an unknown status is ignored');
   await lane.close();
 });
 
@@ -496,7 +502,7 @@ test('removes an agent when its process exits, keeping its last screen to look b
   assert.match((await replay).d, /farewell-from-the-agent/);
 });
 
-test('a session can be renamed while nothing runs in it, keeping its branch name', async () => {
+test('a session can be renamed, with or without agents in it, keeping its branch name', async () => {
   const route = `/teams/${team.id}/sessions`;
   await api('tok-alice', 'POST', route, { name: 'old-name' });
   const followed = nextState(lanes => lanes.some(l => l.session === 'Busy') && !lanes.some(l => l.session === 's1'));
@@ -533,7 +539,7 @@ test('removing someone from the team disconnects their agents, and inviting them
   lane.term.kill();
 });
 
-test('members can leave, and the owner deletes a team once its agents have stopped', async () => {
+test('members can leave, and the owner can delete a team only while no agents run in it', async () => {
   const members = `/teams/${team.id}/members`;
   assert.equal((await api('tok-alice', 'POST', members, { login: 'carol' })).status, 200);
   assert.equal((await api('tok-alice', 'POST', members, { login: 'Carol' })).status, 409, 'already on the team');
@@ -606,6 +612,7 @@ test('the hub keeps going when GitHub or its disk lets it down', async () => {
   assert.equal((await call('tok-alice', 'POST', { name: 'Unsaved' })).status, 201, 'a failed save is logged, not fatal');
   assert.equal((await fetch(u)).status, 200);
   await h.close();
+  fs.rmSync(dataDir, { recursive: true, force: true });
 });
 
 test('session names made of dots are refused, and other bad requests get clear answers', async () => {

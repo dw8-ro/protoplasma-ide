@@ -112,7 +112,7 @@ Work then reaches `main` the usual way, through a pull request. These layers mak
 
 ## Install
 
-You'll need a Mac with Apple silicon and at least one of [Claude Code](https://code.claude.com), Codex or OpenCode. The [GitHub CLI](https://cli.github.com) is optional and powers the repo list, pull requests and issues. On first run the app checks for both and tells you what's missing.
+You'll need a Mac with Apple silicon and at least one of [Claude Code](https://code.claude.com), Codex or OpenCode. The [GitHub CLI](https://cli.github.com) powers the repo list, pull requests and issues; the app runs without it, and on first run it checks for both and tells you what's missing. The one-line install below does need it, signed in (`gh auth login`) with access to this repo.
 
 ```bash
 gh api repos/dw8-ro/protoplasma-ide/contents/install.sh -H "Accept: application/vnd.github.raw" | sh
@@ -147,28 +147,31 @@ To host a hub, deploy the `Dockerfile` (Railway or any container host) with a vo
 <details>
 <summary>Wire protocol</summary>
 
-The first message on every WebSocket carries a GitHub token and a team id; nothing else is accepted until both are verified.
+The first message on every WebSocket carries a GitHub token and a team id. Anything sent while they're being verified (up to 1 MB) waits, and is handled only once they are.
 
 | Endpoint | Direction | Messages |
 | --- | --- | --- |
-| `/lane` | lane → hub | `hello`, `out {d}`, `size {cols, rows}`, `git {branch, added, removed, files, behind, ahead, changed}`, `status {status}` |
+| `/lane` | lane → hub | `hello {token, team, id, hookSecret, session, cmd, root, roots, repo, git, cols, rows, open, history, machine}`, `out {d}`, `size {cols, rows}`, `git {branch, added, removed, files, behind, ahead, unpushed, changed, local}`, `status {status}` |
 | | hub → lane | `in {d}` (only for agents teammates may type into) |
-| `/watch` | app → hub | `watch {token, team}`, `look {session}`, `in {lane, d}`, `replay {id}` |
-| | hub → app | `state {lanes, watchers, memories, sessions, stopped}`, `out {lane, d}`, `replay {id, d}` |
-| `/teams` | app → hub | REST for teams, members, notes, sessions and comments |
+| `/watch` | app → hub | `watch {token, team}`, `look {session}`, `in {lane, d}`, `replay {id}`, `file:get {lane, path, ask}` (a teammate's file), `file:put {req, text, error}` (answering for your own agent) |
+| | hub → app | `state {lanes, watchers, members, memories, sessions, stopped}`, `out {lane, d}`, `replay {id, d}`, `file:get {req, lane, path, from}`, `file:put {ask, text, error}` |
+| `/teams` | app → hub | REST for teams, members, notes, sessions (renaming, goals, plan steps) and comments |
 | `/hooks/:lane` | Claude Code → hub | Hook events, authenticated with a per-lane secret |
 </details>
 
 ## Development
 
 ```bash
-npm test            # hub, lane and worktree tests (node:test)
+npm test            # hub, lane, worktree, code view and update tests (node:test)
 npm run e2e         # drives the real app through every main flow, the code view included
 npm run screenshot  # regenerates the images in docs/
 npm run demo        # records docs/demo.gif
-npm run playground  # two copies of the app, David and Max, on one shared team and repo, each with a control API
+npm run playground  # two copies of the app, David and Max, on one local hub and repo, each with a control API
+                    # (create a team in David's copy and invite max; the API wants the printed token as x-play-token)
 npm run icon        # renders the app icon from app/icon.svg
 ```
+
+`package.json`'s `allowScripts` names the exact versions of Electron and node-pty whose install scripts may run. When you bump either, update its entry too, or its install step is skipped and `npm start` fails.
 
 ```
 app/      Electron main process, preload bridge and interface
@@ -180,9 +183,9 @@ scripts/  end-to-end check, screenshots, demo and icon tooling
 ## Security and privacy
 
 - Sign-in asks for read-only access to your public GitHub profile, and nothing else. Repo access stays with the GitHub CLI on your Mac.
-- The hub keeps team names, members, notes, and sessions with their goals, plans and comments (a comment on lines of code keeps the text of those lines). Terminal output and Claude Code's hook events, which include what a tool is about to change, pass through it and are held in memory only.
+- The hub keeps team names, members, notes, and sessions with their goals, repos, who started them, plans and comments (a comment on lines of code keeps the text of those lines). While an agent runs, its terminal output, Claude Code's hook events (which include what a tool is about to change), its latest prompt, its branch, the names of the files its checkout changed and its folder's path pass through the hub. Up to 512 KB of each agent's output is held in memory, along with the last screen of the 20 most recently stopped agents per team; none of it is written to disk.
 - Looking for teams hosted on a teammate's Mac is off until you turn it on in Your teams: it shows your GitHub sign-in to every Mac on the network that answers.
-- The code view reads and writes files on your Mac only. The hub never stores your code: teammates see which files changed, not what's in them, unless you turn on **Share the files your agents change** (Settings → Agents, off by default). Then a teammate can open those files, read-only; each one passes through the hub on the way and isn't kept.
+- The code view reads and writes files on your Mac only, and the hub never stores your code. In the Explorer teammates see which files changed; what your agent prints in its terminal is visible to the whole team. With **Share the files your agents change** on (Settings → Agents, off by default), a teammate can also open those files, read-only; each one passes through the hub on the way and isn't kept.
 - Teams are invite-only, and removing someone disconnects them at once.
 - Letting teammates type into your agent lets them run commands on your Mac, so it's off unless you turn it on, and your agent shows who last typed into it.
 - Teams hosted on your own Mac use plain HTTP; on a shared network, use an online team.

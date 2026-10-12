@@ -14,6 +14,11 @@ jobs:
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      # Every installed copy updates to whatever is released here, so only a commit that is on main ships.
+      - name: Check the tag is a commit on main
+        run: git merge-base --is-ancestor "$GITHUB_SHA" origin/main
       - uses: actions/setup-node@v5
         with:
           node-version: 24

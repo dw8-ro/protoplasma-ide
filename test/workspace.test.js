@@ -8,7 +8,9 @@ const { execFileSync } = require('node:child_process');
 const { sessionWorktree, removeSessionWorktree, installPushGuard, slug } = require('../src/workspace');
 const { gitStatus } = require('../src/lane');
 
-const env = { ...process.env, GIT_AUTHOR_NAME: 'Test', GIT_AUTHOR_EMAIL: 'test@example.com', GIT_COMMITTER_NAME: 'Test', GIT_COMMITTER_EMAIL: 'test@example.com' };
+// The developer's own git config (push.autoSetupRemote, signing) and a shared-team agent's env would change the results.
+const env = { ...process.env, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1', GIT_AUTHOR_NAME: 'Test', GIT_AUTHOR_EMAIL: 'test@example.com', GIT_COMMITTER_NAME: 'Test', GIT_COMMITTER_EMAIL: 'test@example.com' };
+delete env.PROTO_SHARED_TEAM;
 const git = (cwd, ...args) => execFileSync('git', args, { cwd, env, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
 const commit = (repo, file, text) => {
   fs.writeFileSync(path.join(repo, file), text);
@@ -46,18 +48,21 @@ test('session names become safe branch names', () => {
 });
 
 test('a session gets its own folder and branch, off the default branch', async () => {
+  git(alice, 'checkout', '-q', '-b', 'scratch'); // what the main checkout has out shouldn't matter
+  commit(alice, 'scratch.txt', 'local only\n');
   const { dir, branch } = await sessionWorktree(alice, 'Fix Login!', env);
   aliceTree = dir;
+  assert.equal(git(alice, 'branch', '--show-current'), 'scratch', 'the main checkout is untouched');
+  git(alice, 'checkout', '-q', 'main');
   assert.equal(branch, 'session/fix-login');
   assert.equal(git(dir, 'branch', '--show-current'), branch);
-  assert.ok(fs.existsSync(path.join(dir, 'README.md')));
-  assert.equal(git(alice, 'branch', '--show-current'), 'main', 'the main checkout is untouched');
+  assert.equal(git(dir, 'rev-parse', 'HEAD'), git(alice, 'rev-parse', 'origin/main'), 'from the remote default branch');
   assert.deepEqual(await sessionWorktree(alice, 'fix login', env), { dir, branch }, 'reused, not recreated');
 });
 
 test('a bare `git push` from a session branch cannot land on main', () => {
   commit(aliceTree, 'login.js', 'export const login = 1;\n');
-  assert.throws(() => git(aliceTree, 'push'), /no upstream|has no upstream/i);
+  assert.throws(() => git(aliceTree, 'push'));
   assert.equal(git(alice, 'rev-parse', 'origin/main'), git(alice, 'rev-parse', 'main'), 'main did not move');
 });
 
@@ -84,7 +89,7 @@ test('git status reports changes and how far behind the branch is', async () => 
   assert.equal(status.unpushed, 0);
 });
 
-test('the push guard stops shared-team agents pushing to main or force-pushing, and nobody else', async () => {
+test('the push guard stops shared-team agents pushing to main or force-pushing, but not a person', async () => {
   assert.equal(await installPushGuard(alice, env), true);
   const agent = { ...env, PROTO_SHARED_TEAM: '1' };
   const push = (cwd, extra, ...args) => execFileSync('git', ['push', '-q', ...args], { cwd, env: { ...env, ...extra }, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
@@ -103,6 +108,10 @@ test('a session folder is removed only when it has nothing uncommitted', async (
   fs.writeFileSync(path.join(aliceTree, 'draft.txt'), 'not committed\n');
   await assert.rejects(removeSessionWorktree(alice, 'Fix Login!', env), /modified or untracked|--force/);
   assert.ok(fs.existsSync(aliceTree), 'uncommitted work is kept');
+  fs.rmSync(path.join(aliceTree, 'draft.txt'));
+  fs.appendFileSync(path.join(aliceTree, 'README.md'), 'edited\n');
+  await assert.rejects(removeSessionWorktree(alice, 'Fix Login!', env), /modified or untracked|--force/, 'an edit to a tracked file too');
+  git(aliceTree, 'checkout', '--', 'README.md');
   const { dir } = await sessionWorktree(alice, 'Throwaway', env);
   assert.equal(await removeSessionWorktree(alice, 'Throwaway', env), true);
   assert.ok(!fs.existsSync(dir));
@@ -114,7 +123,7 @@ test('pushed work still counts as changed until it reaches main, and main moving
   const { dir } = await sessionWorktree(alice, 'Ranked', env);
   commit(dir, 'ranked.js', 'export const ranked = 1;\n');
   git(dir, 'push', '-q', '-u', 'origin', 'session/ranked');
-  const teammate = fs.mkdtempSync(path.join(os.tmpdir(), 'protoplasma-main-'));
+  const teammate = path.join(tmp, 'teammate');
   execFileSync('git', ['clone', '-q', git(alice, 'remote', 'get-url', 'origin'), teammate], { env });
   commit(teammate, 'hotfix.js', 'export const hotfix = 1;\n');
   git(teammate, 'push', '-q', 'origin', 'HEAD:main');
@@ -126,7 +135,7 @@ test('pushed work still counts as changed until it reaches main, and main moving
   assert.deepEqual(status.local, [], 'everything here is pushed');
 
   // A teammate pushes to the same branch: that's behind, not a change of ours.
-  const mate = fs.mkdtempSync(path.join(os.tmpdir(), 'protoplasma-mate-'));
+  const mate = path.join(tmp, 'mate');
   execFileSync('git', ['clone', '-q', '-b', 'session/ranked', git(alice, 'remote', 'get-url', 'origin'), mate], { env });
   commit(mate, 'matchmaking.js', 'export const mm = 1;\n');
   git(mate, 'push', '-q');

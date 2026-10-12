@@ -15,6 +15,16 @@ const people = { 'tok-david': { login: 'david', name: 'David', avatar: '' }, 'to
 const verifyUser = async token => people[token] || null;
 const results = [];
 const check = (name, ok, detail = '') => { results.push(!!ok); console.log(`${ok ? 'PASS' : 'FAIL'}  ${name}${detail ? `  (${detail})` : ''}`); };
+// Temporary folders made for the run, removed at the end.
+const temps = [];
+const tempDir = prefix => { const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix)); temps.push(dir); return dir; };
+// Electron writes its own folder until after the last exit handler, so that one is removed once this process is gone.
+process.on('exit', () => {
+  for (const dir of temps) fs.rmSync(dir, { recursive: true, force: true });
+  spawn('sh', ['-c', 'while kill -0 "$1" 2>/dev/null; do sleep 0.2; done; rm -rf "$2"', 'sh', String(process.pid), app.getPath('userData')], { detached: true, stdio: 'ignore' }).unref();
+});
+// A run that hangs (a page stuck, a step waiting forever) ends with a failure instead of running on.
+setTimeout(() => { console.log('FAIL  the run took longer than 15 minutes'); process.exitCode = 1; app.exit(1); }, 15 * 60_000).unref();
 const git = (cwd, ...args) => execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'],
   env: { ...process.env, GIT_AUTHOR_NAME: 'T', GIT_AUTHOR_EMAIL: 't@example.com', GIT_COMMITTER_NAME: 'T', GIT_COMMITTER_EMAIL: 't@example.com' } }).trim();
 
@@ -23,7 +33,7 @@ const demoOwner = path.join(os.homedir(), 'Protoplasma', 'protoplasma-e2e');
 const hadProtoplasmaDir = fs.existsSync(path.join(os.homedir(), 'Protoplasma'));
 function makeDemoRepo() {
   fs.rmSync(demoOwner, { recursive: true, force: true });
-  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'protoplasma-e2e-remote-'));
+  const tmp = tempDir('protoplasma-e2e-remote-');
   git(tmp, 'init', '-q', '--bare', '-b', 'main', path.join(tmp, 'demo.git'));
   fs.mkdirSync(demoOwner, { recursive: true });
   const clone = path.join(demoOwner, 'demo');
@@ -41,7 +51,7 @@ function makeDemoRepo() {
   hubModule.githubUser = verifyUser;
   const hub = `http://127.0.0.1:${(await hubModule.startHub({ port: 0, host: '127.0.0.1', verifyUser })).port}`;
   process.env.PROTO_ONLINE_HUB = hub;
-  app.setPath('userData', fs.mkdtempSync(path.join(os.tmpdir(), 'protoplasma-e2e-')));
+  app.setPath('userData', tempDir('protoplasma-e2e-'));
   await app.whenReady();
   fs.writeFileSync(path.join(app.getPath('userData'), 'github-token'), safeStorage.encryptString(JSON.stringify({ token: 'tok-david', user: people['tok-david'] })));
   app.on('browser-window-created', (_, win) => win.webContents.once('did-finish-load', () => run(win, hub)));
@@ -52,8 +62,14 @@ async function run(win, hub) {
   const js = s => win.webContents.executeJavaScript(s);
   const until = async (expr, ms = 8000) => { const end = Date.now() + ms; while (Date.now() < end) { if (await js(expr)) return true; await sleep(100); } return false; };
   const secretOf = pid => { try { return /PROTO_HOOK_SECRET=(\w+)/.exec(execFileSync('ps', ['eww', '-o', 'command=', '-p', String(pid)], { encoding: 'utf8' }))?.[1]; } catch { return undefined; } };
-  const claudePids = () => execFileSync('ps', ['-Ao', 'pid=,command='], { encoding: 'utf8' }).split('\n')
-    .filter(l => l.includes('claude --settings') && !l.includes('protoplasma-teammate')).map(l => l.trim().split(' ')[0]).filter(pid => secretOf(pid)); // only this run's agents
+  // This run's agents only: processes descended from this one (an installed copy or a playground runs its own).
+  const claudePids = () => {
+    const rows = execFileSync('ps', ['-Ao', 'pid=,ppid=,command='], { encoding: 'utf8' }).split('\n')
+      .map(l => /^\s*(\d+)\s+(\d+)\s+(.*)$/.exec(l)).filter(Boolean).map(([, pid, ppid, command]) => ({ pid, ppid, command }));
+    const ours = new Set([String(process.pid)]);
+    for (let grew = true; grew;) { grew = false; for (const r of rows) if (!ours.has(r.pid) && ours.has(r.ppid)) { ours.add(r.pid); grew = true; } }
+    return rows.filter(r => ours.has(r.pid) && r.command.includes('claude --settings') && !r.command.includes('protoplasma-teammate')).map(r => r.pid).filter(pid => secretOf(pid));
+  };
   const hook = async (lane, secret, body) => {
     const res = await fetch(`${hub}/hooks/${lane}`, { method: 'POST', headers: { authorization: `Bearer ${secret}` }, body: JSON.stringify({ cwd: root, ...body }) });
     return (await res.json().catch(() => null))?.hookSpecificOutput ?? null;
@@ -77,7 +93,7 @@ async function run(win, hub) {
     check('inviting someone twice says so', await until(`/already on the team/.test($('#inviteErr').textContent)`), await js(`$('#inviteErr').textContent`));
     await js(`$('#inviteDlg').close(); $('#navSessions').click()`);
 
-    const fake = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'protoplasma-teammate-')), 'claude');
+    const fake = path.join(tempDir('protoplasma-teammate-'), 'claude');
     fs.writeFileSync(fake, `#!/bin/sh\necho "$PROTO_HOOK_SECRET" > ${secretFile}\nprintf 'teammate ready\\r\\n'\nexec cat\n`, { mode: 0o755 });
     teammate = spawn('node', [path.join(root, 'src/lane.js'), hub, team, 's1', fake], { cwd: root, env: { ...process.env, PROTO_TOKEN: 'tok-max' }, stdio: 'ignore' });
     check('Max\'s agent appears under his name', await until('hubLanes.length === 1 && hubLanes[0].name === "Max"'));
@@ -86,7 +102,8 @@ async function run(win, hub) {
     await js(`openNewAgent('s1')`);
     const loaded = await until('!!repos || !!reposError', 20000);
     const online = await js('!!repos');
-    check(online ? 'repo list loads from GitHub' : 'repo list explains that GitHub is unreachable', loaded && (online || await js(`/reach GitHub/.test($('#repoPicker').textContent)`)),
+    // Without GitHub (offline, no GitHub CLI, or not signed in to it) the picker says why instead.
+    check(online ? 'repo list loads from GitHub' : 'repo list explains why it can\'t load', loaded && (online || await js(`/reach GitHub|Install the GitHub CLI|Sign in to the GitHub CLI/.test($('#repoPicker').textContent)`)),
       online ? `${await js('repos.length')} repos` : await js(`$('#repoPicker').textContent.trim()`));
     await js(`reposError = ''; repos = [{ name: 'david/lobby', description: 'Game lobby service', private: true, mine: true }, { name: 'david/site', description: '', private: false, mine: true }, { name: 'max/engine', description: 'Shared engine', private: true, mine: false }];
       $('input[name=source][value=repo]').checked = true; syncSource(); $('#repo').value = ''; renderRepoPicker()`);
@@ -214,7 +231,7 @@ async function run(win, hub) {
     check('the clone gets the push guard', /Added by Protoplasma/.test(fs.readFileSync(path.join(clone, '.git/hooks/pre-push'), 'utf8')));
 
     // main moves on the remote: the lane notices it's behind and its agent is told
-    const other = fs.mkdtempSync(path.join(os.tmpdir(), 'protoplasma-e2e-other-'));
+    const other = tempDir('protoplasma-e2e-other-');
     git(other, 'clone', '-q', git(clone, 'remote', 'get-url', 'origin'), 'c');
     fs.writeFileSync(path.join(other, 'c', 'new.txt'), 'x\n');
     git(path.join(other, 'c'), 'add', '.');
@@ -358,7 +375,7 @@ async function run(win, hub) {
     await until(`currentTeam?.key === ${JSON.stringify(mainTeam)}`);
 
     // ---- an agent waiting on Claude's folder trust prompt needs you
-    const untrusted = fs.mkdtempSync(path.join(os.tmpdir(), 'protoplasma-e2e-trust-'));
+    const untrusted = tempDir('protoplasma-e2e-trust-');
     await js(`openNewAgent('trust-check'); $('input[name=source][value=folder]').checked = true; syncSource(); $('#cwd').value = ${JSON.stringify(untrusted)}; $('#agentForm').requestSubmit()`);
     const asked = await until(`hubLanes.some(l => l.session === 'trust-check' && l.status === 'needs you')`, 20000);
     check('a folder trust prompt shows as Needs you', asked && await js(`$('#alerts').textContent.includes('Your agent needs you') || view === 'session'`),
@@ -378,12 +395,17 @@ async function run(win, hub) {
   } catch (e) {
     check('no unexpected errors', false, e.message);
   } finally {
+    // Alerts are the app's error messages; the only expected ones are for agents this script stops right after starting.
+    const alerts = await js('window.__alerts || []').catch(() => []);
+    const unexpected = alerts.filter(a => !/stopped as soon as it started/.test(a));
+    check('no unexpected error alerts', !unexpected.length, unexpected.slice(0, 3).join(' | '));
     console.log(`\n${results.filter(Boolean).length}/${results.length} passed`);
     if (results.includes(false)) process.exitCode = 1;
     teammate?.kill();
     fs.rmSync(secretFile, { force: true });
     fs.rmSync(demoOwner, { recursive: true, force: true });
     if (!hadProtoplasmaDir) try { fs.rmdirSync(path.join(os.homedir(), 'Protoplasma')); } catch {}
+    for (const dir of temps) fs.rmSync(dir, { recursive: true, force: true });
     win.destroy(); // skips the "agents are still running" prompt; the app quits once its window is gone
   }
 }

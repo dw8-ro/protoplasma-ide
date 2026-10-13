@@ -51,6 +51,8 @@ Shared spaces for coding agents, like [Amoeba](https://useamoeba.com), drive the
 | ⇧⌘M | Comment on the selected lines |
 | ⌘J | Hide the panel (under the code, or beside the agents) |
 | ⌘B | Hide the sidebar |
+| ⌘I | Invite someone to the team |
+| ⇧⌘T | Switch team |
 | ⌘, | Settings |
 </details>
 
@@ -120,7 +122,7 @@ gh api repos/dw8-ro/protoplasma-ide/contents/install.sh -H "Accept: application/
 
 That installs the latest release into Applications, with no "can't be verified" warning (files fetched from Terminal aren't quarantined). You can also download the zip from [Releases](https://github.com/dw8-ro/protoplasma-ide/releases); the first time you open it, macOS asks you to allow it under System Settings → Privacy & Security → Open Anyway.
 
-**Updates install themselves.** The app checks GitHub every few hours and shows a bar when a new version is out: Update now, and it relaunches on the new one. Releases are signed with the project's own certificate (no Apple account involved), so macOS knows each version is the same app and your Keychain and privacy permissions carry over.
+**Updates install themselves.** The app checks GitHub every few hours and shows a bar when a new version is out: Update now, and it relaunches on the new one. While the repo is private, this needs the GitHub CLI signed in with access to it. Releases are signed with the project's own certificate (no Apple account involved), so macOS knows each version is the same app and your Keychain and privacy permissions carry over.
 
 ### From source
 
@@ -151,7 +153,7 @@ The first message on every WebSocket carries a GitHub token and a team id. Anyth
 
 | Endpoint | Direction | Messages |
 | --- | --- | --- |
-| `/lane` | lane → hub | `hello {token, team, id, hookSecret, session, cmd, root, roots, repo, git, cols, rows, open, history, machine}`, `out {d}`, `size {cols, rows}`, `git {branch, added, removed, files, behind, ahead, unpushed, changed, local}`, `status {status}` |
+| `/lane` | lane → hub | `hello {token, team, id, hookSecret, session, cmd, root, roots, repo, branch, git, cols, rows, open, history, machine}`, `out {d}`, `size {cols, rows}`, `git {branch, added, removed, files, behind, ahead, unpushed, changed, local}`, `status {status}` |
 | | hub → lane | `in {d}` (only for agents teammates may type into) |
 | `/watch` | app → hub | `watch {token, team}`, `look {session}`, `in {lane, d}`, `replay {id}`, `file:get {lane, path, ask}` (a teammate's file), `file:put {req, text, error}` (answering for your own agent) |
 | | hub → app | `state {lanes, watchers, members, memories, sessions, stopped}`, `out {lane, d}`, `replay {id, d}`, `file:get {req, lane, path, from}`, `file:put {ask, text, error}` |

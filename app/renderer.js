@@ -1653,7 +1653,7 @@ const showUpdateStatus = u => {
   const install = $('[data-install-update]');
   if (install) install.hidden = !(u?.available && u.canInstall) || staged || downloading;
   if ($('#updateStatus')) $('#updateStatus').textContent = staged ? `${update.latest} goes in when Protoplasma quits` : downloading ? 'Downloading…'
-    : !u || u.error ? 'Couldn\'t reach GitHub' : u.available ? `${u.latest} is available` : u.latest ? 'Up to date' : 'No releases yet';
+    : !u ? 'Couldn\'t reach GitHub' : u.error ? u.error : u.available ? `${u.latest} is available` : u.latest ? 'Up to date' : 'No releases yet';
 };
 $('#settingsDone').onclick = () => $('#settings').close();
 let settingsOpener = null;

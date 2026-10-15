@@ -35,8 +35,11 @@ async function latestRelease(env) {
   if (res?.ok) { const body = await res.json().catch(() => null); if (body) return shape(body, true); }
   let out;
   try { out = await run('gh', ['api', `repos/${REPO}/releases/latest`], env, 20_000); } catch (e) {
-    if (/HTTP 404|Not Found/i.test(e.message)) return null; // no releases yet
-    throw new Error('Couldn\'t reach GitHub to check for updates.');
+    if (!/HTTP 404|Not Found/i.test(e.message)) throw new Error('Couldn\'t reach GitHub to check for updates.');
+    // GitHub says 404 both for "no releases yet" and for a repo this login can't see; only the first means up to date.
+    const visible = await run('gh', ['api', `repos/${REPO}`], env, 20_000).then(() => true, () => false);
+    if (visible) return null;
+    throw new Error('Your GitHub CLI login can\'t see Protoplasma\'s repo, so it can\'t check for updates.');
   }
   return shape(JSON.parse(out), false);
 }

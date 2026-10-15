@@ -151,15 +151,40 @@ async function search(root, query, env) {
   }).filter(hit => hit.path && hit.line);
 }
 
+const CONFLICT_LINES = /^(<{7}|>{7})( |$)/m; // what git writes around both sides of a conflict
+
+/**
+ * Brings a teammate's newer work on this branch into this checkout, after Commit & Push found you both changed the same
+ * lines. A merge, not a rebase: lines changed on both sides get git's conflict lines and are marked C, to fix in the
+ * editor; Commit & Push then finishes the merge. Resolves to what happened, in words.
+ */
+async function pull(root, env) {
+  const busy = underWay(root, env);
+  if (busy) throw new Error(`A ${busy} is already under way. Finish it (or abort it) first.`);
+  if ((await git(root, ['status', '--porcelain', '--untracked-files=no'], env)).trim()) throw new Error('Commit or undo your changes first, so they aren\'t mixed into the pull.');
+  const branch = (await git(root, ['branch', '--show-current'], env)).trim();
+  if (!branch) throw new Error('This checkout isn\'t on a branch (a detached HEAD). Switch to one in the Terminal tab first.');
+  try {
+    // --ff and --no-rebase override a pull.ff or pull.rebase setting that would refuse or rebase instead.
+    await git(root, ['pull', '--no-rebase', '--ff', '--no-edit', 'origin', branch], env);
+    return `Pulled your teammate's work on ${branch}. Commit & Push to send yours.`;
+  } catch (e) {
+    if (underWay(root, env) !== 'merge') throw e;
+    return `Pulled your teammate's work on ${branch}. The files marked C changed on both sides: in each, keep what should stay and delete git's <<<<<<<, ======= and >>>>>>> lines, save, then Commit & Push.`;
+  }
+}
+
 /**
  * Commits everything with `message` (if there's one) and pushes the branch. When a teammate pushed to the same branch
- * first, this work goes on top of theirs and is pushed again. Resolves to what happened, in words.
+ * first, this work goes on top of theirs and is pushed again. During a merge (from Pull), finishes it instead, once no
+ * file has conflict lines left. Resolves to what happened, in words.
  */
 async function commitAndPush(root, message, env) {
-  // Committing in the middle of a rebase or merge, or with files still conflicted, would commit conflict markers.
+  // Committing in the middle of a rebase, or with files still conflicted, would commit conflict markers.
   const busy = underWay(root, env);
-  if (busy) throw new Error(`A ${busy} is under way. Finish it (or abort it) in the Terminal tab, then commit.`);
+  if (busy && busy !== 'merge') throw new Error(`A ${busy} is under way. Finish it (or abort it) in the Terminal tab, then commit.`);
   const conflicted = async () => (await git(root, ['diff', '--name-only', '--diff-filter=U'], env).catch(() => '')).trim();
+  if (busy === 'merge') return finishMerge(root, message, env, (await conflicted()).split('\n').filter(Boolean));
   if (await conflicted()) throw new Error('Some files still have conflicts (marked C). Sort them out first.');
   if (!(await git(root, ['branch', '--show-current'], env)).trim()) throw new Error('This checkout isn\'t on a branch (a detached HEAD). Switch to one in the Terminal tab first.');
   const done = message ? 'Committed and pushed.' : 'Pushed.';
@@ -184,7 +209,7 @@ async function commitAndPush(root, message, env) {
     const conflict = underWay(root);
     await git(root, ['rebase', '--abort'], env).catch(() => {});
     if (!conflict) return `${was} couldn't be pushed: ${e.message}`;
-    return `${was} couldn't be pushed: a teammate changed the same lines on ${branch}. Pull in the Terminal tab and sort out the conflict, or ask your agent to.`;
+    return `${was} couldn't be pushed: a teammate changed the same lines on ${branch}. Pull their work, fix the files marked C, then Commit & Push. Or ask your agent to.`;
   }
   // Uncommitted edits put back after the rebase can clash with the teammate's change: then they're marked C.
   const clashed = await conflicted() ? ' Your uncommitted changes clashed with theirs when put back: sort out the files marked C (git keeps your version in its stash too).' : '';
@@ -193,6 +218,25 @@ async function commitAndPush(root, message, env) {
     return `${message ? 'Committed, put' : 'Put'} on top of your teammate's work on ${branch}, and pushed.${clashed}`;
   } catch (e) {
     return `${was} couldn't be pushed: ${e.message}${clashed}`;
+  }
+}
+
+// Fixed files still count as conflicted to git until they're added, so a file is taken as fixed once its conflict lines
+// are gone. `unmerged` paths are from the repo's top.
+async function finishMerge(root, message, env, unmerged) {
+  const top = (await git(root, ['rev-parse', '--show-toplevel'], env)).trim();
+  const left = unmerged.filter(f => { try { return CONFLICT_LINES.test(fs.readFileSync(path.join(top, f), 'utf8')); } catch { return false; } }); // a deleted file has none
+  if (left.length) throw new Error(`Some files still have git's conflict lines (<<<<<<<): ${left.slice(0, 3).join(', ')}. Fix them and save, then Commit & Push.`);
+  await git(root, ['add', '-A', '--', '.'], env);
+  if (unmerged.length) await git(top, ['add', '-A', '--', ...unmerged], env);
+  await git(root, ['commit', ...(message ? ['-m', String(message)] : ['--no-edit'])], env); // the whole merge: it can't be split by folder
+  try {
+    await git(root, ['push', '-u', 'origin', 'HEAD'], env);
+    return 'Merged and pushed.';
+  } catch (e) {
+    return /non-fast-forward|fetch first/.test(e.stderr || e.message)
+      ? 'Merged, but couldn\'t be pushed: a teammate pushed again since. Pull again, then Commit & Push.'
+      : `Merged, but couldn't be pushed: ${e.message}`;
   }
 }
 
@@ -222,4 +266,4 @@ function watch(root, onChange) {
 /** Where `root` sits in its repo ('' at the top, or outside git): agents report paths from the repo's top. */
 const prefixOf = (root, env) => git(root, ['rev-parse', '--show-prefix'], env).then(p => p.trim(), () => '');
 
-module.exports = { list, status, read, committed, write, search, commitAndPush, watch, inside, prefixOf };
+module.exports = { list, status, read, committed, write, search, pull, commitAndPush, watch, inside, prefixOf };

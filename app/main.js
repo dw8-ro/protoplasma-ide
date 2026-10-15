@@ -104,7 +104,12 @@ ipcMain.handle('teams:token', signedIn(async key => (await teams.access(session,
 ipcMain.handle('teams:invite', signedIn(async (key, login) => {
   const found = await github.findUser(String(login), session.token); // catches typos before they become a member nobody is
   if (!found) throw new Error(`There's no GitHub user called ${login}.`);
-  return remember({ ...teamFor(key), ...await teams.invite(session, teamFor(key), found) });
+  const next = remember({ ...teamFor(key), ...await teams.invite(session, teamFor(key), found) });
+  // The push guard is switched on when an agent starts (PROTO_SHARED_TEAM), so Codex and OpenCode agents started while
+  // the team was just you don't have it. Said here, where it starts to matter.
+  const n = [...lanes.values()].filter(l => l.teamKey === key && l.unguarded).length;
+  const notice = n ? `${n === 1 ? 'A Codex or OpenCode agent' : `${n} Codex or OpenCode agents`} you started while the team was just you ${n === 1 ? 'isn\'t' : 'aren\'t'} push-guarded, so ${n === 1 ? 'it' : 'they'} can still push to main. Restart ${n === 1 ? 'it' : 'them'} to turn the guard on.` : '';
+  return { ...next, notice };
 }));
 ipcMain.handle('memories:add', signedIn((key, note) => teams.addMemory(session, teamFor(key), { text: String(note.text), file: String(note.file || ''), repo: String(note.repo || '') })));
 ipcMain.handle('memories:remove', signedIn((key, id) => teams.removeMemory(session, teamFor(key), String(id))));
@@ -186,6 +191,8 @@ ipcMain.handle('startLane', signedIn(async o => {
   lanes.set(lane.id, lane);
   folders.add(cwd);
   lane.cwd = cwd;
+  lane.teamKey = keyOf(team);
+  lane.unguarded = o.cmd !== 'claude' && !shared; // started while the team was just you (D7, see teams:invite)
   lane.term.onData(d => toWindow('lane:data', lane.id, d));
   lane.term.onExit(() => { lanes.delete(lane.id); toWindow('lane:exit', lane.id); });
   return { id: lane.id, repo: lane.repo, notice };
@@ -222,6 +229,7 @@ ipcMain.handle('code:committed', inFolder(async (root, rel) => files.committed(r
 ipcMain.handle('code:write', inFolder((root, rel, text) => files.write(root, rel, text)));
 ipcMain.handle('code:search', inFolder(async (root, query) => files.search(root, query, await agentEnv)));
 ipcMain.handle('code:commit', inFolder(async (root, message) => files.commitAndPush(root, message, await agentEnv)));
+ipcMain.handle('code:pull', inFolder(async root => files.pull(root, await agentEnv)));
 // A file one of your agents changed, for a teammate who asked to see it (the renderer checks you share files). Its
 // path is from the repo's top, as agents report them; the agent may work in a folder further down.
 ipcMain.handle('code:readLane', async (_, id, rel) => {

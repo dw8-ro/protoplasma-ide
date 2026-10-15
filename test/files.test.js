@@ -58,6 +58,22 @@ test('mid-rebase, conflicts are marked and nothing gets committed', async () => 
   assert.equal((await files.status(max, env)).underWay, null);
 });
 
+test('Pull brings in the teammate\'s work, and Commit & Push finishes the merge once the conflict is fixed', async () => {
+  assert.match(await files.pull(max, env), /files marked C changed on both sides/);
+  const status = await files.status(max, env);
+  assert.equal(status.underWay, 'merge');
+  assert.deepEqual(status.changes.find(c => c.path === 'lobby.js'), { path: 'lobby.js', state: 'C' });
+  await assert.rejects(files.commitAndPush(max, '', env), /still have git's conflict lines/);
+  fs.writeFileSync(path.join(max, 'lobby.js'), 'one\nDAVID and MAX\nthree\n'); // fixed in the editor
+  assert.equal(await files.commitAndPush(max, '', env), 'Merged and pushed.');
+  assert.equal((await files.status(max, env)).underWay, null);
+  git(david, 'fetch', '-q');
+  assert.equal(git(david, 'show', 'origin/session/lobby:lobby.js'), 'one\nDAVID and MAX\nthree', 'both their work is on the branch');
+  fs.writeFileSync(path.join(max, 'lobby.js'), 'not committed\n');
+  await assert.rejects(files.pull(max, env), /Commit or undo your changes first/, 'a pull never mixes into uncommitted work');
+  git(max, 'checkout', '--', 'lobby.js');
+});
+
 test('nothing outside the session folder can be read or written, symlinks included', () => {
   fs.symlinkSync(os.homedir(), path.join(david, 'home-link'));
   // A sibling whose name starts with the session folder's ("david-evil" next to "david") is outside it too.

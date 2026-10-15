@@ -371,10 +371,15 @@ function renderCode() {
   const pushOnly = !code.changes.size && code.unpushed > 0;
   $('#commitBtn').textContent = pushOnly ? `Push ${code.unpushed} commit${code.unpushed === 1 ? '' : 's'}` : 'Commit & Push';
   $('#commitMessage').hidden = pushOnly;
-  $('#commitBtn').disabled = !!code.underWay || committing === code.root || code.notGit;
+  const merging = code.underWay === 'merge'; // from Pull: Commit & Push finishes it
+  $('#commitBtn').disabled = (!!code.underWay && !merging) || committing === code.root || code.notGit;
+  if (code.underWay) $('#pullBtn').hidden = true;
   if (code.notGit) $('#commitNote').textContent = 'This folder isn\'t a git repository, so there\'s nothing to commit or push.';
   else if (code.statusError) $('#commitNote').textContent = `Git couldn't read this folder's changes: ${code.statusError}`;
-  if (code.underWay) $('#commitNote').textContent = `A ${code.underWay} is under way${[...code.changes.values()].includes('C') ? ', with conflicts in the files marked C' : ''}. `
+  const marked = [...code.changes.values()].includes('C');
+  if (merging) $('#commitNote').textContent = `Merging your teammate's work${marked ? '. In each file marked C, keep what should stay and delete git\'s <<<<<<<, ======= and >>>>>>> lines, and save' : ''}. `
+    + 'Then Commit & Push finishes it. (To give up on it instead: git merge --abort in the Terminal tab.)';
+  else if (code.underWay) $('#commitNote').textContent = `A ${code.underWay} is under way${marked ? ', with conflicts in the files marked C' : ''}. `
     + `Finish it or abort it in the Terminal tab (git ${code.underWay} --continue or --abort), then commit.`;
   $('#codeWelcomeText').textContent = code.root ? 'Start working in this repository'
     : 'This session\'s code isn\'t on this Mac yet. Add an agent and its folder opens here.';
@@ -635,13 +640,14 @@ function goToFile() {
 
 let committing = null; // the folder being committed (it can take a while; another session's button stays usable)
 async function commit() {
-  if (committing === code.root || code.underWay || code.notGit) return;
-  const pushOnly = !code.changes.size && code.unpushed > 0;
+  const merging = code.underWay === 'merge'; // a merge from Pull: the message is optional, and fixed C files are fine
+  if (committing === code.root || (code.underWay && !merging) || code.notGit) return;
+  const pushOnly = !code.changes.size && code.unpushed > 0 && !merging;
   const message = pushOnly ? '' : $('#commitMessage').value.trim(), note = $('#commitNote');
-  if (!pushOnly && code.changes.size && !message) { note.textContent = 'Write what the commit is for first.'; return $('#commitMessage').focus(); }
-  if (!pushOnly && !code.changes.size) { note.textContent = 'There\'s nothing to commit.'; return; }
+  if (!pushOnly && !merging && code.changes.size && !message) { note.textContent = 'Write what the commit is for first.'; return $('#commitMessage').focus(); }
+  if (!pushOnly && !merging && !code.changes.size) { note.textContent = 'There\'s nothing to commit.'; return; }
   if ([...models.values()].some(isDirty)) { note.textContent = 'Save your open files first (⌘S).'; return; }
-  if ([...code.changes.values()].includes('C')) { note.textContent = 'Some files still have conflicts (marked C). Sort them out first.'; return; }
+  if (!merging && [...code.changes.values()].includes('C')) { note.textContent = 'Some files still have conflicts (marked C). Sort them out first.'; return; }
   if (/^(main|master)$/.test(code.branch) && !confirm(`Commit and push straight to ${code.branch}?`)) return;
   const root = committing = code.root;
   $('#commitBtn').disabled = true;
@@ -651,12 +657,25 @@ async function commit() {
   committing = null;
   if (code.root !== root) return; // another session is open now; this one's status is read when it's opened again
   note.textContent = said;
+  $('#pullBtn').hidden = !/\bPull (their work|again)\b/.test(said); // a teammate pushed first: their work comes in from here
   if (!/couldn't|refused|conflict/i.test(said)) $('#commitMessage').value = '';
   $('#commitBtn').disabled = false;
   await refreshFiles().catch(() => {});
+  if (merging && code.root === root) note.textContent = said; // the refresh clears the note when a merge ends
   if (code.diff && !code.against) { code.diff = null; render(); showActive(); } // its changes are committed now
 }
 $('#commitBtn').onclick = commit;
+$('#pullBtn').onclick = async () => {
+  const root = code.root, note = $('#commitNote');
+  $('#pullBtn').hidden = true;
+  note.textContent = 'Pulling…';
+  let said;
+  try { said = await proto.code.pull(root); } catch (e) { said = errorText(e); }
+  if (code.root !== root) return;
+  note.textContent = said;
+  await refreshFiles().catch(() => {});
+  if (!code.underWay) note.textContent = said; // the merge note, when there is one, says what to do next
+};
 $('#commitMessage').oninput = () => { if (!code.underWay) $('#commitNote').textContent = ''; };
 $('#commitMessage').onkeydown = e => { if (e.key === 'Enter' && e.metaKey) { e.preventDefault(); commit(); } };
 

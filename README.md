@@ -108,7 +108,7 @@ flowchart LR
 2. **Overlap warnings.** A file changed in two checkouts of the same repo is flagged for everyone, and Claude is asked before it edits one.
 3. **Push guard.** When the team has other people, Claude is asked before pushing to `main`, `master` or the repo's default branch, force-pushing, or deleting a branch on the remote. Codex and OpenCode can't be asked, so in repos the app cloned a `pre-push` hook stops those pushes instead. It's a safeguard against mistakes, not a lock: `git push --no-verify` skips the hook. If your team needs a guarantee, protect `main` on GitHub too, for teammates whose agents push with their own accounts. People pushing from their own terminal aren't affected.
 4. **Behind notice.** Each lane fetches about once a minute. A branch missing commits from main (or from its own pushed copy) shows `↓3`, and Claude is told to pull before changing more.
-5. **Shared session branches.** Everyone in a session works on `session/<name>`, each in their own checkout. **Commit & Push** puts your commit on top of whatever a teammate pushed first, and stops to let you sort it out if you both changed the same lines.
+5. **Shared session branches.** Everyone in a session works on `session/<name>`, each in their own checkout. **Commit & Push** puts your commit on top of whatever a teammate pushed first. If you both changed the same lines, it stops and offers **Pull**: their work comes in, the files you both changed are marked C, and once you've fixed them in the editor, **Commit & Push** finishes the merge.
 
 Work then reaches `main` the usual way, through a pull request. These layers make collisions visible early; they don't replace review.
 

@@ -278,6 +278,25 @@ async function run(win, hub) {
     check('Commit & Push commits and pushes the session branch', await until(`/Committed and pushed/.test($('#commitNote').textContent)`, 20000), await js(`$('#commitNote').textContent`));
     check('the branch is on the remote', git(clone, 'ls-remote', 'origin', 'session/fix-login').includes('session/fix-login'));
     check('and nothing is left to commit', await until(`code.changes.size === 0 && $('#changeCount').hidden`, 5000));
+
+    // A teammate pushed first and changed the same line: Pull, fix the file, Commit & Push.
+    const maxRepo = path.join(tempDir('protoplasma-e2e-max-'), 'repo');
+    git(root, 'clone', '-q', '-b', 'session/fix-login', git(clone, 'remote', 'get-url', 'origin').trim(), maxRepo);
+    fs.writeFileSync(path.join(maxRepo, 'README.md'), 'demo, edited by Max\n');
+    git(maxRepo, '-c', 'user.name=Max', '-c', 'user.email=max@example.com', 'commit', '-qam', 'Max edits the readme');
+    git(maxRepo, 'push', '-q', 'origin', 'session/fix-login');
+    fs.writeFileSync(path.join(work, 'README.md'), 'demo, edited by David\n');
+    await until(`code.changes.get('README.md') === 'M'`, 5000);
+    await js(`$('#commitMessage').value = 'David edits the readme'; $('#commitBtn').click(); 0`);
+    check('a clash with a teammate\'s push offers Pull', await until(`/changed the same lines/.test($('#commitNote').textContent) && !$('#pullBtn').hidden`, 20000), await js(`$('#commitNote').textContent`));
+    await js(`$('#pullBtn').click(); 0`);
+    check('Pull marks the clashing file C and says how to finish', await until(`code.underWay === 'merge' && code.changes.get('README.md') === 'C' && /Commit & Push finishes it/.test($('#commitNote').textContent) && !$('#commitBtn').disabled`, 15000),
+      await js(`JSON.stringify({ underWay: code.underWay, state: code.changes.get('README.md'), note: $('#commitNote').textContent })`));
+    fs.writeFileSync(path.join(work, 'README.md'), 'demo, edited by David and Max\n'); // fixed, as in the editor
+    await js(`$('#commitBtn').click(); 0`);
+    check('Commit & Push finishes the merge and pushes it', await until(`/Merged and pushed/.test($('#commitNote').textContent)`, 20000), await js(`$('#commitNote').textContent`));
+    git(maxRepo, 'pull', '-q', '--no-rebase', 'origin', 'session/fix-login');
+    check('with both of them on the branch', fs.readFileSync(path.join(maxRepo, 'README.md'), 'utf8') === 'demo, edited by David and Max\n');
     await js(`showCode(false); 0`);
     check('Code again goes back to just the agents', await until(`!$('#room').classList.contains('coding') && $('#code').hidden && $('#dockTabs').hidden`));
 

@@ -70,6 +70,7 @@ contextBridge.exposeInMainWorld('proto', {
     write: (root, path, text) => ipcRenderer.invoke('code:write', root, path, text),
     search: (root, query) => ipcRenderer.invoke('code:search', root, query),
     commit: (root, message) => ipcRenderer.invoke('code:commit', root, message),
+    pull: root => ipcRenderer.invoke('code:pull', root),
     watch: root => ipcRenderer.invoke('code:watch', root),
     onChanged: listen('code:changed'),
   },

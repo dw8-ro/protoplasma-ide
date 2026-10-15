@@ -19,7 +19,7 @@ Function names below are stable. Line numbers drift, so search by name.
 |---|---|---|
 | `npm install` | Installs dependencies (postinstall makes node-pty's `spawn-helper` executable) | Node 24 |
 | `npm start` | Runs the app from source. Updates are off in source runs. | |
-| `npm test` | 68 integration tests in `test/*.test.js`: real hub, real lanes, real git. About a minute. | git ≥ 2.28, macOS. No network or Electron needed. |
+| `npm test` | 69 integration tests in `test/*.test.js`: real hub, real lanes, real git. About a minute. | git ≥ 2.28, macOS. No network or Electron needed. |
 | `npm run e2e` | Drives the real Electron app through every main flow and prints `PASS`/`FAIL` per step, ending with `N/M passed`. 15-minute cap. | The `claude` CLI on the login-shell PATH and a GUI session. One step needs `gh auth status` to succeed (online). |
 | `npm run dist` | Packages `dist/Protoplasma-darwin-arm64/Protoplasma.app`, unsigned. | |
 | `npm run playground` | Two app copies (David on port 7801, Max on 7802) on a local hub and repo, each with an HTTP control API | |
@@ -56,7 +56,7 @@ app/panes.js      pane mode (~90)
 app/index.html    CSP, all CSS (tokens and themes), icon sprite, all markup and dialogs (~1040)
 app/config.json   githubClientId (OAuth app, device flow), onlineHub (the Railway URL)
 scripts/          e2e.js, playground.js + playground-app.js, stage.js, screenshot.js, demo.js, sign.sh, icon.js
-test/             hub.test.js (39), workspace.test.js (12), files.test.js (7), lan.test.js (6), identity.test.js (2), updates.test.js (2)
+test/             hub.test.js (39), workspace.test.js (12), files.test.js (8), lan.test.js (6), identity.test.js (2), updates.test.js (2)
 .github/workflows ci.yml (npm test on every push to main and PR), package.yml (dist check), release.yml (tag → release)
 Dockerfile        the hosted hub image (only src/hub.js + src/shared.js + ws)
 install.sh        the one-line installer
@@ -255,10 +255,11 @@ docs/             README images, recheck/ (review records)
     It sets `process.env.PATH`, which node-pty needs, carries over `SSH_AUTH_SOCK` and `TMPDIR`, and sets `LANG` if
     missing.
 - **State:**
-  - `lanes`: id → lane, with `cwd` and a cached `prefix` added.
+  - `lanes`: id → lane, with `cwd`, `teamKey`, `unguarded` (a Codex/OpenCode agent started while its team was just
+    you: `teams:invite` warns about these, D7) and a cached `prefix` added.
   - `known`: team key → team.
   - `folders`: the allow-list that every `inFolder(...)` handler checks (`code:list`, `status`, `read`, `committed`,
-    `write`, `search`, `commit`, `watch` and `shell:start`). Only lane folders and app-made session folders go in;
+    `write`, `search`, `commit`, `pull`, `watch` and `shell:start`). Only lane folders and app-made session folders go in;
     `code:root` adds them. `code:readLane` is the exception: it reads from one of this Mac's live lanes by lane id,
     confined to that lane's folder by `inside()`.
   - `shells`: the Terminal tab's plain shells, never shared with the hub.
@@ -320,10 +321,15 @@ docs/             README images, recheck/ (review records)
   - **`status`** returns `prefix`, the folder's place in its repo. Teammates' paths are from the repo top, so code.js and
     `code:readLane` add or strip it.
   - **`commitAndPush`:**
-    - Refuses during a rebase or merge, with conflicts, or on a detached HEAD.
+    - Refuses during a rebase (or cherry-pick, revert), with conflicts, or on a detached HEAD.
     - Runs `add -A -- .` and `commit -- .`, which only touch this folder, then `push -u origin HEAD`.
-    - If a teammate pushed first, runs `pull --rebase --autostash` and pushes again.
+    - If a teammate pushed first, runs `pull --rebase --autostash` and pushes again. If you both changed the same lines,
+      it aborts the rebase and says "Pull their work…", which makes code.js show the **Pull** button (D8).
+    - During a merge, `finishMerge` commits it (the whole merge, `--no-edit` without a message) once no conflicted file
+      still has conflict lines (`CONFLICT_LINES`), adding the fixed files for you, then pushes.
     - Returns a sentence, and code.js decides success by matching words in it.
+  - **`pull`:** `pull --no-rebase --ff --no-edit origin <branch>`, refused with uncommitted changes or anything under
+    way. Lines changed on both sides are left marked C for the editor.
 
 ### The UI (`app/renderer.js`, `app/code.js`, `app/panes.js`, `app/index.html`)
 - **One shared scope:** these are classic scripts that share one global lexical scope, with no modules.

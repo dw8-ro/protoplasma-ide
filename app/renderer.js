@@ -406,7 +406,13 @@ $('#inviteForm').onsubmit = async e => {
   const login = $('#inviteLogin').value.trim().replace(/^@/, '');
   if (!GITHUB_LOGIN.test(login)) { $('#inviteErr').textContent = login ? 'GitHub usernames are letters, numbers and single hyphens, up to 39 characters.' : 'Enter a GitHub username.'; return; }
   const team = currentTeam;
-  try { const next = await proto.invite(team.key, login); if (currentTeam?.key === team.key) currentTeam = next; $('#inviteDlg').close(); render(); }
+  try {
+    const { notice, ...next } = await proto.invite(team.key, login);
+    if (currentTeam?.key === team.key) currentTeam = next;
+    $('#inviteDlg').close();
+    render();
+    if (notice) setTimeout(() => alert(notice));
+  }
   catch (err) { $('#inviteErr').textContent = errorText(err); }
 };
 

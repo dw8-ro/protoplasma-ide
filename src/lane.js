@@ -174,7 +174,7 @@ function startLane({ hub, team, token, session, cmd = 'claude', args = [], cwd =
     ws.on('open', () => {
       unsent = ''; // history covers anything unsent
       send({ ...hello, cols: term.cols, rows: term.rows, history, git: lastGit });
-      if (activity) send({ t: 'status', status: activity });
+      if (activity && (byActivity || asking)) send({ t: 'status', status: activity }); // a hooked agent's status is the hub's, from its hooks
     });
     ws.on('message', raw => {
       try { const m = JSON.parse(raw); if (m.t === 'in' && typeof m.d === 'string') write(m.d); } catch {}

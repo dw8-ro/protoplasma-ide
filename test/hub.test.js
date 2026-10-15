@@ -474,6 +474,31 @@ test('an agent waiting on its folder trust prompt needs you until someone answer
   await gone;
 });
 
+test('a reconnecting agent keeps the status its hooks gave it, after its trust prompt was answered', async () => {
+  const asking = nextState(lanes => lanes.some(l => l.session === 'reconnect' && l.status === 'needs you'));
+  const lane = startLaneHere({ hub: url, team: team.id, token: 'tok-alice', session: 'reconnect', cmd: 'sh',
+    args: ['-c', 'printf "Do you trust the files in this folder?\\n ❯ 1. Yes, proceed\\n   2. No, exit"; cat'] });
+  await asking;
+  const answered = nextState(lanes => lanes.find(l => l.id === lane.id)?.status === 'idle');
+  lane.write('\r');
+  await answered;
+  // Another connection with its id drops the agent's own, as a network blip would; a pending permission then needs you.
+  const blip = await rawLane(lane.id, { session: 'reconnect' });
+  const needs = nextState(lanes => lanes.find(l => l.id === lane.id)?.status === 'needs you');
+  await blip.hook({ hook_event_name: 'PermissionRequest' });
+  await needs;
+  let status;
+  const track = raw => { const m = JSON.parse(raw); if (m.t === 'state') status = m.lanes.find(l => l.id === lane.id)?.status; };
+  watcher.on('message', track);
+  await new Promise(resolve => blip.socket.on('close', resolve)); // the agent is back, and took its id over again
+  await sleep(300);
+  watcher.off('message', track);
+  const gone = nextState(lanes => !lanes.some(l => l.id === lane.id));
+  lane.term.kill();
+  await gone;
+  assert.equal(status, 'needs you', 'the reconnect didn\'t reset it to idle');
+});
+
 test('an agent is told when its branch has fallen behind', async () => {
   const lane = await rawLane('behind-lane', { branch: 'session/fix', repo: 'acme/app' });
   lane.socket.send(JSON.stringify({ t: 'git', branch: 'session/fix', added: 0, removed: 0, files: 0, behind: 2, ahead: 1 }));

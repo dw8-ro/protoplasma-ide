@@ -17,13 +17,12 @@ run('6. Removing, inviting back, leaving, deleting', async () => {
   const back = await until('david', `hubLanes.some(l => l.id === ${JSON.stringify(maxLane)})`, 40000);
   check('Max\'s running agent rejoins by itself', back, await js('david', `return hubLanes.map(l => l.login)`));
   check('Max can open the team again', await (async () => { await js('max', `showTeams(me); return 1`); await until('max', `[...listedTeams.values()].some(t => t.name === 'Acme')`, 10000); await clickText('max', '#teamList .team', 'Acme'); return until('max', `currentTeam?.name === 'Acme' && $('#conn').className.includes('live')`, 8000); })());
-  // Deleting the team while agents run.
-  await js('david', `window.__confirmAnswer = true; openSettings('team'); return 1`);
+  // Deleting the team while a teammate's agents run: it says whose, and asks nothing.
+  await js('david', `window.__dialogs.length = 0; openSettings('team'); return 1`);
   await until('david', `$('#settings').open`, 3000);
-  await click('david', '#teamPane [data-drop-team]').catch(() => {});
-  check('deleting a team with agents running is refused, with a reason', await until('david', `/agents|Stop/i.test($('#teamPane').textContent + (window.__dialogs || []).join(' ') + document.body.innerText.match(/.{0,60}(Stop the|agents run).{0,60}/)?.[0])`, 5000),
-    await js('david', `return { pane: $('#teamPane').innerText.slice(0, 300), dialogs: window.__dialogs }`));
-  await click('david', '#settingsDone');
+  await click('david', '#teamPane [data-drop-team]');
+  check('deleting a team while Max\'s agents run says whose, without asking first', await until('david', `window.__dialogs.length === 1 && /Max still has agents running/.test(window.__dialogs[0])`, 5000), await js('david', `return window.__dialogs`));
+  await click('david', '#settingsDone').catch(() => {});
   // Max leaves.
   await js('max', `window.__confirmAnswer = true; openSettings('team'); return 1`);
   await until('max', `$('#settings').open`, 3000);
@@ -32,4 +31,11 @@ run('6. Removing, inviting back, leaving, deleting', async () => {
   if (leave) await clickText('max', '#teamPane button', 'Leave');
   check('Max leaves; his agents in that team stop being shared', await until('max', `currentTeam === null && ![...listedTeams.values()].some(t => t.name === 'Acme')`, 8000) && await until('david', `!/max/.test($('#memberList').textContent)`, 8000),
     await js('max', `return { team: currentTeam?.name, listed: [...listedTeams.values()].map(t => t.name), local: local.size, dialogs: window.__dialogs }`));
+  // With only David's own agents left, deleting stops them and deletes the team.
+  const mine = await js('david', 'return local.size');
+  await js('david', `window.__dialogs.length = 0; window.__confirmAnswer = true; openSettings('team'); return 1`);
+  await until('david', `$('#settings').open`, 3000);
+  await click('david', '#teamPane [data-drop-team]');
+  check(`David deletes the team, his ${mine} running agents stopping first`, await until('david', `currentTeam === null && ![...listedTeams.values()].some(t => t.name === 'Acme') && local.size === 0`, 15000),
+    await js('david', `return { dialogs: window.__dialogs, team: currentTeam?.name, local: local.size }`));
 });

@@ -6,7 +6,7 @@ const os = require('node:os');
 const path = require('node:path');
 const { execFileSync } = require('node:child_process');
 const { sessionWorktree, removeSessionWorktree, installPushGuard, slug } = require('../src/workspace');
-const { gitStatus } = require('../src/lane');
+const { gitStatus, fetchGit } = require('../src/lane');
 
 // The developer's own git config (push.autoSetupRemote, signing) and a shared-team agent's env would change the results.
 const env = { ...process.env, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1', GIT_AUTHOR_NAME: 'Test', GIT_AUTHOR_EMAIL: 'test@example.com', GIT_COMMITTER_NAME: 'Test', GIT_COMMITTER_EMAIL: 'test@example.com' };
@@ -196,4 +196,27 @@ test('new sessions still start after the default branch is renamed on the remote
     git(alice, 'fetch', '-q', '--prune');
     git(alice, 'remote', 'set-head', 'origin', 'main');
   }
+});
+
+test('the background fetch keeps the repo\'s own ssh command (a key per host, several accounts)', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'protoplasma-ssh-'));
+  try {
+    const origin = path.join(dir, 'origin.git');
+    git(dir, 'init', '-q', '--bare', '-b', 'main', origin);
+    const seed = path.join(dir, 'seed');
+    git(dir, 'clone', '-q', origin, seed);
+    commit(seed, 'a.txt', 'a\n');
+    git(seed, 'push', '-q', 'origin', 'HEAD:main');
+    const clone = path.join(dir, 'clone');
+    git(dir, 'clone', '-q', origin, clone);
+    // An ssh remote that only core.sshCommand can reach: a stand-in for ssh runs git's command against the local repo.
+    const ssh = path.join(dir, 'own-ssh');
+    fs.writeFileSync(ssh, `#!/bin/sh\nfor last; do :; done\nexec sh -c "$(printf '%s' "$last" | sed "s#'[^']*repo.git'#'${origin}'#")"\n`, { mode: 0o755 });
+    git(clone, 'remote', 'set-url', 'origin', 'git@example.invalid:team/repo.git');
+    git(clone, 'config', 'core.sshCommand', ssh);
+    commit(seed, 'b.txt', 'b\n');
+    git(seed, 'push', '-q', 'origin', 'HEAD:main');
+    await fetchGit(clone, env);
+    assert.equal(git(clone, 'rev-list', '--count', 'HEAD..origin/main'), '1', 'the teammate\'s new commit is seen');
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });

@@ -338,8 +338,10 @@ app.on('will-quit', e => {
   for (const lane of lanes.values()) lane.term.kill();
   for (const term of shells.values()) term.kill();
   if (leaving) return;
-  // Waits (a second at most) for the network goodbye, so other Macs stop listing this one at once.
+  // Waits (a second at most) for the network goodbye, so other Macs stop listing this one at once. Quits again on a
+  // later tick: a quit asked for while this one is still being handled is ignored, and the app would stay running with
+  // no window (the goodbye is instant when nothing was ever announced).
   leaving = true;
   e.preventDefault();
-  teams.stopAnnouncing().finally(() => app.quit());
+  teams.stopAnnouncing().finally(() => setImmediate(() => app.quit()));
 });

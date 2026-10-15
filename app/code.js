@@ -746,7 +746,9 @@ $('.code-side').onclick = e => {
     code.expanded.has(dir) ? code.expanded.delete(dir) : code.expanded.add(dir);
     return render();
   }
-  openFile(row.dataset.file, { line: Number(row.dataset.line) || undefined, match: row.dataset.line && $('#codeQuery').value, diff: code.pane === 'changes' });
+  // From Source control a change opens as a diff, except a conflict (C): git's conflict lines are what to edit there.
+  openFile(row.dataset.file, { line: Number(row.dataset.line) || undefined, match: row.dataset.line && $('#codeQuery').value,
+    diff: code.pane === 'changes' && code.changes.get(row.dataset.file) !== 'C' });
 };
 $('#codeTabs').onclick = e => {
   const close = e.target.closest('[data-close-file]');

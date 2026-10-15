@@ -258,9 +258,17 @@ async function leaveOrDeleteTeam(team) {
   const deleting = ownsTeam(team);
   const unpushed = hubLanes.filter(l => local.get(l.id)?.teamKey === team.key && (l.git?.unpushed || l.local?.length)).length;
   const work = unpushed ? ` Some of your agents' folders have work that isn't pushed; it stays on this Mac.` : '';
+  // The hub deletes a team only once no agents run in it: a teammate's have to stop first, and yours are stopped here.
+  const theirs = deleting && team.key === currentTeam?.key ? [...new Set(hubLanes.filter(l => !local.has(l.id)).map(l => l.name))] : [];
+  if (theirs.length) return alert(`${theirs.join(' and ')} still ${theirs.length === 1 ? 'has agents' : 'have agents'} running in "${team.name}". It can be deleted once they've stopped them.`);
   if (!confirm(deleting ? `Delete the team "${team.name}"? Its sessions and notes go with it, for everyone on it, and your agents in it stop.${work}`
     : `Leave "${team.name}"? Your agents in it stop, and you'd need a new invite to come back.${work}`)) return;
   leavingTeam = team.key; // the hub then disconnects us, which isn't news
+  const mine = [...local].filter(([, o]) => o.teamKey === team.key).map(([id]) => id);
+  if (deleting && mine.length) {
+    for (const id of mine) { stopping.add(id); proto.kill(id); }
+    for (let i = 0; i < 50 && hubLanes.some(l => mine.includes(l.id)); i++) await new Promise(r => setTimeout(r, 100)); // until the hub sees them gone
+  }
   try { await (deleting ? proto.deleteTeam(team.key) : proto.leaveTeam(team.key)); }
   catch (e) { leavingTeam = null; return alert(errorText(e)); }
   for (const [id, o] of local) if (o.teamKey === team.key) { stopping.add(id); proto.kill(id); }
@@ -1634,7 +1642,7 @@ async function openSettings(pane = 'general') {
       <button class="linkish" data-url="https://github.com/dw8-ro/protoplasma-ide">github.com/dw8-ro/protoplasma-ide</button></div>
     <h4>Updates</h4>
     <div class="group"><div class="setting"><div><b id="updateStatus">Checking…</b><p>New versions come from GitHub releases and install themselves, so there's nothing to download again.</p></div>
-      <button class="btn" data-check-updates>Check now</button></div></div>
+      <button class="btn primary" data-install-update hidden style="margin-right: 8px">Update now</button><button class="btn" data-check-updates>Check now</button></div></div>
     <h4>Online hub</h4>
     <div class="group"><div class="setting"><div><b>${esc(info.onlineHub ? (URL.canParse(info.onlineHub) ? new URL(info.onlineHub).host : info.onlineHub) : 'Not set up')}</b>
       <p>Relays terminals and coordination between teammates. It never stores your repos, and keeps only team names, members, notes, and sessions with their goals, repos, plans and comments (Data &amp; privacy has the details).</p></div></div></div>`;
@@ -1642,6 +1650,8 @@ async function openSettings(pane = 'general') {
 }
 $('#settingsBtn').onclick = () => openSettings();
 const showUpdateStatus = u => {
+  const install = $('[data-install-update]');
+  if (install) install.hidden = !(u?.available && u.canInstall) || staged || downloading;
   if ($('#updateStatus')) $('#updateStatus').textContent = staged ? `${update.latest} goes in when Protoplasma quits` : downloading ? 'Downloading…'
     : !u || u.error ? 'Couldn\'t reach GitHub' : u.available ? `${u.latest} is available` : u.latest ? 'Up to date' : 'No releases yet';
 };
@@ -1664,6 +1674,8 @@ $('#settings').onclick = e => {
   if (step) { prefs.fontSize = Math.max(10, Math.min(18, prefs.fontSize + Number(step))); savePrefs(); }
   if (line) { prefs.lineHeight = Math.round(Math.max(1, Math.min(1.6, prefs.lineHeight + Number(line))) * 10) / 10; savePrefs(); }
   if (url) proto.openExternal(url);
+  // The bar shows the download and what happens next, so About hands over to it.
+  if ('installUpdate' in e.target.dataset) { $('#settings').close(); $('#updateBar').hidden = false; return $('#updateNow').click(); }
   if ('checkUpdates' in e.target.dataset) { dismissed = null; $('#updateStatus').textContent = 'Checking…'; checkUpdates().then(showUpdateStatus); }
   // These two ask first and close Settings themselves, so cancelling leaves you where you were.
   if ('dropTeam' in e.target.dataset) return leaveOrDeleteTeam(currentTeam);
@@ -1816,12 +1828,15 @@ addEventListener('keydown', e => {
 // ---- Start ----
 
 applyPrefs();
-// The sign-in screen only for someone who isn't signed in (or if checking takes long).
-const signInLater = setTimeout(() => { showView('signinView'); if (!$('#start').open) $('#start').showModal(); }, 1500);
+// The sign-in screen only for someone who isn't signed in. If checking takes long (GitHub slow, macOS asking about the
+// Keychain after an update), it says so, rather than inviting a second sign-in.
+const checkingSignIn = on => { $('#signin').disabled = on; $('#signin').lastChild.textContent = on ? 'Checking your sign-in…' : 'Continue with GitHub'; };
+const signInLater = setTimeout(() => { checkingSignIn(true); showView('signinView'); if (!$('#start').open) $('#start').showModal(); }, 1500);
 refreshAgents();
 setTimeout(checkUpdates, 5000); // after startup, then every few hours
 proto.savedUser().then(user => {
   clearTimeout(signInLater);
+  checkingSignIn(false);
   if (user) { reopenLast = true; return showTeams(user); }
   showView('signinView');
   if (!$('#start').open) $('#start').showModal();

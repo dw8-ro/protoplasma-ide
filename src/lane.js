@@ -109,7 +109,14 @@ async function gitStatus(cwd, { env = process.env, fetch = false } = {}) {
 // Git run in the background never asks for anything: no password prompt nobody sees, no ssh passphrase on a terminal.
 const gitEnv = env => ({ ...env, GIT_TERMINAL_PROMPT: '0', GIT_OPTIONAL_LOCKS: '0', GIT_SSH_COMMAND: env.GIT_SSH_COMMAND || 'ssh -o BatchMode=yes' });
 /** Updates the remote refs, failing quietly when offline or unauthenticated. */
-const fetchGit = (cwd, env = process.env) => new Promise(resolve => execFile('git', ['fetch', '--quiet'], { cwd, timeout: 20_000, env: gitEnv(env) }, () => resolve()));
+const fetchGit = (cwd, env = process.env) => new Promise(resolve => {
+  // A repo's own core.sshCommand (a key per host, several accounts) is what reaches its remote; GIT_SSH_COMMAND would
+  // override it. Without a terminal ssh can't ask for a passphrase anyway.
+  const own = !env.GIT_SSH_COMMAND && git(cwd, 'config', 'core.sshCommand');
+  const e = gitEnv(env);
+  if (own) delete e.GIT_SSH_COMMAND;
+  execFile('git', ['fetch', '--quiet'], { cwd, timeout: 20_000, env: e }, () => resolve());
+});
 
 // node-pty doesn't report a missing command (the lane would start and exit at once), so look for it first.
 const runnable = file => { try { fs.accessSync(file, fs.constants.X_OK); return fs.statSync(file).isFile(); } catch { return false; } };

@@ -26,16 +26,14 @@ run('5. Typing into agents, sharing files, stopping, panes, switcher', async () 
   check('and David sees who typed last', await until('david', `/max|Max/.test($('#room').textContent) && /typed|Typed/.test($('#room').textContent)`, 4000), await js('david', `return $('#room').textContent.replace(/\\s+/g, ' ').match(/.{0,40}yped.{0,40}/)?.[0]`));
 
   // Opening a teammate's changed file: sharing is off by default.
-  await js('david', `return 1`);
   const davidFirst = davidLane;
-  await js('david', `require = undefined; return 1`).catch(() => {});
   await js('max', `focus = null; tab = 'agents'; render(); return 1`);
   await js('david', `terms.get(${JSON.stringify(davidFirst)}).term.focus(); return 1`); await type('david', `echo '// more' >> src/net/socket.ts`); await key('david', 'enter');
   const canOpen = await until('max', `!!document.querySelector('[data-theirs="${davidFirst}"]')`, 10000);
   check('Max gets an Open link for a file David\'s agent changed', canOpen, await js('max', `return $('#panelBody').textContent.replace(/\\s+/g, ' ').slice(0, 300)`));
   if (canOpen) {
     await click('max', `[data-theirs="${davidFirst}"]`);
-    check('with sharing off, opening it explains instead of showing it', await until('max', `/shar/i.test(document.body.textContent.match(/[^.]*(share|sharing)[^.]*\\./i)?.[0] || '') && !(code.active || '').startsWith('theirs')`, 8000),
+    check('with sharing off, opening it explains instead of showing it', await until('max', `/doesn't share files/.test($('#codeBanner')?.textContent || '') && !editor?.getModel()?.getValue()`, 8000),
       await js('max', `return { active: code.active, banner: $('#codeBanner')?.textContent, note: document.body.innerText.match(/.{0,80}(isn't shar|not shar|turn on|Share the files).{0,80}/)?.[0] }`));
     await js('david', `prefs.shareFiles = true; savePrefs(); return 1`);
     await click('max', `[data-theirs="${davidFirst}"]`).catch(() => js('max', `document.querySelector('[data-theirs="${davidFirst}"]').click(); return 1`));
@@ -50,7 +48,7 @@ run('5. Typing into agents, sharing files, stopping, panes, switcher', async () 
   check('David sees it under stopped agents', await until('david', `stoppedAgents.some(s => s.id === ${JSON.stringify(maxLane)})`, 8000));
   await js('david', `focus = null; render(); return 1`);
   await click('david', `[data-replay="${maxLane}"]`).catch(e => js('david', `document.querySelector('[data-replay="${maxLane}"]')?.click(); return 1`));
-  check('and can look at its last screen', await until('david', `!$('#replayPanel').hidden && /max was here|typed|playground/.test($('#replayPanel').textContent)`, 8000), await js('david', `return $('#replayPanel').textContent.slice(0, 120)`));
+  check('and can look at its last screen', await until('david', `!$('#replayPanel').hidden && $('#replayGone').hidden && !!$('#replayScreen .xterm')`, 8000), await js('david', `return { shown: !$('#replayPanel').hidden, gone: !$('#replayGone').hidden }`));
 
   // Pane mode and the quick switcher.
   await js('david', `tab = 'agents'; render(); return 1`);

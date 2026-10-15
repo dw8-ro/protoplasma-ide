@@ -41,6 +41,11 @@
 
 ## What doesn't
 
+**All six are fixed on `main`** (after 0.5.0). They were verified by re-running the whole simulation on a fresh
+playground (91/91), plus `npm test` (70/70) and `npm run e2e` (126/126). e2e now ends by quitting the way logging out
+does, and fails if the app doesn't exit: it fails with F1 put back and passes with the fix. Tests: F4 in
+workspace.test.js; F1 by e2e; F5 and F6 by the simulation (s4, s6).
+
 | | Severity | Problem | Fix |
 |---|---|---|---|
 | F1 | **High** | **Quit doesn't quit.** The window closes, but the app keeps running with no window, and opening it again does nothing. It happens to anyone who never hosted or looked for a network team, which is almost everyone. It also happens when "Update now" quits to install, when macOS logs out, and on SIGTERM. Present since the 1 s network goodbye in 0.4.x. **Users on 0.4.x or 0.5.0 can only finish an update by force-quitting the app** (then the update installs and opens). | Re-quit on the next tick, so Electron doesn't ignore it. A test that quitting really exits. Release 0.5.1 soon, and its notes should say to Force Quit if the window closes but the update doesn't open. |

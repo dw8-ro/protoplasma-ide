@@ -1,6 +1,6 @@
 // Customer simulation: drives the playground's two copies (npm run playground) like a person, finding an element and
 // sending a real mouse click to its centre, or real typing. Run the scenarios in order against one fresh playground:
-//   for s in 1 2 3 4 4b 5 6 7 8; do node scripts/customer/s$s.js; done
+//   for s in 1 2 3 4 5 6 7 8; do node scripts/customer/s$s.js; done
 // Results go to results.log beside this file (not committed). See docs/usage-test/REPORT.md.
 const fs = require('fs');
 const path = require('path');

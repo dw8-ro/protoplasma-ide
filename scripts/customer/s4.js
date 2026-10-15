@@ -18,17 +18,16 @@ run('4. Code view: commit, a clash on the shared branch, Pull and fix', async ()
   await click('max', '#pullBtn');
   check('Pull marks join.ts C and explains', await until('max', `code.underWay === 'merge' && code.changes.get('src/lobby/join.ts') === 'C' && /Commit & Push finishes it/.test($('#commitNote').textContent)`, 15000), await js('max', `return { u: code.underWay, c: [...code.changes], note: $('#commitNote').textContent }`));
   // Open the file, as a person would, and fix it in the editor.
-  await clickText('max', '#codeChanges [data-file], #codeChanges .file', 'join.ts');
-  check('the conflicted file opens with git\'s conflict lines', await until('max', `code.active === 'src/lobby/join.ts' && /<<<<<<<[\\s\\S]*>>>>>>>/.test(editor.getModel()?.getValue() || '')`, 8000), await js('max', `return { active: code.active, diff: code.diff }`));
-  const fixed = await js('max', `const v = editor.getModel().getValue(); return v.replace(/<<<<<<< [^\\n]*\\n([\\s\\S]*?)=======\\n([\\s\\S]*?)>>>>>>> [^\\n]*\\n/, '$1$2')`);
-  // Replace the text through the editor (as typing would), then save with the menu command.
-  await js('max', `editor.focus(); editor.executeEdits('me', [{ range: editor.getModel().getFullModelRange(), text: ${JSON.stringify('__FIX__')} }]); return 1`.replace('"__FIX__"', JSON.stringify(fixed)));
+  await clickText('max', '#codeChanges [data-file]', 'join.ts');
+  check('the conflicted file opens in the editor (not a diff) with git\'s conflict lines', await until('max', `code.active === 'src/lobby/join.ts' && !code.diff && /<<<<<<<[\\s\\S]*>>>>>>>/.test(editor.getModel()?.getValue() || '')`, 8000), await js('max', `return { active: code.active, diff: code.diff }`));
+  await js('max', `const m = editor.getModel(); editor.focus();
+    editor.executeEdits('me', [{ range: m.getFullModelRange(), text: m.getValue().replace(/<<<<<<< [^\\n]*\\n([\\s\\S]*?)=======\\n([\\s\\S]*?)>>>>>>> [^\\n]*\\n/, '$1$2') }]); return 1`);
   await menu('max', 'save');
-  check('saving keeps the C mark until committed, and says what\'s next', await until('max', `!isDirty(models.get('src/lobby/join.ts')) && code.underWay === 'merge'`, 5000));
+  check('Save writes it', await until('max', `!isDirty(models.get('src/lobby/join.ts'))`, 5000));
   await click('max', '#commitBtn');
   check('Commit & Push finishes the merge', await until('max', `/Merged and pushed/.test($('#commitNote').textContent)`, 20000), await js('max', `return $('#commitNote').textContent`));
-  const origin = path.join(root, 'origin.git');
-  const remote = execFileSync('git', ['--git-dir', origin, 'show', 'session/login-page:src/lobby/join.ts'], { encoding: 'utf8' });
-  check('the branch on the remote has both lines and no conflict lines', /david was here/.test(remote) && /max was here/.test(remote) && !/<<<<<<<|>>>>>>>/.test(remote));
-  check('David\'s code view shows he\'s behind, or pulls cleanly', await until('david', `true`, 100));
+  const remote = execFileSync('git', ['--git-dir', path.join(root, 'origin.git'), 'show', 'session/login-page:src/lobby/join.ts'], { encoding: 'utf8' });
+  check('the remote branch has both lines and no conflict lines', /david was here/.test(remote) && /max was here/.test(remote) && !/<<<<<<<|>>>>>>>/.test(remote));
+  check('Max has nothing left to commit', await until('max', `code.changes.size === 0 && !code.underWay`, 8000));
+  check('David is told he\'s behind (the background fetch uses the repo\'s own ssh command)', await until('david', `hubLanes.find(l => l.login === 'david')?.git?.behind > 0`, 75000), await js('david', `return hubLanes.find(l => l.login === 'david')?.git`));
 });

@@ -445,6 +445,9 @@ async function run(win, hub) {
     fs.rmSync(demoOwner, { recursive: true, force: true });
     if (!hadProtoplasmaDir) try { fs.rmdirSync(path.join(os.homedir(), 'Protoplasma')); } catch {}
     for (const dir of temps) fs.rmSync(dir, { recursive: true, force: true });
-    win.destroy(); // skips the "agents are still running" prompt; the app quits once its window is gone
+    // Quits the way logging out does (SIGTERM: no "agents are still running" question), through the real quit path, and
+    // must really exit: a quit that's ignored leaves the app running with no window (F1 in docs/usage-test).
+    process.kill(process.pid, 'SIGTERM');
+    setTimeout(() => { console.log('FAIL  the app exits when it\'s quit'); app.exit(1); }, 8000).unref();
   }
 }

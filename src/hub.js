@@ -363,6 +363,7 @@ function startHub({ port = 7681, host = '0.0.0.0', dataDir, owners, tls, passIss
     return null;
   }
   function pushRiskOf(lane, words, branch = lane.branch) {
+    const shared = [...new Set([...PROTECTED_BRANCHES, lane.mainBranch].filter(Boolean))]; // main, master, and the repo's default
     const flags = words.filter(w => w.startsWith('-'));
     const refspecs = words.filter(w => !w.startsWith('-')).slice(1); // after the remote
     if (!refspecs.length && flags.includes('--tags')) return null; // only tags
@@ -371,16 +372,19 @@ function startHub({ port = 7681, host = '0.0.0.0', dataDir, owners, tls, passIss
       return 'this force-push can overwrite commits your teammates pushed. Confirm it\'s intended.';
     }
     if (flags.some(f => f === '--all' || f === '--mirror')) {
-      return `this pushes every branch, ${PROTECTED_BRANCHES.join(' and ')} included, which your team shares. Push just your branch, or confirm.`;
+      return `this pushes every branch, ${shared.join(' and ')} included, which your team shares. Push just your branch, or confirm.`;
     }
     // No refspec pushes the current branch; otherwise the part after ":" (or the name itself) is the destination.
     const deleting = flags.some(f => f === '--delete' || f === '-d');
     const targets = (refspecs.length ? refspecs : ['HEAD']).map(r => r.split(':').pop().replace(/^refs\/heads\//, '')).map(t => (t === 'HEAD' ? branch : t));
-    const target = targets.find(t => PROTECTED_BRANCHES.includes(t));
-    if (target && (deleting || refspecs.some(r => r.startsWith(':')))) return `this deletes ${target} on the remote, which your team shares. Confirm it's intended.`;
-    const theirs = (deleting || refspecs.some(r => r.startsWith(':'))) && inSameRepo(lane).filter(o => targets.includes(o.branch));
-    const names = theirs && [...new Set(theirs.map(o => o.name))];
-    if (names?.length) return `this deletes ${theirs[0].branch} on the remote, which ${names.join(' and ')} also ${names.length === 1 ? 'works' : 'work'} on. Confirm it's intended.`;
+    const target = targets.find(t => shared.includes(t));
+    if (deleting || refspecs.some(r => r.startsWith(':'))) {
+      if (target) return `this deletes ${target} on the remote, which your team shares. Confirm it's intended.`;
+      const theirs = inSameRepo(lane).filter(o => targets.includes(o.branch)), names = [...new Set(theirs.map(o => o.name))];
+      if (names.length) return `this deletes ${theirs[0].branch} on the remote, which ${names.join(' and ')} also ${names.length === 1 ? 'works' : 'work'} on. Confirm it's intended.`;
+      // Even a session branch: everyone in a session pushes to it, so deleting it can take a teammate's work with it.
+      return `this deletes ${targets[0]} on the remote, and teammates may have pushed to it. Confirm it's intended.`;
+    }
     return target ? `this pushes straight to ${target}, which your team shares. Push a branch and open a pull request instead, or confirm.` : null;
   }
 
@@ -735,6 +739,7 @@ function startHub({ port = 7681, host = '0.0.0.0', dataDir, owners, tls, passIss
     existing?.ws.terminate(); // the same agent reconnecting before its old connection timed out
     const lane = { id: hello.id, team: team.id, login: user.login, name: user.name, avatar: user.avatar,
       session: str(hello.session, 60).trim(), cmd: str(hello.cmd, 40), root: str(hello.root, 1000), repo: str(hello.repo, 200), branch: str(hello.git?.branch || hello.branch, 100),
+      mainBranch: str(hello.git?.mainBranch, 100),
       roots: (Array.isArray(hello.roots) ? hello.roots.slice(0, 4) : []).map(r => str(r, 1000)).filter(Boolean),
       cols: size(hello.cols, 20, 500, 120), rows: size(hello.rows, 5, 200, 36), open: !!hello.open, status: str(hello.cmd, 40) === 'claude' ? 'idle' : 'running', lastActive: new Date().toISOString(), startedAt: before?.startedAt || new Date().toISOString(), files: new Set(), changed: changedFiles(hello.git), local: changedFiles(hello.git?.local ? { changed: hello.git.local } : hello.git),
       git: gitStats(hello.git), history: typeof hello.history === 'string' ? hello.history.slice(-SCROLLBACK) : '', hookSecret: hello.hookSecret, ws };
@@ -769,6 +774,7 @@ function startHub({ port = 7681, host = '0.0.0.0', dataDir, owners, tls, passIss
         lane.local = Array.isArray(m.local) ? changedFiles({ changed: m.local }) : lane.changed;
         lane.files = new Set([...lane.files].filter(f => lane.changed.has(f))); // edits since committed to main, or undone, no longer count
         lane.branch = str(m.branch, 100) || lane.branch;
+        lane.mainBranch = str(m.mainBranch, 100) || lane.mainBranch;
         broadcastState(team.id);
       } else if (m?.t === 'status' && ['needs you', 'idle', 'working'].includes(m.status)) { // trust prompts, and agents without hooks
         lane.status = m.status;

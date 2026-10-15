@@ -263,12 +263,22 @@ test('pushing to main or force-pushing needs a person to confirm', async () => {
     'cat <<<EOF\ngit push origin main', 'echo $((1<<2))\ngit push origin main', '(( n = 1 << 2 ))\ngit push origin main']) {
     assert.match((await push(onBranch, command))?.permissionDecisionReason || '', /straight to main/, command);
   }
-  for (const command of ['git push', 'git push -u origin session/fix', 'git push origin --delete session/old', 'git status', 'echo push main',
+  for (const command of ['git push', 'git push -u origin session/fix', 'git status', 'echo push main',
     'git stash push -m wip', 'git push --tags', 'git commit -m "fix push to main"', 'git commit -m "Never git push --force to main"',
     'git log --grep="git push origin main"', 'echo done # git push origin main',
     'git commit -m "$(cat <<\'EOF\'\nwip\ngit push --force origin main\nEOF\n)"', 'git commit -m "first line\ngit push origin main"']) {
     assert.equal(await push(onBranch, command), null, `fine: ${command}`);
   }
+  // Deleting any remote branch needs a person, a session branch included: teammates in the session push to it too.
+  for (const command of ['git push origin --delete session/old', 'git push origin :session/fix', 'git push origin --delete feature']) {
+    assert.match((await push(onBranch, command))?.permissionDecisionReason || '', /deletes .* on the remote/, command);
+  }
+  // The repo's default branch is shared like main, whatever it's called.
+  const onDevelop = await rawLane('push-develop', { branch: 'session/x', repo: 'acme/app', git: { branch: 'session/x', mainBranch: 'develop' } });
+  assert.match((await push(onDevelop, 'git push origin HEAD:develop')).permissionDecisionReason, /straight to develop/);
+  assert.match((await push(onDevelop, 'git push origin --delete develop')).permissionDecisionReason, /deletes develop/);
+  assert.equal(await push(onDevelop, 'git push origin session/x'), null);
+  await onDevelop.close();
   assert.equal(await push(onMain, 'git stash push'), null, 'a stash is not a push, on main either');
   assert.equal(await push(onMain, 'git commit -m "Fix git push hook"'), null, 'a commit message mentioning a push, on main');
   // A huge command is answered quickly rather than holding up the hub.

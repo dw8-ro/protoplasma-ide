@@ -98,6 +98,15 @@ test('the push guard stops shared-team agents pushing to main or force-pushing, 
   assert.throws(() => push(aliceTree, agent, '--force', 'origin', 'HEAD:session/fix-login'), /replace commits/, "would drop Bob's commit");
   push(aliceTree, agent, 'origin', 'HEAD:refs/heads/session/elsewhere'); // a new session branch is fine
   push(aliceTree, {}, 'origin', 'HEAD:refs/heads/main'); // a person (no PROTO_SHARED_TEAM) isn't stopped
+  assert.throws(() => push(aliceTree, agent, 'origin', ':session/elsewhere'), /would delete session\/elsewhere/, 'an agent deleting a branch');
+  push(aliceTree, {}, 'origin', ':session/elsewhere'); // a person may
+  // A repo whose default branch is develop: that's protected like main.
+  push(aliceTree, {}, 'origin', 'HEAD:refs/heads/develop');
+  git(alice, 'remote', 'set-head', 'origin', 'develop');
+  commit(aliceTree, 'dev.js', 'export const dev = 1;\n'); // something to push
+  try {
+    assert.throws(() => push(aliceTree, agent, 'origin', 'HEAD:develop'), /don't push straight to develop/);
+  } finally { git(alice, 'remote', 'set-head', 'origin', 'main'); }
 
   fs.writeFileSync(path.join(bob, '.git/hooks/pre-push'), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
   assert.equal(await installPushGuard(bob, env), false, 'an existing hook is left alone');

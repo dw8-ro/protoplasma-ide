@@ -157,8 +157,9 @@ docs/             README images, recheck/ (review records)
   - `commandsIn` also looks inside `-c`/`eval`/`ssh` quotes, `$(…)` and backticks, reading only the first 20,000
     characters.
   - `subcommandAt` skips git's own options.
-  - It asks on: a force push, `--all`/`--mirror`, deleting main/master or a branch a teammate is on, and pushing to
-    main/master. It follows `git checkout`/`switch` within the same command.
+  - It asks on: a force push, `--all`/`--mirror`, deleting any remote branch (naming main/master/the default branch,
+    or a teammate on it, when that's what it is), and pushing to main/master or the lane's `mainBranch` (the branch
+    `origin/HEAD` names, reported by lane.js `gitStatus`). It follows `git checkout`/`switch` within the same command.
 - **Shell-write check** (`shellWriteRisk` via `writtenBy`): finds the paths a command writes, then asks if another
   agent in the same repo changed one. That can be a teammate's or one of your own in another checkout, which `whoOn`
   names as "your agent in session …". The edit ask (`othersOn`) and the "branch a teammate is on" push check work the
@@ -241,7 +242,8 @@ docs/             README images, recheck/ (review records)
 - **`PUSH_GUARD` / `installPushGuard`:**
   - A `pre-push` hook in the clone's common git dir, written atomically. It keeps the marker line `Added by Protoplasma`.
   - It only acts when `PROTO_SHARED_TEAM` is set, which main.js does for non-Claude agents on a team with members. It
-    blocks pushes to main/master and non-fast-forward pushes.
+    blocks pushes to main/master and the default branch (`refs/remotes/<remote>/HEAD`), branch deletions, and
+    non-fast-forward pushes. `--no-verify` skips it; the README calls it a safeguard, not a lock (D5).
   - It skips repos with `core.hooksPath` or their own pre-push hook.
   - Claude agents are covered by the hub's hook answers instead. People pushing from their own terminal aren't affected.
 

@@ -94,16 +94,22 @@ async function removeSessionWorktree(clone, session, env = process.env) {
 // OpenCode on a team with other people. (Claude agents are asked through their hooks instead, and people pushing from
 // their own terminal aren't affected.)
 const PUSH_GUARD = `#!/bin/sh
-# Added by Protoplasma. Stops agents on a shared team from pushing straight to main or master, or force-pushing.
-# People pushing from their own terminal aren't affected.
+# Added by Protoplasma. Stops agents on a shared team from pushing straight to main, master or the repo's default
+# branch, deleting branches, or force-pushing. People pushing from their own terminal aren't affected.
 [ -n "$PROTO_SHARED_TEAM" ] || exit 0
 zero=0000000000000000000000000000000000000000
+default=$(git symbolic-ref --quiet --short "refs/remotes/$1/HEAD" 2>/dev/null)
+default=\${default#"$1"/}
 while read -r local_ref local_sha remote_ref remote_sha; do
   branch=\${remote_ref#refs/heads/}
-  case "$branch" in main|master)
+  if [ "$branch" = main ] || [ "$branch" = master ] || [ "$branch" = "$default" ]; then
     echo "Protoplasma: don't push straight to $branch, which your team shares. Push the session branch and open a pull request." >&2
-    exit 1;;
-  esac
+    exit 1
+  fi
+  if [ "$local_sha" = "$zero" ] && [ "$branch" != "$remote_ref" ]; then
+    echo "Protoplasma: this would delete $branch on the remote, and teammates may have pushed to it. If it's meant, a person can delete it from their own terminal." >&2
+    exit 1
+  fi
   if [ "$remote_sha" != "$zero" ] && [ "$local_sha" != "$zero" ] && ! git merge-base --is-ancestor "$remote_sha" "$local_sha" 2>/dev/null; then
     echo "Protoplasma: this push would replace commits on $branch that your branch doesn't have. Pull and merge them in; if you rebased your own branch, push it under a new name instead of forcing." >&2
     exit 1

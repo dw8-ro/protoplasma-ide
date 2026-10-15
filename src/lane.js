@@ -89,7 +89,8 @@ async function gitStatus(cwd, { env = process.env, fetch = false } = {}) {
     upstream ? line('merge-base', 'HEAD', upstream).then(at => run('diff', '--name-only', '-z', at || upstream)) : null]);
   if (numstat === null || untracked === null) return null;
   const added = untracked.split('\0').filter(Boolean), changed = [];
-  const stats = { branch, added: 0, removed: 0, files: added.length, behind: main || upstream ? behind : 0, ahead, unpushed };
+  // mainBranch: the branch origin/HEAD names (develop, trunk…), which the push guard protects like main.
+  const stats = { branch, mainBranch: main.replace(/^origin\//, ''), added: 0, removed: 0, files: added.length, behind: main || upstream ? behind : 0, ahead, unpushed };
   // With -z each entry is "added\tremoved\tpath"; a rename has an empty path followed by its old and new paths.
   const fields = numstat.split('\0');
   for (let i = 0; i < fields.length; i++) {

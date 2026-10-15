@@ -73,8 +73,8 @@ async function finishSignIn(clientId, { device_code, interval, expires_in }, sig
 }
 
 /**
- * The exact login behind a GitHub username, or null if nobody has it. An organisation can't be a teammate. When GitHub
- * can't be asked, the name is taken as typed.
+ * The exact login and numeric id behind a GitHub username, or null if nobody has it. An organisation can't be a
+ * teammate. When GitHub can't be asked, the name is taken as typed, with no id (the hub records it at their first sign-in).
  */
 async function findUser(login, token) {
   const res = await fetch(`https://api.github.com/users/${encodeURIComponent(login)}`, { signal: AbortSignal.timeout(8000),
@@ -82,7 +82,7 @@ async function findUser(login, token) {
   if (res?.status === 404) return null;
   const found = res?.ok ? await res.json().catch(() => null) : null;
   if (found?.type && found.type !== 'User') throw new Error(`${found.login} is a GitHub organisation, not a person. Invite the people in it.`);
-  return found?.login || login;
+  return { login: found?.login || login, id: Number.isSafeInteger(found?.id) ? found.id : undefined };
 }
 
 // ---- Repos (gh CLI) ----

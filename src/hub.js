@@ -100,7 +100,8 @@ function startHub({ port = 7681, host = '0.0.0.0', dataDir, owners, tls, passIss
     saved = [];
   }
   const list = v => (Array.isArray(v) ? v : []);
-  const teams = new Map(saved.map(t => [t.id, { ...t, members: list(t.members), memories: list(t.memories), sessions: list(t.sessions) }]));
+  const idsOf = v => (v && typeof v === 'object' && !Array.isArray(v) ? Object.fromEntries(Object.entries(v).filter(([, id]) => Number.isSafeInteger(id))) : {});
+  const teams = new Map(saved.map(t => [t.id, { ...t, members: list(t.members), memories: list(t.memories), sessions: list(t.sessions), ids: idsOf(t.ids) }]));
   // Written to a temporary file first, so a crash mid-write can't leave a half-written teams.json behind. A failed write
   // (full disk) is logged and retried on the next change; the teams stay in memory meanwhile.
   const saveTeams = () => {
@@ -110,7 +111,32 @@ function startHub({ port = 7681, host = '0.0.0.0', dataDir, owners, tls, passIss
       fs.renameSync(`${teamsFile}.tmp`, teamsFile);
     } catch (e) { console.error(`Couldn't save teams: ${e.message}`); }
   };
-  const onTeam = (team, login) => same(team.owner, login) || team.members.some(m => same(m, login));
+  const hasLogin = (team, login) => same(team.owner, login) || team.members.some(m => same(m, login));
+  // People are matched by GitHub's numeric id (`team.ids`, login in lower case -> id), not only by login: a login can be
+  // renamed and then taken by someone else. A place's id is recorded the first time its person signs in (teams from
+  // before ids, or an invite made while GitHub couldn't be asked). After that a login held by another id is refused,
+  // and someone who renamed their account keeps their place under the new login.
+  function onTeam(team, user) {
+    if (user.id != null) {
+      const mine = [team.owner, ...team.members].find(l => team.ids[l.toLowerCase()] === user.id);
+      if (mine && !same(mine, user.login)) renamePerson(team, mine, user.login);
+      if (mine) return true;
+    }
+    const place = [team.owner, ...team.members].find(l => same(l, user.login));
+    if (!place) return false;
+    const known = team.ids[place.toLowerCase()];
+    if (known != null) return known === user.id; // the login is now someone else's
+    if (user.id != null) { team.ids[place.toLowerCase()] = user.id; saveTeams(); }
+    return true;
+  }
+  function renamePerson(team, from, to) {
+    team.ids[to.toLowerCase()] = team.ids[from.toLowerCase()];
+    delete team.ids[from.toLowerCase()];
+    if (same(team.owner, from)) team.owner = to;
+    // A stale place already under the new login goes: it can't be anyone else's now.
+    team.members = team.members.map(m => (same(m, from) ? to : m)).filter((m, i, all) => !same(m, team.owner) && all.findIndex(x => same(x, m)) === i);
+    saveTeams();
+  }
   // "Fix Login" and "fix-login" would get the same branch and folder, so they're the same session.
   // A renamed session keeps its original key, which names its branch and folders; that key still finds it.
   const keyOf = x => x.key || slug(x.name);
@@ -513,19 +539,20 @@ function startHub({ port = 7681, host = '0.0.0.0', dataDir, owners, tls, passIss
       return json(200, { pass: signPass(user, print, issuingKey(), expires), owners: hubOwners, expires });
     }
 
-    if (!id && req.method === 'GET') return json(200, [...teams.values()].filter(t => onTeam(t, user.login)).map(teamView));
+    if (!id && req.method === 'GET') return json(200, [...teams.values()].filter(t => onTeam(t, user)).map(teamView));
     if (!id && req.method === 'POST') {
       if (owners && !owners.some(o => same(o, user.login))) return json(403, { error: 'This hub only lets its owners create teams.' });
       const name = str(body.name, 60).trim();
       if (!name) return json(400, { error: 'Give the team a name.' });
-      const team = { id: crypto.randomBytes(6).toString('base64url'), name, owner: user.login, members: [], memories: [], sessions: [] };
+      const team = { id: crypto.randomBytes(6).toString('base64url'), name, owner: user.login, members: [], memories: [], sessions: [],
+        ids: user.id != null ? { [user.login.toLowerCase()]: user.id } : {} };
       teams.set(team.id, team);
       saveTeams();
       return json(201, teamView(team));
     }
 
     const team = teams.get(id);
-    if (!team || !onTeam(team, user.login)) return json(404, { error: 'No such team.' });
+    if (!team || !onTeam(team, user)) return json(404, { error: 'No such team.' });
 
     // Deleting a team is the owner's call, and only once nobody has an agent running in it.
     if (!sub && req.method === 'DELETE') {
@@ -658,8 +685,11 @@ function startHub({ port = 7681, host = '0.0.0.0', dataDir, owners, tls, passIss
     if (!subId && req.method === 'POST') {
       const login = str(body.login, 40).trim().replace(/^@/, '');
       if (!GITHUB_LOGIN.test(login)) return json(400, { error: 'That isn\'t a GitHub username.' });
-      if (onTeam(team, login)) return json(409, { error: `${login} is already on the team.` });
+      // The app looks the person up on GitHub first and sends their id; without one, it's recorded at their first sign-in.
+      const id = Number.isSafeInteger(body.id) && body.id > 0 ? body.id : null;
+      if (hasLogin(team, login) || (id && Object.values(team.ids).includes(id))) return json(409, { error: `${login} is already on the team.` });
       team.members.push(login);
+      if (id) team.ids[login.toLowerCase()] = id;
       saveTeams();
       broadcastState(team.id); // everyone's People page shows them
       return json(200, teamView(team));
@@ -668,6 +698,7 @@ function startHub({ port = 7681, host = '0.0.0.0', dataDir, owners, tls, passIss
       if (same(subId, team.owner)) return json(400, { error: 'The owner can\'t leave. Delete the team instead.' });
       if (!team.members.some(m => same(m, subId))) return json(404, { error: `${subId} isn't on the team.` });
       team.members = team.members.filter(m => !same(m, subId));
+      delete team.ids[subId.toLowerCase()];
       saveTeams();
       // Disconnect them now rather than on their next reconnect.
       for (const w of watchers) if (w.team === team.id && same(w.login, subId)) w.close(4003, 'Removed from the team.');
@@ -836,7 +867,7 @@ function startHub({ port = 7681, host = '0.0.0.0', dataDir, owners, tls, passIss
         if (ws.readyState !== ws.OPEN) return; // closed during verification
         if (user === undefined) return ws.close(1013, 'GitHub didn\'t answer. Trying again.');
         if (!user) return ws.close(4001, 'Sign in with GitHub first.');
-        if (!team || !onTeam(team, user.login)) return ws.close(4003, 'You aren\'t on this team.');
+        if (!team || !onTeam(team, user)) return ws.close(4003, 'You aren\'t on this team.');
         role(ws, user, team, m);
         for (const r of early) ws.emit('message', r);
       } catch (e) {

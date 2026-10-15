@@ -198,7 +198,7 @@ async function createTeam(s, { name, online }) {
   return { ...await hubApi(s, url, 'POST', '/teams', { name }), hub: url, where: online ? 'Online' : 'This Mac' };
 }
 
-const invite = (s, team, login) => hubApi(s, team.hub, 'POST', `/teams/${encodeURIComponent(team.id)}/members`, { login });
+const invite = (s, team, { login, id }) => hubApi(s, team.hub, 'POST', `/teams/${encodeURIComponent(team.id)}/members`, { login, id });
 const removeMember = (s, team, login) =>
   hubApi(s, team.hub, 'DELETE', `/teams/${encodeURIComponent(team.id)}/members/${encodeURIComponent(login)}`);
 const deleteTeam = (s, team) => hubApi(s, team.hub, 'DELETE', `/teams/${encodeURIComponent(team.id)}`);

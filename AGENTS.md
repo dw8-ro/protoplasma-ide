@@ -19,7 +19,7 @@ Function names below are stable. Line numbers drift, so search by name.
 |---|---|---|
 | `npm install` | Installs dependencies (postinstall makes node-pty's `spawn-helper` executable) | Node 24 |
 | `npm start` | Runs the app from source. Updates are off in source runs. | |
-| `npm test` | 65 integration tests in `test/*.test.js`: real hub, real lanes, real git. About a minute. | git ≥ 2.28, macOS. No network or Electron needed. |
+| `npm test` | 67 integration tests in `test/*.test.js`: real hub, real lanes, real git. About a minute. | git ≥ 2.28, macOS. No network or Electron needed. |
 | `npm run e2e` | Drives the real Electron app through every main flow and prints `PASS`/`FAIL` per step, ending with `N/M passed`. 15-minute cap. | The `claude` CLI on the login-shell PATH and a GUI session. One step needs `gh auth status` to succeed (online). |
 | `npm run dist` | Packages `dist/Protoplasma-darwin-arm64/Protoplasma.app`, unsigned. | |
 | `npm run playground` | Two app copies (David on port 7801, Max on 7802) on a local hub and repo, each with an HTTP control API | |
@@ -56,7 +56,7 @@ app/panes.js      pane mode (~90)
 app/index.html    CSP, all CSS (tokens and themes), icon sprite, all markup and dialogs (~1040)
 app/config.json   githubClientId (OAuth app, device flow), onlineHub (the Railway URL)
 scripts/          e2e.js, playground.js + playground-app.js, stage.js, screenshot.js, demo.js, sign.sh, icon.js
-test/             hub.test.js (39), workspace.test.js (12), files.test.js (7), lan.test.js (5), updates.test.js (2)
+test/             hub.test.js (39), workspace.test.js (12), files.test.js (7), lan.test.js (5), identity.test.js (2), updates.test.js (2)
 .github/workflows ci.yml (npm test on every push to main and PR), package.yml (dist check), release.yml (tag → release)
 Dockerfile        the hosted hub image (only src/hub.js + src/shared.js + ws)
 install.sh        the one-line installer
@@ -106,6 +106,10 @@ docs/             README images, recheck/ (review records)
   - `lanes` holds live agents, `watchers` holds app windows, and `stopped` holds the last 20 stopped agents per team.
     These three are in memory only.
   - The owner is never in `team.members`. `members.length > 0` means "has teammates", and turns on the push guard.
+  - `team.ids` maps each login (lower case) to its GitHub numeric id. `onTeam(team, user)` matches by id. It records a
+    missing id at that person's first sign-in (older teams, or an invite made while GitHub couldn't be asked), refuses
+    a login now held by another id, and follows a rename (`renamePerson`). Every owner and author check runs after it,
+    so they can keep comparing logins. Invites carry the id the app got from GitHub (`findUser`).
 - **Sign-in:** `identify` caches a good token for 2 minutes and a rejected one for 10 s, keyed by its sha256.
   Concurrent lookups share one request. A GitHub outage is never cached: REST answers 503 and a WebSocket closes with
   1013. `githubUser` returns null without asking GitHub for anything not shaped like a GitHub token (`gh?_…`,

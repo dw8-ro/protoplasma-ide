@@ -240,7 +240,7 @@ $('#signout').onclick = async () => {
   closeTeam();
   me = null;
   repos = null; reposError = ''; // the next person's repos aren't these
-  listedTeams = new Map(); renderTeamList.last = '';
+  listedTeams = new Map();
   setHTML($('#teamList'), '');
   $('#teamsNote').textContent = $('#teamName').value = '';
   if (prefs.shareFiles) { prefs.shareFiles = false; savePrefs(); } // sharing is each person's own choice
@@ -319,7 +319,7 @@ function renderTeamList(teams) {
       <span class="agents">${[open && 'Open', t.agents && `${t.agents} running`].filter(Boolean).join(', ')}</span>
     </button>`;
   }).join('') || `<p class="hint">No teams yet. Create one below, or ask a teammate to invite ${esc(me.login)}.</p>`;
-  if (html !== renderTeamList.last) $('#teamList').innerHTML = renderTeamList.last = html;
+  setHTML($('#teamList'), html);
 }
 $('#teamList').onclick = e => { const b = e.target.closest('[data-key]'); if (b) openTeam(listedTeams.get(b.dataset.key)); };
 
@@ -491,7 +491,7 @@ function write(id, data) {
   data = forPage(data);
   const t = terms.get(id);
   if (t) t.term.write(data);
-  else pending.set(id, (pending.get(id) || '') + data);
+  else pending.set(id, ((pending.get(id) || '') + data).slice(-1_000_000)); // the latest screenfuls are enough
 }
 proto.onData(write);
 proto.onExit(id => {

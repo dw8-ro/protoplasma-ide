@@ -406,7 +406,7 @@ docs/             README images, recheck/ (review records)
   `ed.addCommand` in code.js `ensureEditor`.
 - **Similar names:** `#codeView` is the sign-in device-code step, not the editor; the editor is `#code` / `.code-view`.
   `data-pane` is used both by Settings sections and by pane-mode columns.
-- **Caches on functions:** `renderTeamList.last`, `refreshFiles.last`, `renderTabs.unsaved` and `marks.last` hold
+- **Caches on functions:** `refreshFiles.last`, `renderTabs.unsaved` and `marks.last` hold
   state. Reset them with the state they belong to.
 - **`main.js` uses some variables before their declarations,** inside callbacks (`folders`, `shells`, `stopWatching`, `terminated`).
   Don't move those calls to module top level.

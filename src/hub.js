@@ -3,11 +3,12 @@
 // prompts and (when their owner shares them) changed files, and keeps sessions, notes and comments.
 // Protocol: see the README.
 const http = require('http');
+const https = require('https');
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const { WebSocketServer } = require('ws');
-const { SCROLLBACK, EDIT_TOOLS, appendScrollback, slug } = require('./shared');
+const { SCROLLBACK, EDIT_TOOLS, appendScrollback, slug, fingerprint } = require('./shared');
 
 const HEARTBEAT_MS = 15_000;
 const IDENTITY_TTL_MS = 2 * 60_000; // how long a verified GitHub token is trusted before GitHub is asked again
@@ -28,6 +29,8 @@ const PROTECTED_BRANCHES = ['main', 'master'];
 const MAX_BUFFERED = 16 * 1024 * 1024; // unsent bytes to one viewer before it's dropped as too slow
 const MAX_CONTEXT_FILES = 15; // per teammate, in an agent's prompt context
 const STATE_REFRESH_MS = 30_000; // rebroadcast at least this often so "last active" times stay fresh
+const PASS_TTL_MS = 12 * 60 * 60_000; // how long a pass lasts; the app gets a new one well before then
+const MAX_HUB_PRINTS = 5; // hub certificates kept per person (one per Mac they host teams on), newest first
 
 /** Resolves a GitHub token to its user. Only reads the public profile, so a token with no scopes works. */
 async function githubUser(token) {
@@ -38,7 +41,31 @@ async function githubUser(token) {
   if (res.status === 401) return null;
   if (!res.ok) throw new Error(`GitHub answered ${res.status}.`); // down or rate-limited: not a verdict on the token
   const u = await res.json();
-  return { login: u.login, name: u.name || u.login, avatar: u.avatar_url };
+  return { login: u.login, id: u.id, name: u.name || u.login, avatar: u.avatar_url };
+}
+
+/**
+ * A pass: the online hub's word that its holder is a GitHub user, good only at the one hub whose certificate it names
+ * (`aud`, a fingerprint) and only until it expires. Hubs on people's Macs get passes instead of GitHub tokens, so a
+ * teammate's Mac, or anything on the network pretending to be one, never holds a sign-in that works anywhere else.
+ * Signed with Ed25519: `p1.<payload>.<signature>`, both base64url.
+ */
+function signPass(user, aud, key, exp) {
+  const body = Buffer.from(JSON.stringify({ login: user.login, id: user.id, name: String(user.name || '').slice(0, 100),
+    avatar: String(user.avatar || '').slice(0, 200), aud, exp })).toString('base64url');
+  return `p1.${body}.${crypto.sign(null, Buffer.from(`p1.${body}`), key).toString('base64url')}`;
+}
+/** Who a pass vouches for at the hub whose certificate fingerprint is `aud`, or null: forged, expired, or another hub's. */
+function readPass(pass, key, aud, now = Date.now()) {
+  const [v, body, sig, ...rest] = String(pass).split('.');
+  if (v !== 'p1' || !body || !sig || rest.length) return null;
+  let p;
+  try {
+    if (!crypto.verify(null, Buffer.from(`p1.${body}`), key, Buffer.from(sig, 'base64url'))) return null;
+    p = JSON.parse(Buffer.from(body, 'base64url'));
+  } catch { return null; }
+  if (!aud || p?.aud !== aud || !(p.exp > now) || typeof p.login !== 'string' || !GITHUB_LOGIN.test(p.login)) return null;
+  return { login: p.login, id: p.id, name: String(p.name || p.login), avatar: String(p.avatar || ''), until: p.exp };
 }
 
 /**
@@ -48,9 +75,11 @@ async function githubUser(token) {
  * @param {string} [o.dataDir] where teams are saved; omit to keep them in memory
  * @param {string[]} [o.owners] GitHub logins allowed to create teams; omit to let anyone signed in
  * @param {(token: string) => Promise<{login: string, name: string, avatar: string} | null>} [o.verifyUser]
- * @returns {Promise<{ port: number, close: () => Promise<void> }>}
+ * @param {{key: Buffer|string, cert: Buffer|string}} [o.tls] serve https/wss with this certificate (a hub on someone's Mac)
+ * @param {string} [o.passIssuer] the online hub whose passes this hub accepts (needs `tls`: a pass names the certificate)
+ * @returns {Promise<{ port: number, close: () => Promise<void>, fingerprint?: string }>}
  */
-function startHub({ port = 7681, host = '0.0.0.0', dataDir, owners, verifyUser = token => module.exports.githubUser(token) } = {}) {
+function startHub({ port = 7681, host = '0.0.0.0', dataDir, owners, tls, passIssuer, verifyUser = token => module.exports.githubUser(token) } = {}) {
   const same = (a, b) => String(a).toLowerCase() === String(b).toLowerCase();
   const send = (ws, msg) => ws.readyState === ws.OPEN && ws.send(JSON.stringify(msg));
   const parse = raw => { try { return JSON.parse(raw); } catch { return null; } };
@@ -106,17 +135,66 @@ function startHub({ port = 7681, host = '0.0.0.0', dataDir, owners, verifyUser =
     return session;
   }
 
-  // ---- Identity (GitHub tokens, cached by hash) ----
+  // ---- Passes: checking them (a hub on someone's Mac) ----
+  const ownPrint = tls && fingerprint(new crypto.X509Certificate(tls.cert).raw);
+  // The issuer's public key, fetched when first needed, and again (at most once a minute) when a pass doesn't check out
+  // against it: the online hub may have a new key.
+  let issuerKey = null, keyAsked = 0;
+  async function passUser(pass) {
+    if (!ownPrint || !passIssuer) return null;
+    for (const again of [false, true]) {
+      if (again && Date.now() - keyAsked < 60_000) break;
+      if (!issuerKey || again) {
+        keyAsked = Date.now();
+        const res = await fetch(`${passIssuer}/passes/key`, { signal: AbortSignal.timeout(8000) });
+        if (!res.ok) throw new Error(`The online hub answered ${res.status}.`); // down: not a verdict on the pass
+        issuerKey = crypto.createPublicKey({ key: Buffer.from(String((await res.json()).key), 'base64url'), format: 'der', type: 'spki' });
+      }
+      const user = readPass(pass, issuerKey, ownPrint);
+      if (user) return user;
+    }
+    return null;
+  }
+
+  // ---- Passes: issuing them (the online hub) ----
+  // Each person's app registers the certificate of the hub it runs (POST /hubs). A pass is only issued for a registered
+  // hub, and the app asking for it learns whose hub that is, so a look-alike on the network can't pass itself off as a
+  // teammate's.
+  const hubsFile = dataDir && path.join(dataDir, 'hubs.json');
+  let hubPrints = {}; // login (lower case) -> certificate fingerprints, newest first
+  try {
+    const read = hubsFile && fs.existsSync(hubsFile) ? JSON.parse(fs.readFileSync(hubsFile, 'utf8')) : {};
+    if (read && typeof read === 'object' && Object.values(read).every(v => Array.isArray(v) && v.every(p => typeof p === 'string'))) hubPrints = read;
+  } catch {} // a damaged file only means owners register their hubs again, which their apps do on their own
+  const saveHubs = () => {
+    if (!hubsFile) return;
+    try {
+      fs.writeFileSync(`${hubsFile}.tmp`, JSON.stringify(hubPrints));
+      fs.renameSync(`${hubsFile}.tmp`, hubsFile);
+    } catch (e) { console.error(`Couldn't save hubs: ${e.message}`); }
+  };
+  let passKey = null; // made when first needed, so a hub that never issues passes has no key
+  function issuingKey() {
+    if (passKey) return passKey;
+    const file = dataDir && path.join(dataDir, 'pass-key.pem');
+    if (file && fs.existsSync(file)) return (passKey = crypto.createPrivateKey(fs.readFileSync(file)));
+    passKey = crypto.generateKeyPairSync('ed25519').privateKey;
+    if (file) fs.writeFileSync(file, passKey.export({ type: 'pkcs8', format: 'pem' }), { mode: 0o600 });
+    return passKey;
+  }
+
+  // ---- Identity (GitHub tokens and passes, cached by hash) ----
   const identities = new Map(); // sha256(token) -> { user, expires }; a rejected token is remembered briefly too
   const lookups = new Map();    // sha256(token) -> the GitHub lookup under way, shared by everyone presenting it
   async function identify(token) {
-    if (typeof token !== 'string' || !token || token.length > 500) return null;
+    if (typeof token !== 'string' || !token || token.length > 2000) return null;
     const key = crypto.createHash('sha256').update(token).digest('hex');
     const hit = identities.get(key);
     if (hit?.expires > Date.now()) return hit.user;
-    if (!lookups.has(key)) lookups.set(key, Promise.resolve().then(() => verifyUser(token)).finally(() => lookups.delete(key)));
-    const user = await lookups.get(key); // throws when GitHub couldn't be asked
-    identities.set(key, { user, expires: Date.now() + (user ? IDENTITY_TTL_MS : 10_000) });
+    const check = () => (token.startsWith('p1.') ? passUser(token) : verifyUser(token));
+    if (!lookups.has(key)) lookups.set(key, Promise.resolve().then(check).finally(() => lookups.delete(key)));
+    const user = await lookups.get(key); // throws when GitHub (or, for a pass, the online hub) couldn't be asked
+    identities.set(key, { user, expires: Math.min(Date.now() + (user ? IDENTITY_TTL_MS : 10_000), user?.until ?? Infinity) });
     return user;
   }
 
@@ -407,12 +485,33 @@ function startHub({ port = 7681, host = '0.0.0.0', dataDir, owners, verifyUser =
       return json(200, out || undefined);
     }
 
-    if (resource !== 'teams') return json(404, { error: 'Not found.' });
+    // Only the online hub issues passes; a hub on someone's Mac (tls) only checks them.
+    if (!tls && resource === 'passes' && id === 'key' && !sub && req.method === 'GET') {
+      return json(200, { key: crypto.createPublicKey(issuingKey()).export({ type: 'spki', format: 'der' }).toString('base64url') });
+    }
+    if (!(tls ? ['teams'] : ['teams', 'passes', 'hubs']).includes(resource)) return json(404, { error: 'Not found.' });
     const user = await identify(bearer(req)).catch(e => { throw Object.assign(e, { github: true }); });
     if (!user) return json(401, { error: 'Sign in with GitHub first.' });
     const raw = req.method === 'POST' ? await readBody(req, MAX_API_BODY) : '';
     const body = raw.trim() ? parse(raw) : {};
     if (!body || typeof body !== 'object' || Array.isArray(body)) return json(400, { error: 'That request wasn\'t valid JSON.' });
+
+    // POST /hubs {fp}: "the hub on my Mac has this certificate". POST /passes {aud}: a pass for that hub.
+    if (resource !== 'teams') {
+      if (id || req.method !== 'POST') return json(404, { error: 'Not found.' });
+      const print = str(resource === 'hubs' ? body.fp : body.aud, 100);
+      if (!/^[\w-]{43}$/.test(print)) return json(400, { error: 'That isn\'t a hub certificate fingerprint.' });
+      if (resource === 'hubs') {
+        const login = user.login.toLowerCase();
+        hubPrints[login] = [print, ...(hubPrints[login] || []).filter(p => p !== print)].slice(0, MAX_HUB_PRINTS);
+        saveHubs();
+        return json(200, {});
+      }
+      const hubOwners = Object.keys(hubPrints).filter(login => hubPrints[login].includes(print));
+      if (!hubOwners.length) return json(404, { error: 'That Mac\'s hub isn\'t registered with the online hub yet. Its owner\'s Protoplasma registers it when it\'s open and online.' });
+      const expires = Date.now() + PASS_TTL_MS;
+      return json(200, { pass: signPass(user, print, issuingKey(), expires), owners: hubOwners, expires });
+    }
 
     if (!id && req.method === 'GET') return json(200, [...teams.values()].filter(t => onTeam(t, user.login)).map(teamView));
     if (!id && req.method === 'POST') {
@@ -580,11 +679,13 @@ function startHub({ port = 7681, host = '0.0.0.0', dataDir, owners, verifyUser =
   }
 
   // GitHub being unreachable while checking a sign-in is a 503 (try again), not a 401 (sign in again).
-  const server = http.createServer((req, res) => handle(req, res).catch(e => {
+  const onRequest = (req, res) => handle(req, res).catch(e => {
     if (res.headersSent) return;
-    const [status, error] = e.status === 413 ? [413, 'That\'s too much at once.'] : e.github ? [503, 'The hub couldn\'t reach GitHub to check who you are. Try again in a moment.'] : [500, 'The hub hit an error.'];
+    const [status, error] = e.status === 413 ? [413, 'That\'s too much at once.'] : e.github ? [503, 'The hub couldn\'t reach GitHub (or the online hub) to check who you are. Try again in a moment.'] : [500, 'The hub hit an error.'];
     res.writeHead(status, { 'content-type': 'application/json', connection: 'close' }).end(JSON.stringify({ error }));
-  }));
+  });
+  // A hub on someone's Mac is reached over the local network, so everything to and from it is encrypted.
+  const server = tls ? https.createServer({ key: tls.key, cert: tls.cert }, onRequest) : http.createServer(onRequest);
 
   // ---- WebSockets: agents (/lane) and app windows (/watch) ----
   const gitStats = g => g && typeof g === 'object'
@@ -778,12 +879,12 @@ function startHub({ port = 7681, host = '0.0.0.0', dataDir, owners, verifyUser =
   return new Promise((resolve, reject) => {
     server.once('error', reject).listen(port, host, () => {
       server.off('error', reject).on('error', e => console.error(`Hub server error: ${e.message}`));
-      resolve({ port: server.address().port, close });
+      resolve({ port: server.address().port, close, fingerprint: ownPrint || undefined });
     });
   });
 }
 
-module.exports = { startHub, githubUser };
+module.exports = { startHub, githubUser, signPass, readPass };
 
 // Standalone: PORT, DATA_DIR, PROTO_OWNERS (comma-separated GitHub logins allowed to create teams).
 if (require.main === module) {

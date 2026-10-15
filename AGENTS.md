@@ -19,7 +19,7 @@ Function names below are stable. Line numbers drift, so search by name.
 |---|---|---|
 | `npm install` | Installs dependencies (postinstall makes node-pty's `spawn-helper` executable) | Node 24 |
 | `npm start` | Runs the app from source. Updates are off in source runs. | |
-| `npm test` | 58 integration tests in `test/*.test.js`: real hub, real lanes, real git. About a minute. | git ≥ 2.28, macOS. No network or Electron needed. |
+| `npm test` | 65 integration tests in `test/*.test.js`: real hub, real lanes, real git. About a minute. | git ≥ 2.28, macOS. No network or Electron needed. |
 | `npm run e2e` | Drives the real Electron app through every main flow and prints `PASS`/`FAIL` per step, ending with `N/M passed`. 15-minute cap. | The `claude` CLI on the login-shell PATH and a GUI session. One step needs `gh auth status` to succeed (online). |
 | `npm run dist` | Packages `dist/Protoplasma-darwin-arm64/Protoplasma.app`, unsigned. | |
 | `npm run playground` | Two app copies (David on port 7801, Max on 7802) on a local hub and repo, each with an HTTP control API | |
@@ -56,7 +56,7 @@ app/panes.js      pane mode (~90)
 app/index.html    CSP, all CSS (tokens and themes), icon sprite, all markup and dialogs (~1040)
 app/config.json   githubClientId (OAuth app, device flow), onlineHub (the Railway URL)
 scripts/          e2e.js, playground.js + playground-app.js, stage.js, screenshot.js, demo.js, sign.sh, icon.js
-test/             hub.test.js (38), workspace.test.js (12), files.test.js (6), updates.test.js (2)
+test/             hub.test.js (39), workspace.test.js (12), files.test.js (7), lan.test.js (5), updates.test.js (2)
 .github/workflows ci.yml (npm test on every push to main and PR), package.yml (dist check), release.yml (tag → release)
 Dockerfile        the hosted hub image (only src/hub.js + src/shared.js + ws)
 install.sh        the one-line installer
@@ -83,18 +83,20 @@ docs/             README images, recheck/ (review records)
 
 - **Three kinds of hub** (`app/teams.js`):
   - **Online:** `config.json` `onlineHub`, overridden by `PROTO_ONLINE_HUB`.
-  - **This Mac:** `startHub` running inside the main process. Its data is in `<userData>/hub/teams.json`, and it's
-    advertised over Bonjour as `<login> on <hostname>`.
+  - **This Mac:** `startHub` running inside the main process, over https/wss with a self-signed certificate
+    (`hubCert`: `<userData>/hub/tls-cert.pem` and `tls-key.pem`, made once with `/usr/bin/openssl`). Its data is in
+    `<userData>/hub/teams.json`. It registers its certificate with the online hub (`POST /hubs`) and is advertised over
+    Bonjour as `<login> on <hostname>`, unless `PROTO_BIND` is a loopback address (e2e sets `127.0.0.1`).
   - **Nearby:** found over Bonjour type `protoplasma`, and only when the user turns on "Look for teams on this network".
-    It's off by default on purpose, because the GitHub token is sent to whatever answers.
-- **Identity:** a GitHub token from the device flow with scope `read:user` only. The app sends that token to hubs, which
-  check it against GitHub `/user`. Repo access stays in the user's `gh` CLI and is never sent anywhere.
+- **Identity:** a GitHub token from the device flow with scope `read:user` only. The app sends it to the online hub and
+  to this Mac's own hub, which check it against GitHub `/user`, and to no other hub. A hub on another Mac gets a
+  **pass** instead (see "Passes" below). Repo access stays in the user's `gh` CLI and is never sent anywhere.
 - **The team key** in the app is `${where}|${id}` (`keyOf` in main.js), so teams with the same id on different hubs don't
   clash.
 
 ### The hub (`src/hub.js`)
-- **The server:** `startHub({port, host, dataDir, owners, verifyUser})` → `{port, close}`. The default host is
-  `0.0.0.0`.
+- **The server:** `startHub({port, host, dataDir, owners, verifyUser, tls, passIssuer})` → `{port, close, fingerprint}`.
+  The default host is `0.0.0.0`. With `tls` (`{key, cert}`) it serves https/wss; `fingerprint` is that certificate's.
   - `owners` lists the logins allowed to create teams. Leave it out to let anyone create them; an empty array lets
     nobody. The standalone entry point turns a blank `PROTO_OWNERS` into "left out".
   - The default `verifyUser` calls `module.exports.githubUser` late on purpose: scripts swap it for fake identities.
@@ -171,6 +173,19 @@ docs/             README images, recheck/ (review records)
 - **Standalone and Docker:** the env vars are `PORT`, `HOST`, `DATA_DIR` and `PROTO_OWNERS` (comma-separated; blank means
   anyone). The Dockerfile copies only `src/hub.js` and `src/shared.js` and installs only `ws`.
 
+- **Passes:** how someone signs in to a hub on another Mac without handing it their GitHub token.
+  - `signPass`/`readPass`: `p1.<payload>.<signature>`, Ed25519, payload `{login, id, name, avatar, aud, exp}`. `aud` is
+    the hub certificate's `fingerprint` (shared.js: sha256 of the DER, base64url), and `exp` is 12 hours on
+    (`PASS_TTL_MS`).
+  - Issuing (the online hub, so only without `tls`): `POST /hubs {fp}` records a certificate under the caller's login
+    (`hubs.json`, at most 5 per login). `POST /passes {aud}` signs a pass for the caller only if someone registered
+    `aud`, and answers `{pass, owners, expires}`. `GET /passes/key` is the public key (SPKI DER, base64url). The private
+    key is `pass-key.pem` in `dataDir`, made on first use.
+  - Checking (a hub with `tls` and `passIssuer`): `identify` sends tokens starting `p1.` to `passUser`, which checks the
+    signature with the issuer's key (fetched when first needed, and again at most once a minute when a pass fails), the
+    `aud` against its own fingerprint, and expiry. A pass's identity is cached no longer than the pass lasts. A failure
+    to reach the issuer is treated like a GitHub outage (503 / 1013).
+
 ### Agents (`src/lane.js`)
 - **`startLane(opts)`:**
   - Throws straight away for a missing folder, a CLI that isn't installed, or a spawn failure. node-pty would hide a
@@ -179,8 +194,11 @@ docs/             README images, recheck/ (review records)
   - For `claude`, adds `--settings` with HTTP hooks (`claudeHookSettings`: UserPromptSubmit, PreToolUse
     `Read|Bash|EDIT_TOOLS`, PostToolUse, PermissionRequest and Stop, with a 3 s timeout).
   - Sets `PROTO_HOOK_SECRET` in the agent's env, except for `NO_HOOKS` CLIs (codex, opencode).
+  - Signs in with `token`, or with `credentials()`, asked before each connection: `{token, ca}`, where `ca` pins a hub on a
+    Mac to its certificate. The app passes `teams.access`, so a pass is renewed in time. If `credentials` fails, the
+    lane reports it through `onRefused` and tries again every 30 s.
 - **The hello:** `{t:'hello', token, team, id, hookSecret, session, cmd, root, roots, repo, branch, open, machine}`,
-  plus `cols, rows, history, git` on each connect.
+  plus `cols, rows, history, git` on each connect (`token` from that connection's credentials).
   - `machine` is a hash of the hostname.
   - `roots` lists the repo root both as git reports it (symlinks resolved) and as seen from the working folder.
 - **Messages:** `out` is batched every 16 ms; `size`; `git` only when it changed; `status`.
@@ -237,7 +255,8 @@ docs/             README images, recheck/ (review records)
     confined to that lane's folder by `inside()`.
   - `shells`: the Terminal tab's plain shells, never shared with the hub.
 - **The `startLane` handler:**
-  - Captures team and token before any `await`, and refuses on a `teamKey` mismatch or an unknown CLI.
+  - Captures team and session before any `await`, and refuses on a `teamKey` mismatch or an unknown CLI. The lane
+    signs in with `credentials: () => teams.access(…)`.
   - Gets the folder from `github.sessionFolder` (clone, push guard, worktree) or the user's own `cwd`.
   - Sets `PROTO_SHARED_TEAM=1` for codex/opencode on a team with members.
   - Returns a `notice` when a codex/opencode agent on a team with members has no pre-push guard: an app-made clone
@@ -256,9 +275,20 @@ docs/             README images, recheck/ (review records)
 ### Services (`app/teams.js`, `app/github.js`, `app/updates.js`, `app/files.js`)
 - **teams.js:**
   - Bonjour is created lazily, so macOS asks for local-network permission only when you host or browse.
-  - `hostHere` starts the This Mac hub once (`hosting ??=`), and `stopHosting` runs at sign-out.
-  - `hubApi` times out after 15 s for https (Railway cold start) and 5 s otherwise.
-  - `listTeams` asks every hub at once.
+  - `hostHere` starts the This Mac hub once (`hosting ??=`), and `stopHosting` runs at sign-out (it also forgets passes).
+    `register` retries the certificate registration at each listing until it works.
+  - `access(s, url)` decides what to sign in with. The online hub gets the GitHub token. This Mac's hub gets the token
+    and `ca` (its own certificate). Any other hub must be https. It gets pinned to the certificate it presents (`certOf`,
+    `pins`), then gets a pass for that fingerprint from the online hub (`passes`, renewed an hour before it expires),
+    plus `owners`, who registered it.
+  - `hubApi(s, url, …)` makes every hub request through `access`, with `ca` pinning the connection. It times out after
+    15 s for the online hub (Railway cold start) and 5 s otherwise. A failed request forgets the pin, so a hub with a new
+    certificate is read again.
+  - `listTeams` asks every hub at once. A nearby hub goes through `teamsAt`, which keeps only teams owned by its
+    `owners`, labelled `<owner>'s Mac`.
+  - `isPinned(hostname, pem)` backs main.js's `setCertificateVerifyProc`: Chromium accepts a self-signed certificate
+    only when it's the one pinned for that host.
+  - Electron is required late (in `localDataDir`), so tests can load this file.
   - `sessionRoute` refuses names made only of dots.
 - **github.js:**
   - **Sign-in:** the device flow saves `{token, user}` to `<userData>/github-token`, encrypted with `safeStorage`.
@@ -302,8 +332,8 @@ docs/             README images, recheck/ (review records)
     `innerHTML` directly on the same element, or its cache goes stale.
 - **Escaping:** every string from the hub or a teammate goes through `esc()`. The renderer can start agents and write
   files, so XSS would be serious. The git numbers are interpolated raw only because the hub coerces them to integers.
-- **The hub socket:** `watch(conn)` connects to `${hub}/watch` and handles `state`, `out`, `replay`, `file:get` and
-  `file:put`.
+- **The hub socket:** `watch(conn)` asks main for a token (`proto.hubToken`, which renews passes) before each
+  connection, connects to `${hub}/watch`, and handles `state`, `out`, `replay`, `file:get` and `file:put`.
 - **Terminals:** `createTerminal` makes one per lane, and the element is moved between `#lanes` and pane columns, never
   recreated.
   - Only on-screen terminals get WebGL; a page gets about 16 contexts.
@@ -362,13 +392,17 @@ docs/             README images, recheck/ (review records)
 ## Security boundaries
 - **Hooks:** a hook is authenticated only by the per-lane secret, never a GitHub token. `hookSecret`, `root`, `roots`
   and `history` must never appear in `state`.
-- **Typing in:** remote input only goes to lanes started with `open`, on the watcher's own team.
+- **Typing in:** remote input only goes to lanes started with `open`, on the watcher's own team. lane.js also drops
+  `in` itself unless it was started open, whatever a hub sends.
 - **Lane ids:** an id held by one login, live or stopped, can't be claimed by another.
 - **Code view:** every `code:*` handler takes its root through `inFolder`, except `code:root` (which registers the
   folder) and `code:readLane` (keyed by one of this Mac's live lane ids and confined to that lane's folder). Every path from the renderer passes
   `inside()` (filesystem) or `within()` (git only).
 - **Repo strings:** every repo string passes `checkRepo` before a path or gh call is built from it.
-- **Token scope:** the token sent to hubs stays `read:user`. Looking for nearby teams stays opt-in.
+- **Token scope:** the token stays `read:user`. Looking for nearby teams stays opt-in.
+- **Hubs on other Macs:** the GitHub token goes only to the online hub and this Mac's own hub (`access` in teams.js).
+  Anything else is https only, pinned to the certificate it presented, and gets a pass bound to that certificate. Keep
+  every hub connection going through `access` (REST), `credentials` (lanes) or `proto.hubToken` (the hub socket).
 - **Git prompts:** `GIT_TERMINAL_PROMPT=0` is set by the git helpers in files.js, workspace.js and lane.js `gitEnv`,
   so nothing there hangs on an invisible prompt. The clone (`gh repo clone`) and a few local-only calls (lane.js's sync
   `git()`, github.js `rev-parse`, files.js `underWay`) don't set it. Route any new network git call through one of the

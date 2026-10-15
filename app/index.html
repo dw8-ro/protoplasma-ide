@@ -839,7 +839,7 @@
     <div id="teamList" class="team-list"></div>
     <p id="teamsNote" class="fine"></p>
     <label class="nearby fine"><input type="checkbox" id="findNearby"> Look for teams on this network</label>
-    <p class="fine">For teams hosted on a teammate's Mac. Looking shows your GitHub sign-in to every Mac that answers, so turn it on only on networks you trust.</p>
+    <p class="fine">For teams hosted on a teammate's Mac. The connection is encrypted, and their Mac gets a pass from the online hub that works only there, never your GitHub sign-in.</p>
     <form id="createTeam" class="create">
       <h3>Create a team</h3>
       <div class="segmented">
@@ -1018,7 +1018,7 @@
         <div class="setting"><div><b>Kept on the hub</b><p>Team names and members, notes, and sessions with their goals, repos, who started them, plans and comments. A comment on lines of code keeps the text of those lines (up to 300 characters), so it can find them again.</p></div></div>
         <div class="setting"><div><b>Passed through the hub</b><p>While an agent runs: its terminal output (anyone on the team can watch it, so whatever it prints is visible to them), Claude Code's hook events, its latest prompt, its branch and the names of the files its checkout has changed, and its folder's path. Up to 512 KB of each agent's output is held in memory, so someone joining sees the current screen and a stopped agent's last screen can be looked at (the 20 most recent per team). None of it is written to disk, and it's gone when the hub restarts.</p></div></div>
         <div class="setting"><div><b>Not kept on the hub</b><p>Your repos and their files (apart from the lines a comment is about, above). Agents and git run on your Mac, and the GitHub CLI's login stays here too. Some code does pass through without being kept: Claude Code's hook events include what a tool is about to change, and with "Share the files your agents change" on, teammates can open those files.</p></div></div>
-        <div class="setting"><div><b>Your GitHub sign-in</b><p>Read-only access to your public profile, used to check who you are. Stored encrypted on this Mac; the hub never saves it.</p></div></div>
+        <div class="setting"><div><b>Your GitHub sign-in</b><p>Read-only access to your public profile, used to check who you are. Stored encrypted on this Mac, and sent only to GitHub, the online hub and this Mac's own hub, none of which saves it. A team on a teammate's Mac gets a pass from the online hub instead, which works only on that Mac's hub and expires within 12 hours.</p></div></div>
         <div class="setting"><div><b>Training or analytics</b></div><span class="where">Never</span></div>
       </div>
       <div class="actions" style="justify-content: flex-start; margin-top: 14px"><button class="btn" data-url="https://github.com/dw8-ro/protoplasma-ide/issues/new">Report a problem</button></div>

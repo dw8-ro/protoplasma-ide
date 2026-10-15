@@ -421,11 +421,19 @@ function setConnection(state, text) {
 function watch(conn) {
   const generation = ++watchGeneration;
   ws?.close();
-  (function connect() {
+  (async function connect() {
+    if (generation !== watchGeneration) return;
+    // Asked before each connection: a pass to a hub on another Mac may have been renewed since.
+    let token;
+    try { token = await proto.hubToken(conn.key); } catch (e) {
+      if (generation !== watchGeneration) return;
+      setConnection('retrying', errorText(e));
+      return setTimeout(connect, 30_000);
+    }
     if (generation !== watchGeneration) return;
     const socket = ws = new WebSocket(`${conn.hub.replace(/^http/, 'ws')}/watch`);
     let first = true;
-    socket.onopen = () => socket.send(JSON.stringify({ t: 'watch', token: conn.token, team: conn.id }));
+    socket.onopen = () => socket.send(JSON.stringify({ t: 'watch', token, team: conn.id }));
     socket.onmessage = e => {
       const m = JSON.parse(e.data);
       if (first) { // the hub replays scrollback on every (re)connect

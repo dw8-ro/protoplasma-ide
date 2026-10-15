@@ -51,6 +51,7 @@ function makeDemoRepo() {
   hubModule.githubUser = verifyUser;
   const hub = `http://127.0.0.1:${(await hubModule.startHub({ port: 0, host: '127.0.0.1', verifyUser })).port}`;
   process.env.PROTO_ONLINE_HUB = hub;
+  process.env.PROTO_BIND = '127.0.0.1'; // a This Mac team's hub stays on this Mac: nothing advertised on the network
   app.setPath('userData', tempDir('protoplasma-e2e-'));
   await app.whenReady();
   fs.writeFileSync(path.join(app.getPath('userData'), 'github-token'), safeStorage.encryptString(JSON.stringify({ token: 'tok-david', user: people['tok-david'] })));
@@ -364,10 +365,23 @@ async function run(win, hub) {
     await js(`checkSetup(); 0`);
     check('and disappears once this Mac is set up', await until(`$('#setup').hidden`, 15000));
 
-    // ---- deleting a team
+    // ---- a team on This Mac: its own hub, encrypted, and vouched for by the online hub
     const mainTeam = await js('currentTeam.key');
-    await js(`showTeams(me); $('#teamName').value = 'Spare'; $('#createTeam').requestSubmit()`);
-    await until(`currentTeam?.name === 'Spare'`);
+    await js(`showTeams(me); $('input[name=where][value=mac]').checked = true; syncWhere(); $('#teamName').value = 'Spare'; $('#createTeam').requestSubmit()`);
+    check('creates a This Mac team and connects to its hub over TLS', await until(`currentTeam?.name === 'Spare' && currentTeam.where === 'This Mac' && currentTeam.hub.startsWith('https://127.0.0.1:') && $('#conn').className.includes('live')`, 15000),
+      await js(`JSON.stringify({ where: currentTeam?.where, hub: currentTeam?.hub, conn: $('#conn').className, err: $('#createErr').textContent })`));
+    const macCert = new (require('crypto').X509Certificate)(fs.readFileSync(path.join(app.getPath('userData'), 'hub', 'tls-cert.pem')));
+    const pass = async () => (await fetch(`${hub}/passes`, { method: 'POST', headers: { authorization: 'Bearer tok-max' },
+      body: JSON.stringify({ aud: require('../src/shared').fingerprint(macCert.raw) }) })).json();
+    let issued = null;
+    for (let i = 0; i < 50 && !issued?.pass; i++) { issued = await pass(); if (!issued?.pass) await sleep(100); }
+    check('its hub is registered, so a teammate can get a pass for it', /^p1\./.test(issued?.pass) && issued.owners.includes('david'), JSON.stringify(issued));
+    await js(`openNewAgent('mac-session'); $('input[name=source][value=folder]').checked = true; syncSource(); $('#cwd').value = ${JSON.stringify(root)}; $('#agentForm').requestSubmit()`);
+    check('an agent joins it over the encrypted connection', await until(`currentTeam?.where === 'This Mac' && hubLanes.some(l => l.session === 'mac-session')`, 15000));
+    await js(`proto.kill([...local].find(([, l]) => l.session === 'mac-session')?.[0]); 0`);
+    await until(`!hubLanes.some(l => l.session === 'mac-session')`, 10000);
+
+    // ---- deleting a team
     await js(`window.confirm = () => false; openSettings('team'); $('#teamPane [data-drop-team]').click()`);
     check('cancelling Delete team leaves Settings open on the same team', await js(`$('#settings').open && !$('#start').open && currentTeam?.name === 'Spare'`));
     check('the team list has no delete buttons', await js(`!document.querySelector('#teamList [data-drop]')`));

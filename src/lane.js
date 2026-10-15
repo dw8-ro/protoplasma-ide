@@ -121,7 +121,9 @@ const MACHINE = crypto.createHash('sha256').update(os.hostname()).digest('hex').
  * @param {object} o
  * @param {string} o.hub hub URL
  * @param {string} o.team team id
- * @param {string} o.token GitHub token proving who you are (read:user is enough)
+ * @param {string} [o.token] GitHub token proving who you are (read:user is enough)
+ * @param {() => Promise<{token: string, ca?: string}>} [o.credentials] instead of `token`: asked before each connection,
+ *   for a hub on someone's Mac (a current pass, and `ca`, the certificate the connection must present)
  * @param {string} o.session session name shown on the Sessions page
  * @param {string} [o.cmd] CLI to run; `claude` also gets coordination hooks
  * @param {string[]} [o.args] its arguments
@@ -133,7 +135,7 @@ const MACHINE = crypto.createHash('sha256').update(os.hostname()).digest('hex').
  * @returns {{ id: string, term: import('node-pty').IPty, repo: string, write: (data: string) => void, rejoin: () => void,
  *   resize: (cols: number, rows: number) => void }}
  */
-function startLane({ hub, team, token, session, cmd = 'claude', args = [], cwd = process.cwd(), open = false, cols = 120, rows = 36, env = process.env, onRefused }) {
+function startLane({ hub, team, token, credentials = () => ({ token }), session, cmd = 'claude', args = [], cwd = process.cwd(), open = false, cols = 120, rows = 36, env = process.env, onRefused }) {
   hub = new URL(hub).origin;
   if (!fs.statSync(cwd, { throwIfNoEntry: false })?.isDirectory()) throw new Error(`Folder not found: ${cwd}`);
   if (!installed(cmd, env)) throw new Error(`The "${cmd}" command isn't installed on this Mac. Install it, then start the agent again.`);
@@ -159,25 +161,39 @@ function startLane({ hub, team, token, session, cmd = 'claude', args = [], cwd =
   let activity = null, quiet = null, lastInput = 0;
   const report = status => { if (activity !== status) { activity = status; send({ t: 'status', status }); } };
   const root = git(cwd, 'rev-parse', '--show-toplevel') || cwd;
-  const hello = { t: 'hello', token, team, id, hookSecret, session, cmd: path.basename(cmd),
+  const hello = { t: 'hello', team, id, hookSecret, session, cmd: path.basename(cmd),
     root, roots: rootsOf(cwd, root), repo: githubRepo(cwd), branch: git(cwd, 'branch', '--show-current'), open, machine: MACHINE };
   const send = msg => ws?.readyState === WebSocket.OPEN && ws.send(JSON.stringify(msg));
 
   let lastGit = null; // last reported git stats
-  let retry = null;
+  let retry = null, signingIn = false, creds = null; // creds: the sign-in last used, { token, ca? }
+  // A hub on someone's Mac must present the certificate its pass names; `ca` pins the connection to exactly that one.
+  const socketTo = c => new WebSocket(`${hub.replace(/^http/, 'ws')}/lane`, c.ca ? { ca: c.ca, checkServerIdentity: () => undefined } : undefined);
   function connect() {
     clearTimeout(retry);
-    if (exited || (ws && ws.readyState !== WebSocket.CLOSED)) return;
-    ws = new WebSocket(`${hub.replace(/^http/, 'ws')}/lane`);
+    if (exited || signingIn || (ws && ws.readyState !== WebSocket.CLOSED)) return;
+    signingIn = true;
+    Promise.resolve().then(credentials).then(c => {
+      signingIn = false;
+      if (!exited) openSocket(creds = c);
+    }, e => { // no pass to be had (the online hub is down): try again now and then, not on every reconnect
+      signingIn = false;
+      onRefused?.(String(e?.message || e));
+      if (!exited) retry = setTimeout(connect, REJOIN_MS);
+    });
+  }
+  function openSocket(c) {
+    ws = socketTo(c);
     ws.alive = true;
     ws.on('pong', function () { this.alive = true; });
     ws.on('open', () => {
       unsent = ''; // history covers anything unsent
-      send({ ...hello, cols: term.cols, rows: term.rows, history, git: lastGit });
+      send({ ...hello, token: c.token, cols: term.cols, rows: term.rows, history, git: lastGit });
       if (activity && (byActivity || asking)) send({ t: 'status', status: activity }); // a hooked agent's status is the hub's, from its hooks
     });
     ws.on('message', raw => {
-      try { const m = JSON.parse(raw); if (m.t === 'in' && typeof m.d === 'string') write(m.d); } catch {}
+      // Typing from teammates only reaches an agent started open, whatever the hub (or something posing as it) sends.
+      try { const m = JSON.parse(raw); if (m.t === 'in' && open && typeof m.d === 'string') write(m.d); } catch {}
     });
     ws.on('close', (code, reason) => {
       if (code >= 4000) onRefused?.(String(reason));
@@ -245,8 +261,9 @@ function startLane({ hub, team, token, session, cmd = 'claude', args = [], cwd =
     if (ws?.readyState === WebSocket.OPEN) return ws.close();
     // Offline when it ended: one last try, so teammates see how it finished rather than an older screen.
     ws?.terminate();
-    const last = new WebSocket(`${hub.replace(/^http/, 'ws')}/lane`);
-    last.on('open', () => { last.send(JSON.stringify({ ...hello, cols: term.cols, rows: term.rows, history, git: lastGit })); setTimeout(() => last.close(), 1000); });
+    if (!creds) return; // it never signed in
+    const last = socketTo(creds);
+    last.on('open', () => { last.send(JSON.stringify({ ...hello, token: creds.token, cols: term.cols, rows: term.rows, history, git: lastGit })); setTimeout(() => last.close(), 1000); });
     last.on('error', () => {});
     setTimeout(() => last.terminate(), 10_000).unref();
   });

@@ -1,5 +1,5 @@
 // Electron main process: GitHub sign-in, team management and the agents running on this machine.
-const { app, BrowserWindow, Menu, ipcMain, dialog, shell, clipboard, nativeTheme } = require('electron');
+const { app, BrowserWindow, Menu, ipcMain, dialog, shell, clipboard, nativeTheme, session: browserSession } = require('electron');
 
 // One copy at a time: a second would start its own agents and hub beside this one's. Checked before anything else runs
 // (the login shell, the local network).
@@ -20,7 +20,7 @@ const AGENTS = ['claude', 'codex', 'opencode'];
 // How each agent CLI picks up its most recent conversation in the folder it starts in.
 const RESUME = { claude: ['--continue'], codex: ['resume', '--last'], opencode: ['--continue'] };
 const REPO_URL = 'https://github.com/dw8-ro/protoplasma-ide';
-const onlineHub = process.env.PROTO_ONLINE_HUB ?? config.onlineHub;
+const { onlineHub } = teams;
 
 // Agents and gh run with the user's login-shell environment. Apps launched from Finder get a minimal PATH, and a launch
 // from inside Claude Code would leak that session's CLAUDE_* variables. Loaded async so startup isn't blocked.
@@ -93,12 +93,14 @@ ipcMain.handle('auth:signOut', async () => {
 
 // ---- Teams ----
 ipcMain.handle('teams:list', signedIn(async (o = {}) => {
-  const { teams: list, unreachable } = await teams.listTeams(session, onlineHub, { nearby: !!o?.nearby });
+  const { teams: list, unreachable } = await teams.listTeams(session, { nearby: !!o?.nearby });
   if (!o?.nearby) for (const [key, t] of known) if (t.nearby && keyOf(team || {}) !== key) known.delete(key);
   return { teams: list.map(remember), unreachable, online: !!onlineHub };
 }));
-ipcMain.handle('teams:create', signedIn(async o => remember(await teams.createTeam(session, onlineHub, { name: String(o.name), online: !!o.online }))));
-ipcMain.handle('teams:open', signedIn(key => { team = teamFor(key); return { hub: team.hub, id: team.id, token: session.token }; }));
+ipcMain.handle('teams:create', signedIn(async o => remember(await teams.createTeam(session, { name: String(o.name), online: !!o.online }))));
+ipcMain.handle('teams:open', signedIn(key => { team = teamFor(key); return { hub: team.hub, id: team.id, key }; }));
+// What the hub socket signs in with, asked before each connection: a pass for a hub on another Mac is renewed by then.
+ipcMain.handle('teams:token', signedIn(async key => (await teams.access(session, teamFor(String(key)).hub)).token));
 ipcMain.handle('teams:invite', signedIn(async (key, login) => {
   const found = await github.findUser(String(login), session.token); // catches typos before they become a member nobody is
   if (!found) throw new Error(`There's no GitHub user called ${login}.`);
@@ -167,7 +169,7 @@ ipcMain.handle('pickFolder', async (_, from) => (await dialog.showOpenDialog(win
 // Which agent CLIs this Mac can run, so the app only offers the ones that will start.
 ipcMain.handle('agents:status', async () => { const env = await agentEnv; return AGENTS.map(cmd => ({ cmd, installed: installed(cmd, env) })); });
 ipcMain.handle('startLane', signedIn(async o => {
-  const team = openTeam(), { token } = session; // as they are now: another team may be opened while the repo is fetched
+  const team = openTeam(), signedInAs = session; // as they are now: another team may be opened while the repo is fetched
   if (!team) throw new Error('Open a team first.');
   if (o.teamKey && keyOf(team) !== o.teamKey) throw new Error('Another team was opened while this agent was starting. Start it again.');
   if (!AGENTS.includes(o.cmd)) throw new Error(`Unknown agent: ${o.cmd}`);
@@ -179,7 +181,7 @@ ipcMain.handle('startLane', signedIn(async o => {
   const shared = o.cmd !== 'claude' && team.members?.length > 0;
   const why = o.repo ? 'This repo has its own Git hooks, so Protoplasma\'s push guard isn\'t installed' : 'Protoplasma only installs its push guard in folders it makes, not in one you pick';
   const notice = shared && !folder.guarded ? `${why}: this agent can push to main or force-push without being stopped.` : '';
-  const lane = startLane({ hub: team.hub, team: team.id, token, session: String(o.session), cmd: o.cmd, cwd, args: o.resume ? RESUME[o.cmd] : [],
+  const lane = startLane({ hub: team.hub, team: team.id, credentials: () => teams.access(signedInAs, team.hub), session: String(o.session), cmd: o.cmd, cwd, args: o.resume ? RESUME[o.cmd] : [],
     open: !!o.open, env: shared ? { ...env, PROTO_SHARED_TEAM: '1' } : env, onRefused: reason => toWindow('lane:refused', lane.id, reason) });
   lanes.set(lane.id, lane);
   folders.add(cwd);
@@ -294,6 +296,9 @@ const savedBounds = () => { try { return JSON.parse(fs.readFileSync(boundsFile()
 app.on('second-instance', () => { if (win) { if (win.isMinimized()) win.restore(); win.show(); win.focus(); } });
 
 app.whenReady().then(() => {
+  // A hub on a Mac has a self-signed certificate. The hub socket accepts exactly the one this app pinned for it (see
+  // teams.js); everything else gets Chromium's own verdict.
+  browserSession.defaultSession.setCertificateVerifyProc((req, verdict) => verdict(teams.isPinned(req.hostname, req.certificate.data) ? 0 : -3));
   if (!app.isPackaged) app.dock?.setIcon(path.join(__dirname, '../build/icon.png'));
   win = new BrowserWindow({ width: 1440, height: 900, ...savedBounds(), minWidth: 900, minHeight: 560, backgroundColor: '#0b0b0c',
     titleBarStyle: 'hiddenInset', trafficLightPosition: { x: 18, y: 18 },

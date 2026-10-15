@@ -13,6 +13,7 @@ contextBridge.exposeInMainWorld('proto', {
   teams: opts => ipcRenderer.invoke('teams:list', opts),
   createTeam: opts => ipcRenderer.invoke('teams:create', opts),
   openTeam: key => ipcRenderer.invoke('teams:open', key),
+  hubToken: key => ipcRenderer.invoke('teams:token', key),
   invite: (key, login) => ipcRenderer.invoke('teams:invite', key, login),
   removeMember: (key, login) => ipcRenderer.invoke('teams:remove', key, login),
   leaveTeam: key => ipcRenderer.invoke('teams:leave', key),

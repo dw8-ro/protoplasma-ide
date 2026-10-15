@@ -143,13 +143,13 @@ npm start
 - `githubClientId`: from a GitHub OAuth app with device flow enabled. It's public, not a secret.
 - `onlineHub`: the URL of your hosted hub. Leave it empty to use teams on your own Mac only.
 
-To host a hub, deploy the `Dockerfile` (Railway or any container host) with a volume at `/data` and set `DATA_DIR=/data` and `PROTO_OWNERS` to the GitHub logins allowed to create teams.
+To host a hub, deploy the `Dockerfile` (Railway or any container host) with a volume at `/data` and set `DATA_DIR=/data` and `PROTO_OWNERS` to the GitHub logins allowed to create teams. The volume also keeps `pass-key.pem`, which signs passes for teams on people's Macs, and `hubs.json`, the hub certificates people registered for their Macs.
 </details>
 
 <details>
 <summary>Wire protocol</summary>
 
-The first message on every WebSocket carries a GitHub token and a team id. Anything sent while they're being verified (up to 1 MB) waits, and is handled only once they are.
+The first message on every WebSocket carries a team id and a GitHub token, or, for a hub on someone's Mac, a pass (below). Anything sent while they're being verified (up to 1 MB) waits, and is handled only once they are.
 
 | Endpoint | Direction | Messages |
 | --- | --- | --- |
@@ -159,6 +159,10 @@ The first message on every WebSocket carries a GitHub token and a team id. Anyth
 | | hub → app | `state {lanes, watchers, members, memories, sessions, stopped}`, `out {lane, d}`, `replay {id, d}`, `file:get {req, lane, path, from}`, `file:put {ask, text, error}` |
 | `/teams` | app → hub | REST for teams, members, notes, sessions (renaming, goals, plan steps) and comments |
 | `/hooks/:lane` | Claude Code → hub | Hook events, authenticated with a per-lane secret |
+| `/hubs` | app → online hub | `POST {fp}`: registers the certificate of the hub on your Mac |
+| `/passes` | app → online hub | `POST {aud}`: a pass for the hub whose certificate fingerprint is `aud`, with `owners`, who registered it. `GET /passes/key`: the public key passes are signed with |
+
+A hub on someone's Mac serves https/wss with its own self-signed certificate. Teammates' apps pin the certificate it presents, and sign in with a pass: the online hub's signed word for who they are (Ed25519, `p1.<payload>.<signature>`), naming that certificate's fingerprint and expiring after 12 hours. That hub checks the pass against the online hub's key. Only teams owned by whoever registered the certificate are listed from it.
 </details>
 
 ## Development
@@ -186,11 +190,11 @@ scripts/  end-to-end check, screenshots, demo and icon tooling
 
 - Sign-in asks for read-only access to your public GitHub profile, and nothing else. Repo access stays with the GitHub CLI on your Mac.
 - The hub keeps team names, members, notes, and sessions with their goals, repos, who started them, plans and comments (a comment on lines of code keeps the text of those lines). While an agent runs, its terminal output, Claude Code's hook events (which include what a tool is about to change), its latest prompt, its branch, the names of the files its checkout changed and its folder's path pass through the hub. Up to 512 KB of each agent's output is held in memory, along with the last screen of the 20 most recently stopped agents per team; none of it is written to disk.
-- Looking for teams hosted on a teammate's Mac is off until you turn it on in Your teams: it shows your GitHub sign-in to every Mac on the network that answers.
+- Your GitHub sign-in goes only to GitHub, the online hub and the hub on your own Mac. A team hosted on a teammate's Mac is reached over an encrypted connection, pinned to that Mac's certificate, and signed in to with a pass from the online hub that works only on that Mac's hub and expires within 12 hours. The online hub only issues passes for a Mac whose owner registered it, so something on the network pretending to be a teammate's Mac gets nothing it can use. Looking for such teams is off until you turn it on in Your teams.
 - The code view reads and writes files on your Mac only, and the hub never stores your code. In the Explorer teammates see which files changed; what your agent prints in its terminal is visible to the whole team. With **Share the files your agents change** on (Settings → Agents, off by default), a teammate can also open those files, read-only; each one passes through the hub on the way and isn't kept.
 - Teams are invite-only, and removing someone disconnects them at once.
 - Letting teammates type into your agent lets them run commands on your Mac, so it's off unless you turn it on, and your agent shows who last typed into it.
-- Teams hosted on your own Mac use plain HTTP; on a shared network, use an online team.
+- Signing in to a teammate's Mac goes through the online hub, so it needs that hub reachable. Everything else about the team (terminals, typing, files) goes between the two Macs directly.
 
 ## Roadmap
 

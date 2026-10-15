@@ -25,4 +25,7 @@ const slug = name => {
     || `session-${[...s].reduce((h, c) => (h * 33 + c.codePointAt(0)) >>> 0, 5381).toString(36)}`;
 };
 
-module.exports = { SCROLLBACK, EDIT_TOOLS, appendScrollback, slug };
+/** A hub certificate's fingerprint (sha256 of its DER bytes, base64url): what a pass names as the one hub it's for. */
+const fingerprint = der => require('crypto').createHash('sha256').update(der).digest('base64url');
+
+module.exports = { SCROLLBACK, EDIT_TOOLS, appendScrollback, slug, fingerprint };

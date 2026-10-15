@@ -73,12 +73,12 @@ async function prepare(release, bundle, pid, env, dir) {
   if (!fs.existsSync(path.join(fresh, 'Contents', 'Info.plist'))) throw new Error('The update didn\'t contain the app.');
   await run('xattr', ['-dr', 'com.apple.quarantine', fresh], env).catch(() => {}); // usually there's nothing to remove
   await sameSigner(bundle, fresh, env);
-  // $1 the app, $2 the new copy, $3 this folder (the download, about 150 MB), $4 the app's pid. Gives up waiting after
-  // an hour (a quit that was cancelled); if the swap fails it says so, and keeps a log, instead of quietly reopening.
+  // $1 the app, $2 the new copy, $3 this folder (the download, about 150 MB), $4 the app's pid. It waits as long as the app
+  // runs (a cancelled quit installs at the next one); if the swap fails it says so, and keeps a log, instead of quietly reopening.
   const script = path.join(dir, 'swap.sh'), log = path.join(os.homedir(), 'Library', 'Logs', 'Protoplasma-update.log');
   fs.writeFileSync(script, `#!/bin/sh
 exec >>"$5" 2>&1
-n=0; while kill -0 "$4" 2>/dev/null; do sleep 0.3; n=$((n+1)); [ $n -gt 12000 ] && exit 0; done
+while kill -0 "$4" 2>/dev/null; do sleep 0.3; done
 if mv "$1" "$1.old" && mv "$2" "$1"; then
   rm -rf "$1.old"
 else

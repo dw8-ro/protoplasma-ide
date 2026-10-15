@@ -126,6 +126,9 @@ const committed = (root, rel, env) => (within(root, rel) ? git(root, ['show', `H
 function write(root, rel, text) {
   if (!within(root, rel)) throw new Error('That file is outside the session folder.');
   const target = path.resolve(root, String(rel));
+  let existing = path.dirname(target);
+  while (!fs.existsSync(existing)) existing = path.dirname(existing);
+  inside(root, path.relative(root, existing)); // no folders made through a link that leads out
   fs.mkdirSync(path.dirname(target), { recursive: true }); // a file whose folder was deleted goes back with its folder
   if (fs.lstatSync(target, { throwIfNoEntry: false })?.isSymbolicLink() && !fs.existsSync(target)) throw new Error('That file is a link to something that doesn\'t exist.');
   fs.writeFileSync(inside(root, rel, { exists: fs.existsSync(target) }), String(text));

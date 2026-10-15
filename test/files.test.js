@@ -74,6 +74,11 @@ test('nothing outside the session folder can be read or written, symlinks includ
   assert.equal(files.read(david, 'lobby.js').text, 'one\nDAVID\nthree\n');
 });
 
+test('saving through a link out of the folder makes no folders out there either', () => {
+  assert.throws(() => files.write(david, 'evil-link/a/b/x.js', 'x'), /outside the session folder/);
+  assert.ok(!fs.existsSync(path.join(tmp, 'david-evil', 'a')), 'no empty folders left outside');
+});
+
 test('saving to a link that points nowhere is refused, rather than creating its target', () => {
   const target = path.join(tmp, 'nowhere.js');
   fs.symlinkSync(target, path.join(david, 'nowhere-link'));

@@ -68,16 +68,27 @@ function hubCert(dir) {
 function hostHere(s) {
   hosting ??= Promise.resolve().then(() => {
     const dir = localDataDir(), cert = hubCert(dir);
-    return startHub({ port: 0, host: process.env.PROTO_BIND, dataDir: dir, owners: [s.user.login], tls: cert, passIssuer: onlineHub })
+    // On this Mac alone until a team here has someone else on it (share), unless PROTO_BIND says where.
+    return startHub({ port: 0, host: process.env.PROTO_BIND || '127.0.0.1', dataDir: dir, owners: [s.user.login], tls: cert, passIssuer: onlineHub })
       .then(hub => ({ hub, pem: String(cert.cert) }));
   }).then(({ hub, pem }) => {
-    local = { url: `https://127.0.0.1:${hub.port}`, name: `${s.user.login} on ${os.hostname()}`, hub, pem, fp: hub.fingerprint, registered: null };
+    local = { url: `https://127.0.0.1:${hub.port}`, name: `${s.user.login} on ${os.hostname()}`, host: s.user.name, hub, pem, fp: hub.fingerprint,
+      registered: null, shared: null };
     register(s);
-    // A hub bound to this Mac alone (PROTO_BIND=127.0.0.1) can't be reached from the network, so it isn't advertised.
-    if (!/^(127\.|::1$|localhost$)/.test(process.env.PROTO_BIND || '')) mdns().publish({ name: local.name, type: SERVICE, port: hub.port, txt: { host: s.user.name } });
+    if (process.env.PROTO_BIND && !/^(127\.|::1$|localhost$)/.test(process.env.PROTO_BIND)) advertise(); // told where: already on the network
     return local.url;
   }, err => { hosting = null; throw err; });
   return hosting;
+}
+const advertise = () => mdns().publish({ name: local.name, type: SERVICE, port: local.hub.port, txt: { host: local.host } });
+/**
+ * Opens this Mac's hub to the network and advertises it, once one of its teams has someone besides the owner: until
+ * then nobody else needs to reach it. ponytail: it stays open until the app restarts, even if everyone else leaves.
+ */
+function share() {
+  const was = local;
+  if (!was || was.shared || process.env.PROTO_BIND) return;
+  was.shared = was.hub.listenOn('0.0.0.0').then(() => { if (local === was) advertise(); }, e => { was.shared = null; console.error(`Couldn't share this Mac's hub: ${e.message}`); });
 }
 // Teammates only get passes for a hub its owner registered. Tried again at each listing until it works (offline at start).
 function register(s) {
@@ -93,7 +104,7 @@ async function stopHosting() {
   passes.clear(); // the next person signs in as themselves
 
   if (!was) return;
-  await new Promise(resolve => { mdns().unpublishAll(resolve); setTimeout(resolve, 1000); });
+  if (bonjour) await new Promise(resolve => { bonjour.unpublishAll(resolve); setTimeout(resolve, 1000); });
   await was.hub.close();
 }
 
@@ -177,6 +188,7 @@ async function listTeams(s, { nearby: lookNearby = false } = {}) {
   // Only well-formed teams: a hub on the network could answer anything.
   const valid = t => t && typeof t.id === 'string' && typeof t.name === 'string' && typeof t.owner === 'string' && Array.isArray(t.members);
   const answered = r => r.status === 'fulfilled' && Array.isArray(r.value);
+  if (local && results.some((r, i) => hubs[i].url === local.url && answered(r) && r.value.some(t => t?.members?.length))) share();
   return {
     teams: results.flatMap((r, i) => (answered(r) ? r.value.filter(valid)
       .map(t => ({ ...t, members: t.members.filter(m => typeof m === 'string'), agents: t.agents | 0, hub: hubs[i].url,
@@ -198,7 +210,11 @@ async function createTeam(s, { name, online }) {
   return { ...await hubApi(s, url, 'POST', '/teams', { name }), hub: url, where: online ? 'Online' : 'This Mac' };
 }
 
-const invite = (s, team, { login, id }) => hubApi(s, team.hub, 'POST', `/teams/${encodeURIComponent(team.id)}/members`, { login, id });
+const invite = async (s, team, { login, id }) => {
+  const result = await hubApi(s, team.hub, 'POST', `/teams/${encodeURIComponent(team.id)}/members`, { login, id });
+  if (local && team.hub === local.url) share(); // they'll need to reach it
+  return result;
+};
 const removeMember = (s, team, login) =>
   hubApi(s, team.hub, 'DELETE', `/teams/${encodeURIComponent(team.id)}/members/${encodeURIComponent(login)}`);
 const deleteTeam = (s, team) => hubApi(s, team.hub, 'DELETE', `/teams/${encodeURIComponent(team.id)}`);

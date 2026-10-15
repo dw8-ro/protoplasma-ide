@@ -51,7 +51,6 @@ function makeDemoRepo() {
   hubModule.githubUser = verifyUser;
   const hub = `http://127.0.0.1:${(await hubModule.startHub({ port: 0, host: '127.0.0.1', verifyUser })).port}`;
   process.env.PROTO_ONLINE_HUB = hub;
-  process.env.PROTO_BIND = '127.0.0.1'; // a This Mac team's hub stays on this Mac: nothing advertised on the network
   app.setPath('userData', tempDir('protoplasma-e2e-'));
   await app.whenReady();
   fs.writeFileSync(path.join(app.getPath('userData'), 'github-token'), safeStorage.encryptString(JSON.stringify({ token: 'tok-david', user: people['tok-david'] })));
@@ -370,6 +369,11 @@ async function run(win, hub) {
     await js(`showTeams(me); $('input[name=where][value=mac]').checked = true; syncWhere(); $('#teamName').value = 'Spare'; $('#createTeam').requestSubmit()`);
     check('creates a This Mac team and connects to its hub over TLS', await until(`currentTeam?.name === 'Spare' && currentTeam.where === 'This Mac' && currentTeam.hub.startsWith('https://127.0.0.1:') && $('#conn').className.includes('live')`, 15000),
       await js(`JSON.stringify({ where: currentTeam?.where, hub: currentTeam?.hub, conn: $('#conn').className, err: $('#createErr').textContent })`));
+    // Nobody else is on it, so it listens on this Mac alone.
+    const lanIp = Object.values(os.networkInterfaces()).flat().find(a => a.family === 'IPv4' && !a.internal)?.address;
+    const macPort = Number(new URL(await js('currentTeam.hub')).port);
+    const fromNetwork = lanIp && await new Promise(resolve => require('net').connect(macPort, lanIp, function () { this.destroy(); resolve('reachable'); }).on('error', e => resolve(e.code)));
+    check('its hub can\'t be reached from the network while the team is just you', !lanIp || fromNetwork === 'ECONNREFUSED', `${lanIp}: ${fromNetwork}`);
     const macCert = new (require('crypto').X509Certificate)(fs.readFileSync(path.join(app.getPath('userData'), 'hub', 'tls-cert.pem')));
     const pass = async () => (await fetch(`${hub}/passes`, { method: 'POST', headers: { authorization: 'Bearer tok-max' },
       body: JSON.stringify({ aud: require('../src/shared').fingerprint(macCert.raw) }) })).json();

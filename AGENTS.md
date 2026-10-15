@@ -19,7 +19,7 @@ Function names below are stable. Line numbers drift, so search by name.
 |---|---|---|
 | `npm install` | Installs dependencies (postinstall makes node-pty's `spawn-helper` executable) | Node 24 |
 | `npm start` | Runs the app from source. Updates are off in source runs. | |
-| `npm test` | 67 integration tests in `test/*.test.js`: real hub, real lanes, real git. About a minute. | git ≥ 2.28, macOS. No network or Electron needed. |
+| `npm test` | 68 integration tests in `test/*.test.js`: real hub, real lanes, real git. About a minute. | git ≥ 2.28, macOS. No network or Electron needed. |
 | `npm run e2e` | Drives the real Electron app through every main flow and prints `PASS`/`FAIL` per step, ending with `N/M passed`. 15-minute cap. | The `claude` CLI on the login-shell PATH and a GUI session. One step needs `gh auth status` to succeed (online). |
 | `npm run dist` | Packages `dist/Protoplasma-darwin-arm64/Protoplasma.app`, unsigned. | |
 | `npm run playground` | Two app copies (David on port 7801, Max on 7802) on a local hub and repo, each with an HTTP control API | |
@@ -56,7 +56,7 @@ app/panes.js      pane mode (~90)
 app/index.html    CSP, all CSS (tokens and themes), icon sprite, all markup and dialogs (~1040)
 app/config.json   githubClientId (OAuth app, device flow), onlineHub (the Railway URL)
 scripts/          e2e.js, playground.js + playground-app.js, stage.js, screenshot.js, demo.js, sign.sh, icon.js
-test/             hub.test.js (39), workspace.test.js (12), files.test.js (7), lan.test.js (5), identity.test.js (2), updates.test.js (2)
+test/             hub.test.js (39), workspace.test.js (12), files.test.js (7), lan.test.js (6), identity.test.js (2), updates.test.js (2)
 .github/workflows ci.yml (npm test on every push to main and PR), package.yml (dist check), release.yml (tag → release)
 Dockerfile        the hosted hub image (only src/hub.js + src/shared.js + ws)
 install.sh        the one-line installer
@@ -85,8 +85,10 @@ docs/             README images, recheck/ (review records)
   - **Online:** `config.json` `onlineHub`, overridden by `PROTO_ONLINE_HUB`.
   - **This Mac:** `startHub` running inside the main process, over https/wss with a self-signed certificate
     (`hubCert`: `<userData>/hub/tls-cert.pem` and `tls-key.pem`, made once with `/usr/bin/openssl`). Its data is in
-    `<userData>/hub/teams.json`. It registers its certificate with the online hub (`POST /hubs`) and is advertised over
-    Bonjour as `<login> on <hostname>`, unless `PROTO_BIND` is a loopback address (e2e sets `127.0.0.1`).
+    `<userData>/hub/teams.json`. It registers its certificate with the online hub (`POST /hubs`). It listens on `127.0.0.1` until
+    one of its teams has someone besides the owner (`share`, at an invite or a listing). Then it moves to `0.0.0.0` on the
+    same port (`listenOn`) and is advertised over Bonjour as `<login> on <hostname>`. `PROTO_BIND` overrides where it
+    listens and turns `share` off.
   - **Nearby:** found over Bonjour type `protoplasma`, and only when the user turns on "Look for teams on this network".
 - **Identity:** a GitHub token from the device flow with scope `read:user` only. The app sends it to the online hub and
   to this Mac's own hub, which check it against GitHub `/user`, and to no other hub. A hub on another Mac gets a
@@ -95,7 +97,7 @@ docs/             README images, recheck/ (review records)
   clash.
 
 ### The hub (`src/hub.js`)
-- **The server:** `startHub({port, host, dataDir, owners, verifyUser, tls, passIssuer})` → `{port, close, fingerprint}`.
+- **The server:** `startHub({port, host, dataDir, owners, verifyUser, tls, passIssuer})` → `{port, close, listenOn, fingerprint}`.
   The default host is `0.0.0.0`. With `tls` (`{key, cert}`) it serves https/wss; `fingerprint` is that certificate's.
   - `owners` lists the logins allowed to create teams. Leave it out to let anyone create them; an empty array lets
     nobody. The standalone entry point turns a blank `PROTO_OWNERS` into "left out".

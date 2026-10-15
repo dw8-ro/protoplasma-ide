@@ -77,7 +77,7 @@ function readPass(pass, key, aud, now = Date.now()) {
  * @param {(token: string) => Promise<{login: string, name: string, avatar: string} | null>} [o.verifyUser]
  * @param {{key: Buffer|string, cert: Buffer|string}} [o.tls] serve https/wss with this certificate (a hub on someone's Mac)
  * @param {string} [o.passIssuer] the online hub whose passes this hub accepts (needs `tls`: a pass names the certificate)
- * @returns {Promise<{ port: number, close: () => Promise<void>, fingerprint?: string }>}
+ * @returns {Promise<{ port: number, close: () => Promise<void>, listenOn: (host: string) => Promise<void>, fingerprint?: string }>}
  */
 function startHub({ port = 7681, host = '0.0.0.0', dataDir, owners, tls, passIssuer, verifyUser = token => module.exports.githubUser(token) } = {}) {
   const same = (a, b) => String(a).toLowerCase() === String(b).toLowerCase();
@@ -907,10 +907,18 @@ function startHub({ port = 7681, host = '0.0.0.0', dataDir, owners, tls, passIss
     server.close(() => resolve());
   });
 
+  // Moves the listening socket to `host` on the same port. Open WebSockets stay; idle HTTP connections are closed, and
+  // clients reconnect. A hub on a Mac starts on 127.0.0.1 and moves to the network once its team is shared.
+  const listenOn = h => new Promise((resolve, reject) => {
+    const at = server.address().port;
+    server.close();
+    server.once('error', reject).listen(at, h, () => { server.off('error', reject); resolve(); });
+  });
+
   return new Promise((resolve, reject) => {
     server.once('error', reject).listen(port, host, () => {
       server.off('error', reject).on('error', e => console.error(`Hub server error: ${e.message}`));
-      resolve({ port: server.address().port, close, fingerprint: ownPrint || undefined });
+      resolve({ port: server.address().port, close, listenOn, fingerprint: ownPrint || undefined });
     });
   });
 }

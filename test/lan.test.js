@@ -128,3 +128,23 @@ test('an agent only takes typing from the hub when it was started open', async (
   assert.ok(!closedOut().includes('zz-typed'), 'not typed into an agent that isn\'t open');
   assert.ok(openOut().includes('zz-typed'), 'typed into an open one');
 });
+
+test('a hub on a Mac moves to the network when shared, keeping its open connections', async () => {
+  const lanIp = Object.values(os.networkInterfaces()).flat().find(a => a.family === 'IPv4' && !a.internal)?.address;
+  const reach = host => new Promise(resolve => require('node:net').connect(aliceHub.port, host, function () { this.destroy(); resolve(true); }).on('error', () => resolve(false)));
+  const garage = (await teams.teamsAt(bob, aliceUrl))[0];
+  const watcher = new WebSocket(`${aliceUrl.replace('https', 'wss')}/watch`, { ca: aliceCert, checkServerIdentity: () => undefined });
+  const token = (await teams.access(bob, aliceUrl)).token;
+  await new Promise((resolve, reject) => {
+    watcher.on('open', () => watcher.send(JSON.stringify({ t: 'watch', token, team: garage.id })));
+    watcher.once('message', resolve).on('error', reject);
+  });
+  try {
+    if (lanIp) assert.equal(await reach(lanIp), false, 'on this Mac alone at first');
+    await aliceHub.listenOn('0.0.0.0');
+    if (lanIp) assert.equal(await reach(lanIp), true, 'then on the network');
+    const state = new Promise(resolve => watcher.on('message', m => { if (JSON.parse(m).t === 'state') resolve(); }));
+    await teams.hubApi(alice, aliceUrl, 'POST', `/teams/${garage.id}/memories`, { text: 'still here?' }); // broadcasts state
+    await state; // the connection opened before the move still gets news
+  } finally { watcher.close(); }
+});

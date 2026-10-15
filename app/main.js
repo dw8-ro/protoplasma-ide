@@ -173,11 +173,12 @@ ipcMain.handle('startLane', signedIn(async o => {
   if (!AGENTS.includes(o.cmd)) throw new Error(`Unknown agent: ${o.cmd}`);
   const env = await agentEnv;
   // A renamed session keeps its original folder and branch, which `folderKey` names.
-  const folder = o.repo ? await github.sessionFolder(String(o.repo), String(o.folderKey || o.session), env, { worktree: o.worktree !== false }) : { dir: String(o.cwd), guarded: true };
+  const folder = o.repo ? await github.sessionFolder(String(o.repo), String(o.folderKey || o.session), env, { worktree: o.worktree !== false }) : { dir: String(o.cwd), guarded: false };
   const cwd = folder.dir;
   // Codex and OpenCode have no hooks to ask with, so on a shared team the push guard in app-made clones stops them instead.
   const shared = o.cmd !== 'claude' && team.members?.length > 0;
-  const notice = shared && !folder.guarded ? 'This repo has its own Git hooks, so Protoplasma\'s push guard isn\'t installed: this agent can push to main or force-push without being stopped.' : '';
+  const why = o.repo ? 'This repo has its own Git hooks, so Protoplasma\'s push guard isn\'t installed' : 'Protoplasma only installs its push guard in folders it makes, not in one you pick';
+  const notice = shared && !folder.guarded ? `${why}: this agent can push to main or force-push without being stopped.` : '';
   const lane = startLane({ hub: team.hub, team: team.id, token, session: String(o.session), cmd: o.cmd, cwd, args: o.resume ? RESUME[o.cmd] : [],
     open: !!o.open, env: shared ? { ...env, PROTO_SHARED_TEAM: '1' } : env, onRefused: reason => toWindow('lane:refused', lane.id, reason) });
   lanes.set(lane.id, lane);

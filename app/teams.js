@@ -47,6 +47,7 @@ function hostHere(user) {
 }
 /** Stops hosting (signing out): the next person to sign in on this Mac starts the hub as its owner. */
 async function stopHosting() {
+  await hosting?.catch(() => {}); // a hub still starting is stopped too, not left running as the signed-out user's
   const was = local;
   hosting = local = null;
   if (!was) return;

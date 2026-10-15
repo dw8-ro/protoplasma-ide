@@ -240,9 +240,8 @@ docs/             README images, recheck/ (review records)
   - Captures team and token before any `await`, and refuses on a `teamKey` mismatch or an unknown CLI.
   - Gets the folder from `github.sessionFolder` (clone, push guard, worktree) or the user's own `cwd`.
   - Sets `PROTO_SHARED_TEAM=1` for codex/opencode on a team with members.
-  - Returns a `notice` only when an app-made clone couldn't get the push guard (the repo has its own hooks). A folder the
-    user picks is marked `guarded: true` although no guard is installed there, so agents in it get neither (HANDOFF
-    N6).
+  - Returns a `notice` when a codex/opencode agent on a team with members has no pre-push guard: an app-made clone
+    whose repo has its own hooks, or a folder the user picked (the app never installs the guard there).
   - Returns `{id, repo, notice}`.
 - **The IPC rule:** every `proto.x` in preload.js has a matching main handler. `invoke` pairs with `ipcMain.handle` and
   `send` with `ipcMain.on`. Wrap a handler in `signedIn(…)` if it needs the session, and in `inFolder(…)` if it takes a

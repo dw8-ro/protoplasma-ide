@@ -141,6 +141,8 @@ async function run(win, hub) {
       await js(`openNewAgent('s1'); $('input[name=cmd][value=${cli}]').checked = true; $('#agentForm').requestSubmit()`);
       const started = await until(`local.size === 2 || /isn't installed/.test($('#agentErr').textContent)`, 15000) && await js('local.size === 2');
       check(started ? `starts a ${cli} agent` : `a missing ${cli} CLI is reported, not silently dropped`, started || await js(`$('#agent').open && local.size === 1`), await js(`$('#agentErr').textContent`));
+      // Max is on the team and the folder was picked, not made by the app, so no push guard stops this agent: it says so.
+      if (started) check(`the ${cli} agent is told it isn't push-guarded`, await until(`(window.__alerts || []).some(a => /only installs its push guard/.test(a))`, 3000), await js('JSON.stringify(window.__alerts || [])'));
       if (started) { await js(`proto.kill([...local.keys()].find(id => id !== ${JSON.stringify(mine)})); 0`); await until('local.size === 1'); }
     }
     await js(`$('#agent').close(); showTeams(me)`);
@@ -397,7 +399,7 @@ async function run(win, hub) {
   } finally {
     // Alerts are the app's error messages; the only expected ones are for agents this script stops right after starting.
     const alerts = await js('window.__alerts || []').catch(() => []);
-    const unexpected = alerts.filter(a => !/stopped as soon as it started/.test(a));
+    const unexpected = alerts.filter(a => !/stopped as soon as it started|only installs its push guard/.test(a));
     check('no unexpected error alerts', !unexpected.length, unexpected.slice(0, 3).join(' | '));
     console.log(`\n${results.filter(Boolean).length}/${results.length} passed`);
     if (results.includes(false)) process.exitCode = 1;

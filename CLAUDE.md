@@ -11,9 +11,12 @@ and open work are in HANDOFF.md. Both are loaded here:
 
 - **Earlier memory doesn't carry over.** Earlier work on this project ran in a temporary folder whose auto-memory
   doesn't follow a new checkout. Everything worth keeping from it is in AGENTS.md, HANDOFF.md and `docs/recheck/`.
-- **Folder-trust prompts are David's to answer.** When a test or the playground starts a real `claude` in a new folder,
-  it stops at the folder-trust prompt. Don't answer it for him; e2e and the playground use stand-in agents for this
-  reason.
+- **Folder-trust prompts are David's to answer.** A real `claude` started in a new folder stops at its folder-trust
+  prompt. Never accept one on his behalf.
+  - The playground uses stand-in agents (bash shells).
+  - e2e runs real `claude` processes, which are never sent a prompt, and creates and removes
+    `~/Protoplasma/protoplasma-e2e`. Its trust-prompt check starts `claude` in a new temp folder and dismisses the
+    prompt with Esc, which declines it.
 - **Driving the app:**
   - Electron isn't a web page, so the in-app browser can't drive it. Use `scripts/e2e.js` (it runs page code through
     `webContents.executeJavaScript`) or the playground's control API (`x-play-token` header).
@@ -24,4 +27,4 @@ and open work are in HANDOFF.md. Both are loaded here:
 - **Usage limit:** it has been hit many times. Prefer working inline. If you do use subagents, use few, give each a
   narrow scope, and have them write findings to a file as they go so a cut-off loses nothing.
 - **Commits** end with `Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>`. Commit or push only when David asks.
-  Pushing `main` can redeploy the hosted hub (see "Hub hosting" in AGENTS.md).
+  Pushing `main` can redeploy the hosted hub (see "Hosted hub" under "Releases, signing and the hosted hub" in AGENTS.md).

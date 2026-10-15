@@ -6,9 +6,9 @@ true as of release **v0.4.2** (commit `f6e19d7`).
 ## Where things stand
 
 - **Released:** v0.4.2 is published on GitHub Releases (`Protoplasma-0.4.2-mac-arm64.zip`, signed with the project's
-  own certificate). Installed copies (0.2.0 and later) pick it up by themselves within a few hours.
-- **Hub:** the hosted hub on Railway (`https://hub-production-fba9.up.railway.app`) runs commit `9d8fd0f`, the last
-  commit that changed hub code. Railway redeploys a push to `main` only when it touches `src/hub.js`,
+  own certificate). Installed copies (0.2.0 and later) see it within about 6 hours and show an update bar, but only where the user's `gh` is signed in with access to the private repo (see N12).
+- **Hub:** the hosted hub on Railway (`https://hub-production-fba9.up.railway.app`) runs the hub code of commit `a132b61`, the
+  last one that changed `src/hub.js` (batch A's `f82a38b` was the main hub change). Railway redeploys a push to `main` only when it touches `src/hub.js`,
   `src/shared.js` or `Dockerfile` (its watch patterns); other pushes show as SKIPPED.
 - **Checks on v0.4.2:**
   - `npm test`: 58 of 58 pass.
@@ -37,10 +37,10 @@ Tests ran after each batch, and each batch is one commit:
 
 | Commit | Batch | Main changes |
 |---|---|---|
-| `f82a38b` | A: hub | Bad WebSocket frames and resets no longer crash the hub. Session/team names made only of dots are refused (a session named `..` used to turn "Delete session" into "delete the team"). Sockets can send at most 1 MB before sign-in. Malformed tokens are refused without asking GitHub. The push guard understands quoting, `bash -lc`, `eval` and `ssh`. The shell-write check only flags real writes. `teams.json` is validated. Members are included in `state`. |
+| `f82a38b` | A: hub | Bad WebSocket frames and resets no longer crash the hub. Session names made only of dots are refused (a session named `..` used to turn "Delete session" into "delete the team"). Sockets can send at most 1 MB before sign-in. Malformed tokens are refused without asking GitHub. The push guard understands quoting, `bash -lc`, `eval` and `ssh`. The shell-write check only flags real writes. `teams.json` is validated. Members are included in `state`. |
 | `80a396b` | B: agents and session folders | git status uses `-z`. Lanes ping every 20 s. Trust-prompt detection needs the question and both answers. A session folder holding ignored files that aren't build output (like `.env`) is kept, not deleted. Two agents starting one session share one folder. A renamed default branch is found again. The pre-push hook is written atomically. |
 | `dd7d174` | C: main process, teams, GitHub, updates | The single-instance lock comes first. The agent login-shell environment has a hard time limit. Sign-out stops hosting, shells and folders. GitHub and hub calls time out. Clones go into `.partial` first. Team keys are `where\|id`. Updates check the signer and bundle id, and the swap logs to `~/Library/Logs/Protoplasma-update.log`. SIGTERM quits without the dialog. |
-| `a132b61` | D: code view | Subfolder sessions work (`prefix`). Reads and writes are confined to the session folder, symlinks included. Find in files uses `grep -z`. Commit & Push commits only the folder (`add -A -- .`) and refuses during a conflict or on a detached HEAD. Unsaved edits are kept when you switch files. |
+| `a132b61` | D: code view | Subfolder sessions work (`prefix`). Reads and writes are confined to the session folder, symlinks included. Find in files uses `grep -z`. Commit & Push commits only the folder (`add -A -- .`) and refuses during a conflict or on a detached HEAD. Unsaved edits parked for a deleted session folder are dropped, so they no longer block quitting, and saving a deleted file recreates its folder. Also a 3-line hub change. |
 | `23a8af5` | E: screens and panes | Watching an agent no longer types your terminal's replies into it. Session aliases are followed after renames. Notifications skip agents already on screen. Keyboard access throughout. Deleted teams stop their agents. |
 | `d13e370` | F: markup and styles | Contrast (`--faint`), focus outlines, ARIA tabs, `<bdi>` around paths. The in-app privacy text now says what the hub really relays. |
 | `9d8fd0f` | G: tooling, tests, docs | The playground control API needs a token. e2e has a 15-minute limit and an unexpected-alert check, and cleans up. Releases only ship commits on `main`. A Package workflow builds the app. `install.sh` replaces a running copy. Tests use an isolated git config and clean up. The README matches the code. |
@@ -58,11 +58,11 @@ is the one proposed to David; he hasn't chosen yet.
 | D1 | Teams store members by GitHub login. If an account is renamed, someone else can claim the old login and be let in as that member, or as the owner. | Logins are stored, and the hub never checks an invite against GitHub. | Store GitHub's numeric user id next to the login and match on the id, migrating `teams.json` on first sign-in. |
 | D2 | Teams hosted on a Mac (`http://<ip>:<port>`) receive the GitHub token in clear text, readable by anyone on the same Wi-Fi. | Clear text for "This Mac" and nearby teams. The hosted hub uses https. | After one verified sign-in, the hub issues its own short-lived token, and the app sends only that afterwards. |
 | D3 | The hub inside the app listens on every network interface, even with "Look for teams on this network" off. | It binds to `0.0.0.0`. | Bind to `127.0.0.1` until the user shares the team. |
-| D4 | The push guard protects only `main` and `master`, and doesn't stop branch deletions (`git push origin :their-branch`). | `main` and `master` only. | Also protect the branch `origin/HEAD` points at, and block deleting any branch except the agent's own `session/*`. |
+| D4 | The push guard protects only `main` and `master`, and doesn't stop most branch deletions (`git push origin :their-branch`). | The pre-push hook (Codex/OpenCode) blocks pushes to and deletions of main/master only. For Claude, the hub asks about main/master, and about deleting a branch a teammate's running agent is on. | Also protect the branch `origin/HEAD` points at, and block deleting any branch except the agent's own `session/*`. |
 | D5 | `git push --no-verify` skips the pre-push guard for Codex and OpenCode. | Allowed. The hint in the hook was removed, but the README still says the hook "stops" them. | Accept it, call it a safeguard in the README, and turn on GitHub branch protection for `main`. |
 | D6 | When a system notification should fire. | Already done as option (a): no notification for an agent visible in a pane while the window is focused. | Keep, unless David wants it changed. |
 | D7 (C129) | A Codex or OpenCode agent started while a team has no other members never gets the push guard, even after someone is invited (`PROTO_SHARED_TEAM` is fixed when it starts). | Not done. | Say so when inviting ("agents already running aren't guarded until restarted"). |
-| D8 | Everyone in a session shares one `session/<slug>` branch, so two people's Commit & Push can collide. | Commit & Push refuses, and tells them to pull in the Terminal tab. | Keep the shared branch, and add a "Pull" button to that message. |
+| D8 | Everyone in a session shares one `session/<slug>` branch, so two people's Commit & Push can collide. | Commit & Push puts your commit on top of a teammate's newer push by itself. Only when you both changed the same lines does it stop (the commit is kept but not pushed) and tell you to pull in the Terminal tab. | Keep the shared branch, and add a "Pull" button to that message. |
 
 ### Known and left alone on purpose
 - **C44:** inviting a login with an underscore is refused. Only GitHub Enterprise Managed Users have such logins, and they
@@ -76,22 +76,25 @@ is the one proposed to David; he hasn't chosen yet.
   lists are in those items.
 
 ### Found while writing this handoff (after the recheck)
-Mapping the code for AGENTS.md turned up these. None are fixed yet.
+Mapping the code for AGENTS.md turned up these, and a second pass checked each one. None are fixed yet. They're all
+low severity.
 
-| # | Where | Problem |
-|---|---|---|
-| N1 | app/files.js `write` | The parent folders are created (`mkdirSync`) before the folder-boundary check. So saving `link-to-outside/newdir/x.js` creates `newdir` outside the session folder, although the file write itself is refused. |
-| N2 | app/updates.js swap.sh, app/main.js `updates:install` | swap.sh gives up if the app hasn't quit within about an hour, and leaves its ~150 MB download behind. `staging` stays resolved in main, so pressing Update again just quits without staging, and the update is lost until the next launch's check. |
-| N3 | app/teams.js `stopHosting` | Signing out while the This Mac hub is still starting leaves that hub running for the signed-out user. A later `hostHere` then starts a second hub on the same data folder. |
-| N4 | app/renderer.js `renderTeamList` | The team list is filled with `innerHTML` but cleared with `setHTML` at sign-out. From the second sign-out on, the clear is skipped, so the previous person's teams flash up at the next sign-in, and clicking one throws. |
-| N5 | src/lane.js `connect` | On every reconnect the lane re-sends its own last status. After a folder-trust prompt has been answered, that's "idle", which overwrites the hook-driven "working" until the next hook. |
-| N6 | app/main.js `startLane` | An agent in the user's own folder (`cwd`) counts as guarded, so no "not guarded" notice is shown, although no push guard is installed there. |
-| N7 | src/hub.js `partsOf` | A here-string (`<<<word`) or arithmetic like `$((1<<2))` is taken for a heredoc. Every following line is then skipped, so a push or write later in the same command is missed. |
-| N8 | src/hub.js session rename | Renaming a session doesn't update watchers' presence until each app sends a new `look`. |
-| N9 | app/renderer.js `pending` | Output for a local agent that has no terminal yet is buffered without limit. This happens, for example, when you switch team while it starts. |
-| N10 | src/hub.js `lanAddresses`, scripts/icon.js | Small leftovers: an unused export, and a temp iconset folder that is never removed. |
-| N11 | docs/*.png, docs/demo.gif | The README images predate 0.4.0 (pane mode, plans, Conflicts). Regenerate them with `npm run screenshot` and `npm run demo`. |
-| N12 | updates (behaviour) | While the repo is private, installed copies only update when the user's `gh` is signed in with access to it. The README now says so; making the repo public, or another download route, would remove the requirement. |
+| # | Checked | Where | Problem | Fix |
+|---|---|---|---|---|
+| N1 | Confirmed (ran) | app/files.js `write` | Missing parent folders are created (`mkdirSync`) before the real-path check. Saving `link-to-outside/a/b/x.js` therefore leaves empty folders `a/b` outside the session folder, although the file write is refused. It's hard to reach from the UI. | Before `mkdirSync`, run `inside()` on the nearest existing ancestor of the target. |
+| N2 | Partly | app/updates.js swap.sh, app/main.js `updates:install` | If the quit after Update now is cancelled (agents running) and the app stays open for over an hour, swap.sh gives up and leaves its temp folder (about 500 MB) behind. The bar still says the update goes in at quit, but quitting installs nothing; the next launch offers it again. | Drop the one-hour limit in swap.sh, or on giving up remove the folder and reset `staging` in main and `staged` in the renderer. |
+| N3 | Confirmed (read) | app/teams.js `stopHosting` | Signing out while the This Mac hub is still starting leaves it running and advertised as the signed-out user's. A later local team then starts a second hub on the same data folder, and the two overwrite each other's teams.json. The window is milliseconds. | In `stopHosting`, first `await` any start under way, then read and clear `local`. |
+| N4 | Confirmed (read) | app/renderer.js `renderTeamList` | The team list is drawn with `innerHTML` but cleared at sign-out with `setHTML`, whose cache never sees the redraws. From the second sign-out on, the clear is skipped: the previous account's teams show at the next sign-in until the new list arrives, and clicking one throws. | Draw the list with `setHTML` and drop `renderTeamList.last`. |
+| N5 | Confirmed (ran) | src/lane.js `connect` | After a Claude agent's trust prompt has been answered, every reconnect re-sends "idle". That overwrites "working" until the next hook, and "needs you" (a pending permission) until someone answers, so that alert disappears. | Re-send the status only when it's live: `if (activity && (byActivity \|\| asking))`. |
+| N6 | Confirmed (read) | app/main.js `startLane` | A Codex or OpenCode agent in the user's own folder, on a team with members, counts as guarded. No "not guarded" notice is shown, although no pre-push guard is installed there. Claude agents are covered by the hub either way. | Return `guarded: false` for a folder the user picked, and word the notice for that case. |
+| N7 | Confirmed (ran) | src/hub.js `partsOf` | A here-string (`<<<word`) or arithmetic shift (`$((1<<2))`) is taken for a heredoc, and every following line is skipped until one equals that word. A push or write on a later line of the same command isn't checked; one on the same line still is. | Skip `<<<`, and don't treat `<<` inside `$((` as a heredoc. |
+| N9 | Confirmed (read) | app/renderer.js `pending` | Output for a local agent that has no terminal yet is buffered without limit, e.g. when you switch team while it starts, until you go back or it exits. | Cap the buffer like `tails` (keep the last 1,000,000 characters). |
+| N10 | Confirmed (read) | src/hub.js `lanAddresses`, scripts/icon.js | `lanAddresses` is exported but unused (and is the only user of hub.js's `os` import). icon.js leaves its temp iconset folder behind. | Delete them; remove the folder after `iconutil`. |
+| N11 | Confirmed (read) | docs/*.png, docs/demo.gif | The README images were made on 2026-10-05, before 0.4.0's pane mode, plans, code comments and Conflicts. | `npm run screenshot` and `npm run demo`, then commit. |
+| N12 | Confirmed (read) | app/updates.js | While the repo is private, installed copies find and download updates only through a `gh` signed in with access. Without gh they say "Couldn't reach GitHub"; signed in without access they wrongly say "No releases yet". The README says gh is needed. | Make the repo public (David's call), or map gh's 404 to "no access to the release repo". |
+
+N8 (renaming a session leaves teammates' presence on the old name) was refuted: each app follows the rename and sends a
+new `look` straight away, so presence is right again within one round trip.
 
 ## Rules from David that still apply
 - Keep the repo private.
@@ -105,10 +108,8 @@ Mapping the code for AGENTS.md turned up these. None are fixed yet.
 - Commits end with `Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>`.
 
 ## Suggested next steps
-0. **Start here.** The last session ended before a final check could finish, to stay within the weekly usage limit.
-   - N1 to N12 above were found by reading the code only. Confirm or refute each one before fixing it.
-   - AGENTS.md was written from careful readings of every file, but its claims haven't been checked against the code
-     by a second pass. Where it and the code disagree, the code wins: fix AGENTS.md.
+0. Fix N1 to N12 above (all checked and low severity), with a test for each where one fits. AGENTS.md was checked
+   claim by claim against the code. If you find it disagreeing with the code anyway, the code wins: fix AGENTS.md.
 1. Get David's choices on D1 to D8, then implement them. D2, D3 and D4 are the security-relevant ones.
 2. Fill the test gaps above, starting with the hub's live side.
-3. Release with `npm run release` (see AGENTS.md). Push `main` first if hub code changed, so the hosted hub matches.
+3. Release with `npm run release` (see AGENTS.md). It refuses unless `main` is pushed and equals `origin/main`. Pushing hub code also redeploys the hosted hub.

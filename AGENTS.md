@@ -95,7 +95,8 @@ docs/             README images, recheck/ (review records)
 ### The hub (`src/hub.js`)
 - **The server:** `startHub({port, host, dataDir, owners, verifyUser})` → `{port, close}`. The default host is
   `0.0.0.0`.
-  - `owners` lists the logins allowed to create teams; empty means anyone.
+  - `owners` lists the logins allowed to create teams. Leave it out to let anyone create them; an empty array lets
+    nobody. The standalone entry point turns a blank `PROTO_OWNERS` into "left out".
   - The default `verifyUser` calls `module.exports.githubUser` late on purpose: scripts swap it for fake identities.
 - **State:**
   - `teams` is persisted to `teams.json` synchronously via `.tmp` and a rename. A bad file is moved aside to
@@ -105,7 +106,8 @@ docs/             README images, recheck/ (review records)
   - The owner is never in `team.members`. `members.length > 0` means "has teammates", and turns on the push guard.
 - **Sign-in:** `identify` caches a good token for 2 minutes and a rejected one for 10 s, keyed by its sha256.
   Concurrent lookups share one request. A GitHub outage is never cached: REST answers 503 and a WebSocket closes with
-  1013. `githubUser` refuses token-shaped garbage without asking GitHub.
+  1013. `githubUser` returns null without asking GitHub for anything not shaped like a GitHub token (`gh?_…`,
+  `github_pat_…` or 40 hex characters).
 - **WebSockets:** the first frame carries `{token, team}`, and `authenticate` checks it. Frames sent while it's checked
   wait in a queue (at most 1 MB). Close codes:
 
@@ -149,8 +151,10 @@ docs/             README images, recheck/ (review records)
   - `subcommandAt` skips git's own options.
   - It asks on: a force push, `--all`/`--mirror`, deleting main/master or a branch a teammate is on, and pushing to
     main/master. It follows `git checkout`/`switch` within the same command.
-- **Shell-write check** (`shellWriteRisk` via `writtenBy`): finds the paths a command writes, then asks if a teammate
-  changed one.
+- **Shell-write check** (`shellWriteRisk` via `writtenBy`): finds the paths a command writes, then asks if another
+  agent in the same repo changed one. That can be a teammate's or one of your own in another checkout, which `whoOn`
+  names as "your agent in session …". The edit ask (`othersOn`) and the "branch a teammate is on" push check work the
+  same way.
   - Writes it recognises: redirect targets, `rm`/`mv`/`cp`/`tee`/`sed -i`, formatters with `--write`, `curl -o`, `dd of=`.
   - Git commands that discard changes (`checkout -- path`, `reset --hard`, `stash`, `clean`) only count for the same
     tree.
@@ -219,21 +223,26 @@ docs/             README images, recheck/ (review records)
 
 ### Electron main (`app/main.js`, `app/preload.js`)
 - **Startup:**
-  - The single-instance lock must stay the very first thing that runs (`if (!lock) { app.quit(); return; }`).
+  - The single-instance lock must stay the very first thing that runs
+    (`if (!app.requestSingleInstanceLock()) { app.quit(); return; }`).
   - `agentEnv` loads the login-shell environment (`$SHELL -ilc`, 6 s hard limit) and falls back to the app's own env.
     It sets `process.env.PATH`, which node-pty needs, carries over `SSH_AUTH_SOCK` and `TMPDIR`, and sets `LANG` if
     missing.
 - **State:**
   - `lanes`: id → lane, with `cwd` and a cached `prefix` added.
   - `known`: team key → team.
-  - `folders`: the allow-list for every `code:*` call and `shell:start`. Only lane folders and app-made session folders
-    go in.
+  - `folders`: the allow-list that every `inFolder(...)` handler checks (`code:list`, `status`, `read`, `committed`,
+    `write`, `search`, `commit`, `watch` and `shell:start`). Only lane folders and app-made session folders go in;
+    `code:root` adds them. `code:readLane` is the exception: it reads from one of this Mac's live lanes by lane id,
+    confined to that lane's folder by `inside()`.
   - `shells`: the Terminal tab's plain shells, never shared with the hub.
 - **The `startLane` handler:**
   - Captures team and token before any `await`, and refuses on a `teamKey` mismatch or an unknown CLI.
   - Gets the folder from `github.sessionFolder` (clone, push guard, worktree) or the user's own `cwd`.
-  - Sets `PROTO_SHARED_TEAM=1` for codex/opencode on a team with members, and returns a `notice` when the folder isn't
-    guarded.
+  - Sets `PROTO_SHARED_TEAM=1` for codex/opencode on a team with members.
+  - Returns a `notice` only when an app-made clone couldn't get the push guard (the repo has its own hooks). A folder the
+    user picks is marked `guarded: true` although no guard is installed there, so agents in it get neither (HANDOFF
+    N6).
   - Returns `{id, repo, notice}`.
 - **The IPC rule:** every `proto.x` in preload.js has a matching main handler. `invoke` pairs with `ipcMain.handle` and
   `send` with `ipcMain.on`. Wrap a handler in `signedIn(…)` if it needs the session, and in `inFolder(…)` if it takes a
@@ -281,7 +290,9 @@ docs/             README images, recheck/ (review records)
 
 ### The UI (`app/renderer.js`, `app/code.js`, `app/panes.js`, `app/index.html`)
 - **One shared scope:** these are classic scripts that share one global lexical scope, with no modules.
-  - A new top-level name that already exists in another of the files is a SyntaxError that stops that file loading.
+  - A new top-level `const`/`let`/`class` whose name already exists in another of the files is a SyntaxError that
+    stops that file loading. A new top-level `function` with another file's function name silently replaces it
+    everywhere.
   - e2e, the playground and stage.js reach the globals by name.
   - The script order in index.html must stay: xterm, its addons, renderer.js, code.js, panes.js, then Monaco's
     `loader.js` last. Monaco's AMD `define` would otherwise capture xterm.
@@ -300,8 +311,9 @@ docs/             README images, recheck/ (review records)
   - Teammates' terminals keep the owner's columns and rows, and `fitFont` scales the font, down to 6 px.
   - A teammate terminal sends input only while focused, and never xterm's automatic replies.
 - **Sharing files:** `answerFile` replies only for this Mac's own live lane, only with **Share the files your agents
-  change** on, and only for files in `lane.files`. It's limited to 1,000,000 characters. The hub doesn't enforce any of
-  this; the renderer does.
+  change** on, and only for files in `lane.files`. Only the renderer enforces the share setting and the `lane.files` check. The hub routes requests only to the
+  agent owner's windows, accepts answers only from that login, and enforces the 1,000,000-character cap
+  (`MAX_SHARED_FILE`).
 - **Session names:** `slug` and `existingSession` in renderer.js copy `slug` in `src/shared.js` and `findSession` in the
   hub. Keep all of them identical.
 - **The code view** (code.js): it uses the `code` state object and `models` (per path: `saved`, `stale`, `bom`,
@@ -326,6 +338,8 @@ docs/             README images, recheck/ (review records)
   - `EDIT_TOOLS` drives both the lane's hook matcher and the hub's edit tracking.
   - The hub's `MAX_SHARED_FILE` and 5 MB frame limit, and renderer `answerFile`'s limits.
 - **Status strings** `'needs you' | 'idle' | 'working'`: the lane, the hub's allow-list, and the renderer's `STATUS`.
+  The hub also gives agents without hooks the initial status `'running'` (`onLane`), which the renderer's `STATUS` and
+  `sessionStatus` handle.
 - **Push-guard rules:** `PROTECTED_BRANCHES`/`pushRiskOf` in the hub and `PUSH_GUARD` in workspace.js.
 - **Privacy numbers:** the README "Security and privacy" section and the in-app Data & privacy text (index.html) quote
   the constants. Up to 512 KB of output (2 × `SCROLLBACK`), the last 20 stopped agents (`MAX_STOPPED`), and comment
@@ -351,11 +365,15 @@ docs/             README images, recheck/ (review records)
   and `history` must never appear in `state`.
 - **Typing in:** remote input only goes to lanes started with `open`, on the watcher's own team.
 - **Lane ids:** an id held by one login, live or stopped, can't be claimed by another.
-- **Code view:** every `code:*` handler takes its root through `inFolder`. Every path from the renderer passes
+- **Code view:** every `code:*` handler takes its root through `inFolder`, except `code:root` (which registers the
+  folder) and `code:readLane` (keyed by one of this Mac's live lane ids and confined to that lane's folder). Every path from the renderer passes
   `inside()` (filesystem) or `within()` (git only).
 - **Repo strings:** every repo string passes `checkRepo` before a path or gh call is built from it.
 - **Token scope:** the token sent to hubs stays `read:user`. Looking for nearby teams stays opt-in.
-- **Git prompts:** `GIT_TERMINAL_PROMPT=0` everywhere the app runs git, so nothing hangs on an invisible prompt.
+- **Git prompts:** `GIT_TERMINAL_PROMPT=0` is set by the git helpers in files.js, workspace.js and lane.js `gitEnv`,
+  so nothing there hangs on an invisible prompt. The clone (`gh repo clone`) and a few local-only calls (lane.js's sync
+  `git()`, github.js `rev-parse`, files.js `underWay`) don't set it. Route any new network git call through one of the
+  prompt-free helpers.
 - **Releases:** never publish an ad hoc release. `sign.sh` exits 1 in CI without the certificate.
 - **Open security decisions** (D1 to D4) are in HANDOFF.md:
   - logins vs numeric ids;
@@ -367,8 +385,10 @@ docs/             README images, recheck/ (review records)
 - **Hub tests:** `test/hub.test.js` tests share one hub, team and set of lanes, and run in file order. `nextState()` only
   sees *future* messages, so set it up before the action. Waiting for a state that already arrived hangs, which once
   broke a release build on the detached tag checkout. Raw lanes need a hook secret of 16+ characters (`SECRET`).
-- **Test isolation:** tests that run git set `GIT_CONFIG_GLOBAL=/dev/null` and `GIT_CONFIG_NOSYSTEM=1`, and delete
-  `PROTO_SHARED_TEAM`. Keep it that way, or developer config (`push.autoSetupRemote`, signing) changes results. Tests
+- **Test isolation:** workspace.test.js and files.test.js set `GIT_CONFIG_GLOBAL=/dev/null` and
+  `GIT_CONFIG_NOSYSTEM=1`, and workspace.test.js also deletes `PROTO_SHARED_TEAM`. hub.test.js lanes run git in this repo
+  with the developer's own environment. New git-running tests should do all three, or developer config
+  (`push.autoSetupRemote`, signing) changes results. Tests
   must not require `electron` or modules that do, because CI skips the Electron download.
 - **e2e touches the real home folder:** it recreates `~/Protoplasma/protoplasma-e2e`, and runs real Claude Code with the
   user's `~/.claude`. It reads hook secrets from `ps eww`.
@@ -377,7 +397,8 @@ docs/             README images, recheck/ (review records)
   "needs you" state and dismisses it with Esc, which declines.
 - **Packaging:** `package.yml` only runs when packaging files change. A new runtime file excluded by `--ignore` (dist,
   docs, scripts, test, build, .github, install.sh, the root CLAUDE.md, AGENTS.md and HANDOFF.md, monaco esm/dev) only
-  shows up as broken in a release. Run `npm run dist`, and add critical files to package.yml's asar list.
+  shows up as broken in a release. These are prefixes: anything at the root whose path merely starts with one of them
+  (`testdata/`, `build-info.json`) is left out too. Run `npm run dist`, and add critical files to package.yml's asar list.
 - **Releases:**
   - `npm run release` only bumps the patch version. For minor or major, run `npm version minor && git push
     --follow-tags` by hand, after checking you're on `main` and in sync yourself.
@@ -388,14 +409,16 @@ docs/             README images, recheck/ (review records)
   `data-pane` is used both by Settings sections and by pane-mode columns.
 - **Caches on functions:** `renderTeamList.last`, `refreshFiles.last`, `renderTabs.unsaved` and `marks.last` hold
   state. Reset them with the state they belong to.
-- **`main.js` uses some variables before their declarations,** inside callbacks (`folders`, `shells`, `terminated`).
+- **`main.js` uses some variables before their declarations,** inside callbacks (`folders`, `shells`, `stopWatching`, `terminated`).
   Don't move those calls to module top level.
 - **Deliberate shortcuts:** comments marked `ponytail:` name a simplification with a known ceiling and the way up from
   it. Keep the marker when you touch them.
 
 ## How to…
 - **Add a hub REST route:**
-  1. Add it in `handle()` in hub.js, after the team lookup, so sign-in and membership are already checked.
+  1. Add it in `handle()` in hub.js, after the team lookup, so sign-in and membership are already checked. A route
+     deeper than `/teams/:id/:sub/:subId` also needs the path guard at the top of `handle()` widened; it returns 404
+     for anything else.
   2. Mutate the team, then call `saveTeams()` and `broadcastState(team.id)`.
   3. Add a helper in `app/teams.js` (`hubApi`, `encodeURIComponent` on every id), an `ipcMain.handle` in main.js
      wrapped in `signedIn` and `teamFor(key)`, and a method in preload.js.
@@ -407,10 +430,17 @@ docs/             README images, recheck/ (review records)
   - Add it to the README protocol table.
 - **Add a field teammates see on an agent:**
   1. Read it from the hello with `str()`/`size()` caps.
-  2. Add it to `views()`, to the reconnect carry-over if it should survive, and to the stopped record.
+  2. Add it to `views()`, and to the reconnect carry-over if it should survive. For stopped agents, add it to the
+     stopped record in `onLane`'s close handler and to `stoppedViews()`, which picks a fixed set of fields.
   3. Send it from lane.js.
-- **Add an agent CLI:** add it to `AGENTS` and `RESUME` (main.js). Add it to `NO_HOOKS` (lane.js) if it has no hooks.
-  Update the renderer's pickers.
+- **Add an agent CLI:**
+  - Add it to `AGENTS` and `RESUME` (main.js), to `NO_HOOKS` (lane.js), to renderer.js `agentName`, and to the Settings
+    agent radios in index.html.
+  - Hooks are wired only for the command named `claude`. A CLI left out of `NO_HOOKS` gets `PROTO_HOOK_SECRET` but no
+    status at all, and stays "running". Keep it in `NO_HOOKS` unless you also add hook settings like
+    `claudeHookSettings`.
+  - Check the hard-coded `'claude'` tests in main.js `startLane` (shared-team push guard), lane.js `startLane` (hook
+    settings) and hub.js `onLane` (initial status).
 - **Add an IPC call:** add it to preload.js (`invoke` or `send`), add the matching main handler (`signedIn`, `inFolder`,
   coerced arguments), and call it as `proto.x(...)` with failures shown via `errorText(e)`.
 - **Add a preference:** add a default to `DEFAULT_PREFS`, and an input with `data-pref="key"` in the Settings markup. It

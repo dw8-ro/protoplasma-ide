@@ -1,28 +1,26 @@
-# Handoff: Protoplasma IDE, 15 October 2026
+# Handoff: Protoplasma IDE, 15 October 2026 (evening)
 
-Read this first in a new session, then [AGENTS.md](AGENTS.md) for how the code fits together. The last release is
-**v0.4.2** (commit `f6e19d7`). Since then, N1–N10 and all eight decisions (D1–D8) were done on `main`; nothing new
-has been released yet.
+Read this first in a new session, then [AGENTS.md](AGENTS.md) for how the code fits together.
 
 ## Where things stand
 
-- **Released:** v0.4.2 is published on GitHub Releases (`Protoplasma-0.4.2-mac-arm64.zip`, signed with the project's
-  own certificate). Installed copies (0.2.0 and later) see it within about 6 hours and show an update bar, but only where the user's `gh` is signed in with access to the private repo (see N12).
-- **Since v0.4.2 (15 Oct 2026):** N1–N7, N9, N10 and D1–D8 are on `main` and pushed (`f8c14b2` to `17f747e`), but not
-  released: installed copies don't have any of it yet.
-- **Hub:** the hosted hub on Railway (`https://hub-production-fba9.up.railway.app`) runs `17f747e`, deployed
-  successfully on 15 Oct 2026. It has D1 (it records people's GitHub ids in its `teams.json` as they sign in), D2 (it
-  issues passes, at `/passes`, and registers Mac hubs, at `/hubs`) and D4. Its signing key and registrations are in
-  `/data`. Railway
-  redeploys a push to `main` only when it touches `src/hub.js`, `src/shared.js` or `Dockerfile` (its watch patterns);
-  other pushes show as SKIPPED.
-- **Checks on `17f747e`:**
-  - `npm test`: 69 of 69 pass, and GitHub CI passed.
-  - `npm run e2e`: 126 of 126 checks pass.
-  - `npm run dist` hasn't been run since v0.4.2; no packaging files changed.
-- **Compatibility:** teams hosted on a Mac now use TLS and passes (D2), so a Mac on 0.4.2 or older and one on this code
-  can't reach each other's Mac-hosted teams. Online teams are unaffected.
-- **Repo:** `dw8-ro/protoplasma-ide`, private. It must stay private until David says otherwise.
+- **Released: v0.5.0** (commit `2779b8b`), with N1–N10 and D1–D8. It's signed with the project's certificate, and its
+  release notes say Mac-hosted teams need everyone on 0.5. Installed copies see it within about 6 hours, where the
+  user's `gh` can see the private repo.
+- **After 0.5.0 (on `main` locally, not pushed or released yet):** a customer simulation of 0.5.0
+  ([docs/usage-test/REPORT.md](docs/usage-test/REPORT.md)), the fixes for its six findings, N11 and N12, and more
+  tests (`3033f93` to `c72f427`).
+  - **F1 matters most:** in 0.4.x and 0.5.0, Quit, Update now and logging out close the window but leave the app
+    running, so it can't be reopened. Users on those versions finish an update by force-quitting it (then it
+    installs). **Release 0.5.1 soon**, with that in its notes.
+- **Hub:** the hosted hub on Railway (`https://hub-production-fba9.up.railway.app`) runs `17f747e`: D1 ids, D2 passes
+  (`/passes`, `/hubs`) and D4. Nothing since then touches `src/hub.js`, so pushing doesn't redeploy it.
+- **Checks on `c72f427`:**
+  - `npm test`: 78 of 78.
+  - `npm run e2e`: 126 of 126. It now ends by quitting through the real quit path, and fails if the app doesn't exit.
+  - The customer simulation (`scripts/customer`, against `npm run playground`): 91 of 91.
+- **Repo:** `dw8-ro/protoplasma-ide`, private. David plans to make it public; until then customers need `gh` signed in
+  with access to install and update, and "Report a problem" opens a page they can't see.
 
 ## What the last stretch of work did
 
@@ -115,18 +113,9 @@ new `look` straight away, so presence is right again within one round trip.
 - Commits end with `Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>`.
 
 ## Suggested next steps
-1. **Release.** Nothing since v0.4.2 reaches installed copies until there's a release. Run `npm run dist` and check the
-   asar list first. Then make it a minor version (`npm version minor && git push --follow-tags`, 0.5.0) rather than
-   `npm run release`: Mac-hosted teams changed protocol (D2), so 0.4.x and 0.5 can't share one, and the release notes
-   should say everyone on such a team updates together. Needs David's OK.
-2. **Try a Mac-hosted team between two copies of the app.** Each piece is tested: lan.test.js covers passes, pinning
-   and owner checks against a TLS hub, and e2e covers your own This Mac team. The whole path hasn't been run together:
-   a second copy finding the team over Bonjour, getting a pass from the real online hub, and an agent joining. macOS
-   asks to allow local network access the first time (David answers it). With a real teammate, this needs their GitHub
-   username (Max is a placeholder).
-3. **N12 / repo visibility** (David's call): while the repo is private, teammates need `gh` signed in with access to
-   install and update.
-4. **N11:** regenerate the README images (`npm run screenshot`, `npm run demo`).
-5. **Test gaps** (C107, C109 to C111, above).
-6. **Feature gap:** Codex and OpenCode agents get no hooks (lane.js TODO), so no overlap warnings or file notes for
-   them.
+1. Push `main` and release 0.5.1 (`npm run release`, a patch), noting that anyone on 0.4.x or 0.5.0 whose window
+   closes after Update now should Force Quit Protoplasma once; the update then installs and opens. Needs David's OK.
+2. Make the repo public when David decides (N12): updates and "Report a problem" then work without `gh`.
+3. The remaining test gaps: the slow-viewer drop, the file-relay timeout, `files.js` watch, `updates.js`
+   stage/sameSigner/swap.sh.
+4. Codex and OpenCode have no hooks, so no overlap warnings or file notes for them (lane.js TODO).

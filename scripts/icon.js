@@ -25,6 +25,7 @@ app.whenReady().then(async () => {
     execFileSync('sips', ['-z', size * 2, size * 2, png, '--out', path.join(iconset, `icon_${size}x${size}@2x.png`)], { stdio: 'ignore' });
   }
   execFileSync('iconutil', ['-c', 'icns', iconset, '-o', path.join(out, 'icon.icns')]);
+  fs.rmSync(path.dirname(iconset), { recursive: true, force: true });
   console.log('saved build/icon.png and build/icon.icns');
   app.quit();
 });

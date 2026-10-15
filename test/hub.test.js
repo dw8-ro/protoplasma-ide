@@ -258,7 +258,9 @@ test('pushing to main or force-pushing needs a person to confirm', async () => {
     'git -C ../app push origin main', 'echo $(git push origin main)', 'git push \\\n  origin main',
     'git -C "path with spaces" push origin main', "git -c user.name='a b' push origin main", 'GIT_DIR=/srv/git git push origin main',
     'sudo -u git git push origin main', 'git submodule foreach git push origin main', 'out=$(git push origin main)', 'git push 2>&1 origin main',
-    'bash -lc "git push origin main"', "zsh -ic 'git push origin main'", 'git checkout main && git push']) {
+    'bash -lc "git push origin main"', "zsh -ic 'git push origin main'", 'git checkout main && git push',
+    // A here-string or a shift isn't a heredoc, so the lines after it are still read.
+    'cat <<<EOF\ngit push origin main', 'echo $((1<<2))\ngit push origin main', '(( n = 1 << 2 ))\ngit push origin main']) {
     assert.match((await push(onBranch, command))?.permissionDecisionReason || '', /straight to main/, command);
   }
   for (const command of ['git push', 'git push -u origin session/fix', 'git push origin --delete session/old', 'git status', 'echo push main',

@@ -4,7 +4,6 @@
 // Protocol: see the README.
 const http = require('http');
 const fs = require('fs');
-const os = require('os');
 const path = require('path');
 const crypto = require('crypto');
 const { WebSocketServer } = require('ws');
@@ -29,10 +28,6 @@ const PROTECTED_BRANCHES = ['main', 'master'];
 const MAX_BUFFERED = 16 * 1024 * 1024; // unsent bytes to one viewer before it's dropped as too slow
 const MAX_CONTEXT_FILES = 15; // per teammate, in an agent's prompt context
 const STATE_REFRESH_MS = 30_000; // rebroadcast at least this often so "last active" times stay fresh
-
-/** This machine's LAN IPv4 addresses. */
-const lanAddresses = () => Object.values(os.networkInterfaces()).flat()
-  .filter(a => a.family === 'IPv4' && !a.internal).map(a => a.address);
 
 /** Resolves a GitHub token to its user. Only reads the public profile, so a token with no scopes works. */
 async function githubUser(token) {
@@ -213,6 +208,10 @@ function startHub({ port = 7681, host = '0.0.0.0', dataDir, owners, verifyUser =
         if (c === '"' || c === "'" || c === '`') { quote = c; cur += c; continue; }
         if (c === '#' && (i === 0 || /\s/.test(line[i - 1]))) break;
         if (c === '|' || c === ';' || c === '&') { parts.push(cur); cur = ''; continue; }
+        // Not heredocs: a here-string (<<<word), and a shift inside arithmetic ($((1<<2)), (( n << 2 ))), kept as is.
+        if (line.startsWith('<<<', i)) { cur += '<<<'; i += 2; continue; }
+        const math = line.startsWith('((', i) && line.indexOf('))', i + 2);
+        if (math > 0) { cur += line.slice(i, math + 2); i = math + 1; continue; }
         const doc = c === '<' && /^<<-?\s*(['"]?)(\w+)\1/.exec(line.slice(i));
         if (doc) { heredoc = doc[2]; i += doc[0].length - 1; cur += ' '; continue; }
         cur += c;
@@ -784,7 +783,7 @@ function startHub({ port = 7681, host = '0.0.0.0', dataDir, owners, verifyUser =
   });
 }
 
-module.exports = { startHub, githubUser, lanAddresses };
+module.exports = { startHub, githubUser };
 
 // Standalone: PORT, DATA_DIR, PROTO_OWNERS (comma-separated GitHub logins allowed to create teams).
 if (require.main === module) {

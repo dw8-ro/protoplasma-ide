@@ -1,0 +1,20 @@
+const { js, click, clickText, type, key, menu, until, check, run, sleep } = require('./drive');
+const lastLines = (who, id) => js(who, `const b = terms.get(${JSON.stringify(id)})?.term.buffer.active; let s = ''; for (let i = 0; i < b.length; i++) s += b.getLine(i)?.translateToString(true) + '\\n'; return s.trim().split('\\n').slice(-8).join('\\n');`);
+run('8. The push guard, as a Codex agent on a shared team meets it', async () => {
+  await js('david', `go('sessions'); openNewAgent('Guard check'); return 1`);
+  await until('david', `$('#agent').open`, 3000);
+  await click('david', 'label:has(input[name=cmd][value=codex])').catch(() => js('david', `$('input[name=cmd][value=codex]').click(); return 1`));
+  await click('david', 'label:has(input[name=source][value=repo])');
+  await js('david', `$('#repo').value = ''; return 1`); await click('david', '#repo'); await type('david', 'david/playground');
+  await click('david', '#startAgent');
+  check('David starts a Codex agent in a repo session', await until('david', `[...local.values()].some(l => l.cmd === 'codex')`, 15000), await js('david', `return { err: $('#agentErr').textContent, dialogs: window.__dialogs }`));
+  const lane = await js('david', `return [...local].find(([, l]) => l.cmd === 'codex')?.[0]`);
+  const say = async cmd => { await js('david', `terms.get(${JSON.stringify(lane)}).term.focus(); return 1`); await type('david', cmd); await key('david', 'enter'); await sleep(2500); return lastLines('david', lane); };
+  await say(`echo guard > guard.txt && git add guard.txt && git commit -qm guard`);
+  let out = await say('git push origin HEAD:main');
+  check('pushing to main is stopped, with a reason', /don't push straight to main/.test(out), out.slice(-300));
+  out = await say('git push origin :session/login-page');
+  check('deleting a branch on the remote is stopped', /would delete session\/login-page/.test(out), out.slice(-300));
+  out = await say('git push -u origin HEAD');
+  check('pushing its own session branch works', /->|new branch|Everything up-to-date|set up to track/i.test(out) && !/Protoplasma:/.test(out.split('git push -u origin HEAD').pop()), out.slice(-300));
+});

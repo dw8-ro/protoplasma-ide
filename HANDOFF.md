@@ -8,19 +8,18 @@ has been released yet.
 
 - **Released:** v0.4.2 is published on GitHub Releases (`Protoplasma-0.4.2-mac-arm64.zip`, signed with the project's
   own certificate). Installed copies (0.2.0 and later) see it within about 6 hours and show an update bar, but only where the user's `gh` is signed in with access to the private repo (see N12).
-- **Since v0.4.2 (15 Oct 2026):**
-  - Pushed: N1–N7, N9, N10 and D2 (commits `f8c14b2` to `911a2fc`).
-  - Local only, waiting for David's OK to push: D1, D3, D4/D5 and D6–D8 (`4fa7426` to `18278df`). D1 and D4 change
-    `src/hub.js`, so pushing them redeploys the hosted hub. D1 then records people's GitHub ids in its `teams.json`
-    as they sign in.
-- **Hub:** the hosted hub on Railway (`https://hub-production-fba9.up.railway.app`) runs `911a2fc` (D2: it issues
-  passes, at `/passes`, and registers Mac hubs, at `/hubs`). Its signing key and registrations are in `/data`. Railway
+- **Since v0.4.2 (15 Oct 2026):** N1–N7, N9, N10 and D1–D8 are on `main` and pushed (`f8c14b2` to `17f747e`), but not
+  released: installed copies don't have any of it yet.
+- **Hub:** the hosted hub on Railway (`https://hub-production-fba9.up.railway.app`) runs `17f747e`, deployed
+  successfully on 15 Oct 2026. It has D1 (it records people's GitHub ids in its `teams.json` as they sign in), D2 (it
+  issues passes, at `/passes`, and registers Mac hubs, at `/hubs`) and D4. Its signing key and registrations are in
+  `/data`. Railway
   redeploys a push to `main` only when it touches `src/hub.js`, `src/shared.js` or `Dockerfile` (its watch patterns);
   other pushes show as SKIPPED.
-- **Checks on `18278df`:**
-  - `npm test`: 69 of 69 pass.
+- **Checks on `17f747e`:**
+  - `npm test`: 69 of 69 pass, and GitHub CI passed.
   - `npm run e2e`: 126 of 126 checks pass.
-  - GitHub CI passed on `911a2fc`. `npm run dist` hasn't been run since v0.4.2; no packaging files changed.
+  - `npm run dist` hasn't been run since v0.4.2; no packaging files changed.
 - **Compatibility:** teams hosted on a Mac now use TLS and passes (D2), so a Mac on 0.4.2 or older and one on this code
   can't reach each other's Mac-hosted teams. Online teams are unaffected.
 - **Repo:** `dw8-ro/protoplasma-ide`, private. It must stay private until David says otherwise.
@@ -116,7 +115,18 @@ new `look` straight away, so presence is right again within one round trip.
 - Commits end with `Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>`.
 
 ## Suggested next steps
-0. Push `4fa7426`–`18278df` once David says so, then check the hosted hub redeployed (`/` and `/passes/key` answer).
-1. N11 (README images) and N12 (depends on whether the repo goes public, David's call) are still open.
-2. Fill the test gaps above, starting with the hub's live side.
-3. Release with `npm run release` (see AGENTS.md). It refuses unless `main` is pushed and equals `origin/main`. Pushing hub code also redeploys the hosted hub.
+1. **Release.** Nothing since v0.4.2 reaches installed copies until there's a release. Run `npm run dist` and check the
+   asar list first. Then make it a minor version (`npm version minor && git push --follow-tags`, 0.5.0) rather than
+   `npm run release`: Mac-hosted teams changed protocol (D2), so 0.4.x and 0.5 can't share one, and the release notes
+   should say everyone on such a team updates together. Needs David's OK.
+2. **Try a Mac-hosted team between two copies of the app.** Each piece is tested: lan.test.js covers passes, pinning
+   and owner checks against a TLS hub, and e2e covers your own This Mac team. The whole path hasn't been run together:
+   a second copy finding the team over Bonjour, getting a pass from the real online hub, and an agent joining. macOS
+   asks to allow local network access the first time (David answers it). With a real teammate, this needs their GitHub
+   username (Max is a placeholder).
+3. **N12 / repo visibility** (David's call): while the repo is private, teammates need `gh` signed in with access to
+   install and update.
+4. **N11:** regenerate the README images (`npm run screenshot`, `npm run demo`).
+5. **Test gaps** (C107, C109 to C111, above).
+6. **Feature gap:** Codex and OpenCode agents get no hooks (lane.js TODO), so no overlap warnings or file notes for
+   them.

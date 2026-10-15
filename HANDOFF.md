@@ -77,10 +77,10 @@ is the one proposed to David; he hasn't chosen yet.
 - **C157:** after switching theme, terminal output already on screen keeps the old colours until it's redrawn.
 - **Part of C151:** there's no automatic retry when Monaco fails to load, because its AMD loader caches the failure. The
   code view now explains the failure instead.
-- **Test gaps** (C107, C109 to C111): the key cases were added, but much of the live hub isn't covered yet. Examples:
-  hello validation, size clamps, the slow-viewer drop, the file-relay timeout, PermissionRequest/Stop hooks, and the
-  15-file cap. So are `files.js` list/search/watch, and `updates.js` latestRelease/stage/sameSigner/swap.sh. The full
-  lists are in those items.
+- **Test gaps** (C107, C109 to C111): most are now covered (hub-live.test.js: hello validation, size clamps, hook
+  states, the 15-file cap, the stopped-agents cap; files.test.js: list and search; updates.test.js: no access vs no
+  releases). Still not: the slow-viewer drop, the file-relay timeout (10 s), `files.js` watch, and `updates.js`
+  stage/sameSigner/swap.sh (they need a signed app to swap).
 
 ### Found while writing this handoff (after the recheck)
 Mapping the code for AGENTS.md turned up these, and a second pass checked each one. Rows marked **Fixed** are done (see `git log`). They're all

@@ -107,3 +107,33 @@ test('a renamed file shows once, under its new name', async () => {
   assert.deepEqual((await files.status(max, env)).changes, [{ path: 'moved.js', state: 'R' }]);
   git(max, 'mv', 'moved.js', 'max.js');
 });
+
+test('the Explorer lists tracked and new files, not ignored ones; a plain folder skips node_modules', async () => {
+  const repo = path.join(tmp, 'listing');
+  git(tmp, 'init', '-q', '-b', 'main', repo);
+  fs.mkdirSync(path.join(repo, 'src'));
+  fs.writeFileSync(path.join(repo, 'src', 'a.js'), 'a\n');
+  fs.writeFileSync(path.join(repo, '.gitignore'), 'secret.env\n');
+  git(repo, 'add', '.');
+  git(repo, 'commit', '-qm', 'first');
+  fs.writeFileSync(path.join(repo, 'new.js'), 'n\n');
+  fs.writeFileSync(path.join(repo, 'secret.env'), 'TOKEN=x\n');
+  const listed = await files.list(repo, env);
+  assert.deepEqual(listed, ['new.js', '.gitignore', 'src/a.js'], 'new files first');
+  const plain = path.join(tmp, 'plain');
+  fs.mkdirSync(path.join(plain, 'node_modules', 'dep'), { recursive: true });
+  fs.writeFileSync(path.join(plain, 'node_modules', 'dep', 'i.js'), '');
+  fs.writeFileSync(path.join(plain, 'index.js'), '');
+  assert.deepEqual(await files.list(plain, env), ['index.js']);
+});
+
+test('Find in files matches any case, keeps CRLF files and odd names whole', async () => {
+  const repo = path.join(tmp, 'finding');
+  git(tmp, 'init', '-q', '-b', 'main', repo);
+  fs.writeFileSync(path.join(repo, 'windows.txt'), 'first\r\nHello World\r\n');
+  fs.writeFileSync(path.join(repo, 'a:12:b.txt'), 'hello there\n');
+  git(repo, 'add', '.');
+  const hits = (await files.search(repo, 'HELLO', env)).sort((x, y) => x.path.localeCompare(y.path));
+  assert.deepEqual(hits, [{ path: 'a:12:b.txt', line: 1, text: 'hello there' }, { path: 'windows.txt', line: 2, text: 'Hello World' }]);
+  assert.deepEqual(await files.search(repo, 'nowhere-to-be-found', env), []);
+});

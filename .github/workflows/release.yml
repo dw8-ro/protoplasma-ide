@@ -38,4 +38,7 @@ jobs:
       - name: Publish
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "$GITHUB_REF_NAME" Protoplasma-*-mac-arm64.zip --title "Protoplasma ${GITHUB_REF_NAME#v}" --generate-notes
+        # docs/release-notes/<version>.md, when there is one, goes above the generated list of changes.
+        run: |
+          NOTES="docs/release-notes/${GITHUB_REF_NAME#v}.md"
+          gh release create "$GITHUB_REF_NAME" Protoplasma-*-mac-arm64.zip --title "Protoplasma ${GITHUB_REF_NAME#v}" --generate-notes ${NOTES:+$( [ -f "$NOTES" ] && echo "--notes-file $NOTES")}

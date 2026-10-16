@@ -586,6 +586,8 @@ async function resumeAgent() {
 // Only agents this Mac can run are offered; the rest are shown as not installed.
 const refreshAgents = () => proto.agents().then(list => { agents = list; syncAgents(); });
 const isInstalled = cmd => agents.find(a => a.cmd === cmd)?.installed !== false;
+// The agent Settings names, or one this Mac has when it hasn't got that one (someone with only Codex, say).
+const defaultAgent = () => (isInstalled(prefs.agent) ? prefs.agent : agents.find(a => a.installed)?.cmd || prefs.agent);
 function syncAgents() {
   for (const input of document.querySelectorAll('input[name=cmd]')) {
     input.disabled = !isInstalled(input.value);
@@ -616,7 +618,7 @@ async function openNewAgent(session) {
   sourcePicked = false;
   const known = session && showSource(session); // an existing session keeps the source it already uses
   $('#agentErr').textContent = '';
-  $(`input[name=cmd][value=${prefs.agent}]`).checked = true;
+  $(`input[name=cmd][value=${defaultAgent()}]`).checked = true;
   $('#open').checked = prefs.open;
   $('#repoHint').textContent = prefs.sessionBranches
     ? 'The session gets its own branch (session/…) and folder under ~/Protoplasma, so main only changes through a push or pull request.'
@@ -1810,7 +1812,7 @@ const runMenu = action => {
   if (!currentTeam || $('#start').open) return; // the team picker is up: nothing acts on the team behind it
   if (action === 'switcher') return openSwitcher();
   if (action === 'new-agent') openNewAgent(); // a new session; ⇧⌘L adds an agent to the open one
-  if (action === 'add-agent') view === 'session' ? addAgent(prefs.agent) : openNewAgent();
+  if (action === 'add-agent') view === 'session' ? addAgent(defaultAgent()) : openNewAgent();
   if (action === 'panel' && view === 'session') code.on ? toggleDock() : $('#panelToggle').click();
   if (action === 'code' && view === 'session') showCode(!code.on);
   if (action === 'go-to-file') goToFile();

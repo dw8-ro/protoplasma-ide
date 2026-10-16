@@ -773,7 +773,7 @@ $('#codeBanner').onclick = async e => {
 $('.code-keys').onclick = e => {
   const key = e.target.closest('[data-code-key]')?.dataset.codeKey;
   if (key === 'file') goToFile();
-  if (key === 'agent') addAgent(prefs.agent);
+  if (key === 'agent') addAgent(defaultAgent());
   if (key === 'panel') toggleDock();
 };
 $('#dockTabs').onclick = e => {

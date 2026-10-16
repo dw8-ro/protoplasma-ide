@@ -152,7 +152,9 @@ function isPinned(hostname, pem) {
 
 async function hubApi(s, url, method, route, body) {
   const { token, ca } = await access(s, url);
-  const res = await new Promise((resolve, reject) => {
+  // A kept-alive connection the hub has just closed (this Mac's hub moving to the network at an invite closes its idle
+  // ones) fails at once; the request never reached the hub, so it's sent again on a new connection.
+  const send = () => new Promise((resolve, reject) => {
     const target = new URL(url + route);
     // The online hub may be waking up, so it gets longer than a hub on this network.
     const req = (target.protocol === 'https:' ? https : http).request(target, { method, signal: AbortSignal.timeout(url === onlineHub ? 15_000 : 5000),
@@ -162,8 +164,9 @@ async function hubApi(s, url, method, route, body) {
       r.setEncoding('utf8').on('data', d => { if ((text += d).length > 5e6) req.destroy(new Error('too long')); })
         .on('end', () => resolve({ status: r.statusCode, text })).on('error', reject);
     });
-    req.on('error', reject).end(body && JSON.stringify(body));
-  }).catch(() => {
+    req.on('error', e => reject(Object.assign(e, { retry: req.reusedSocket && e.code === 'ECONNRESET' }))).end(body && JSON.stringify(body));
+  });
+  const res = await send().catch(e => (e.retry ? send() : Promise.reject(e))).catch(() => {
     pins.delete(url); // a hub that came back with a new certificate is read again next time
     throw unreachable();
   });

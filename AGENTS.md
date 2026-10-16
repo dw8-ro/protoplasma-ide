@@ -19,7 +19,7 @@ Function names below are stable. Line numbers drift, so search by name.
 |---|---|---|
 | `npm install` | Installs dependencies (postinstall makes node-pty's `spawn-helper` executable) | Node 24 |
 | `npm start` | Runs the app from source. Updates are off in source runs. | |
-| `npm test` | 78 integration tests in `test/*.test.js`: real hub, real lanes, real git. About a minute. | git ≥ 2.28, macOS. No network or Electron needed. |
+| `npm test` | 79 integration tests in `test/*.test.js`: real hub, real lanes, real git. About a minute. | git ≥ 2.28, macOS. No network or Electron needed. |
 | `npm run e2e` | Drives the real Electron app through every main flow and prints `PASS`/`FAIL` per step, ending with `N/M passed`. 15-minute cap. | The `claude` CLI on the login-shell PATH and a GUI session. One step needs `gh auth status` to succeed (online). |
 | `npm run dist` | Packages `dist/Protoplasma-darwin-arm64/Protoplasma.app`, unsigned. | |
 | `npm run playground` | Two app copies (David on port 7801, Max on 7802) on a local hub and repo, each with an HTTP control API | |
@@ -57,7 +57,7 @@ app/panes.js      pane mode (~90)
 app/index.html    CSP, all CSS (tokens and themes), icon sprite, all markup and dialogs (~1040)
 app/config.json   githubClientId (OAuth app, device flow), onlineHub (the Railway URL)
 scripts/          e2e.js, playground.js + playground-app.js, stage.js, screenshot.js, demo.js, sign.sh, icon.js
-test/             hub.test.js (39), hub-live.test.js (5), workspace.test.js (13), files.test.js (10), lan.test.js (6),
+test/             hub.test.js (40), hub-live.test.js (5), workspace.test.js (13), files.test.js (10), lan.test.js (6),
                   identity.test.js (2), updates.test.js (3)
 .github/workflows ci.yml (npm test on every push to main and PR), package.yml (dist check), release.yml (tag → release)
 Dockerfile        the hosted hub image (only src/hub.js + src/shared.js + ws)
@@ -211,8 +211,8 @@ docs/             README images, recheck/ (review records)
   - `machine` is a hash of the hostname.
   - `roots` lists the repo root both as git reports it (symlinks resolved) and as seen from the working folder.
 - **Messages:** `out` is batched every 16 ms; `size`; `git` only when it changed; `status`.
-- **Status:** "needs you" while the folder-trust prompt shows (`TRUST_PROMPT` plus both answers in `ANSWERS`, within the
-  last 400 characters). For codex and opencode, working or idle is guessed from output: output more than 400 ms after
+- **Status:** "needs you" while the folder-trust prompt shows (`TRUST_PROMPT` plus its answers in `ANSWERS`, within the
+  last 400 characters: Yes and No for Claude Code, "Trust and continue" for Codex). For codex and opencode, working or idle is guessed from output: output more than 400 ms after
   input means working, and 3 s of quiet means idle. Input clears "needs you", but the terminal's own escape-sequence
   replies don't count.
 - **Connection:**
@@ -524,7 +524,8 @@ docs/             README images, recheck/ (review records)
     - that the tag equals `v<package.json version>`.
 
     It then runs `npm ci`, `npm test` and `npm run dist`. `scripts/sign.sh` signs with the certificate, `ditto` makes
-    the zip, and `gh release create` publishes it.
+    the zip, and `gh release create` publishes it. Its notes are generated from the commits, with
+    `docs/release-notes/<version>.md` above them when that file exists: write it before tagging.
   - **Installed copies** check 5 s after launch, every 6 hours, and from the menu's "Check for Updates…".
 - **Signing:** releases are signed with a self-signed certificate, "Protoplasma Release Signing" (valid to 2036).
   - **The only copies:** `~/.config/protoplasma-signing/` on David's Mac (`release.p12`, the password, `cert.pem`), and

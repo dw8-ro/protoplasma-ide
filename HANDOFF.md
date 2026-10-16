@@ -1,4 +1,4 @@
-# Handoff: Protoplasma IDE, 15 October 2026 (evening)
+# Handoff: Protoplasma IDE, 16 October 2026
 
 Read this first in a new session, then [AGENTS.md](AGENTS.md) for how the code fits together.
 
@@ -13,6 +13,16 @@ Read this first in a new session, then [AGENTS.md](AGENTS.md) for how the code f
   - **F1 matters most:** in 0.4.x and 0.5.0, Quit, Update now and logging out close the window but leave the app
     running, so it can't be reopened. Users on those versions finish an update by force-quitting it (then it
     installs). **Release 0.5.1 soon**, with that in its notes.
+- **0.5.1 prepared (16 Oct 2026), for Max, who uses Codex:** checked against a real Codex CLI (0.163) in a cloud
+  session. Three fixes: Codex's "Trust this folder?" ("Trust and continue" / "Back to Agent Command Center") now shows
+  as needs you (`ANSWERS` in lane.js, test in hub.test.js); Add agent falls back to an installed agent when the
+  preferred one (Claude Code by default) isn't installed (`defaultAgent` in renderer.js); and `hubApi` retries once on
+  a reset kept-alive connection, which this Mac's hub closes when it moves to the network at an invite (lan.test.js
+  caught it on Linux). The README installs with `curl` (the repo is going public), and release.yml puts
+  `docs/release-notes/<version>.md` above the generated notes; 0.5.1's carries the F1 Force Quit advice.
+  - Checked on Linux only: `npm test` 79 of 79. e2e and the customer simulation need a Mac and weren't rerun.
+  - Codex passes `PROTO_SHARED_TEAM` through to its commands (it only filters names with KEY, SECRET or TOKEN), so the
+    pre-push guard works for it. `codex resume --last` still exists.
 - **Hub:** the hosted hub on Railway (`https://hub-production-fba9.up.railway.app`) runs `17f747e`: D1 ids, D2 passes
   (`/passes`, `/hubs`) and D4. Nothing since then touches `src/hub.js`, so pushing doesn't redeploy it.
 - **Checks on `c72f427`:**

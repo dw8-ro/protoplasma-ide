@@ -21,10 +21,11 @@ const MAX_CHANGED = 200; // uncommitted paths reported to the hub
 const NO_HOOKS = ['codex', 'opencode'];
 const QUIET_MS = 3000;
 const ECHO_MS = 400;
-// A CLI asking whether to trust its folder (Claude Code does in every new session folder). No hook fires for it.
-// The question and both answers (Yes and No) on screen together, so output that only mentions the phrase doesn't count.
+// A CLI asking whether to trust its folder (Claude Code and Codex do in every new session folder). No hook fires for it.
+// The question and its answers on screen together, so output that only mentions the phrase doesn't count: Yes and No
+// (Claude Code), or Codex's "Trust and continue" (its other answer is "Back to Agent Command Center").
 const TRUST_PROMPT = /trust\s*(?:this\s*folder|the\s*files\s*in\s*this\s*folder|the\s*contents\s*of\s*this\s*directory)/i;
-const ANSWERS = /\bYes\b[\s\S]*\bNo\b|\bNo\b[\s\S]*\bYes\b/;
+const ANSWERS = /\bYes\b[\s\S]*\bNo\b|\bNo\b[\s\S]*\bYes\b|Trust\s*and\s*continue/;
 const stripAnsi = s => s.replace(/\x1b\[[0-?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b[@-Z\\-_]/g, '');
 
 // Per-run HTTP hooks for Claude Code. --settings merges with the user's own settings rather than replacing them.

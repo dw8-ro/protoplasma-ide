@@ -114,15 +114,15 @@ Work then reaches `main` the usual way, through a pull request. These layers mak
 
 ## Install
 
-You'll need a Mac with Apple silicon and at least one of [Claude Code](https://code.claude.com), Codex or OpenCode. The [GitHub CLI](https://cli.github.com) powers the repo list, pull requests and issues; the app runs without it, and on first run it checks for both and tells you what's missing. The one-line install below does need it, signed in (`gh auth login`) with access to this repo.
+You'll need a Mac with Apple silicon and at least one of [Claude Code](https://code.claude.com), Codex or OpenCode. The [GitHub CLI](https://cli.github.com) powers the repo list, pull requests and issues; the app runs without it, and on first run it checks for both and tells you what's missing.
 
 ```bash
-gh api repos/dw8-ro/protoplasma-ide/contents/install.sh -H "Accept: application/vnd.github.raw" | sh
+curl -fsSL https://raw.githubusercontent.com/dw8-ro/protoplasma-ide/main/install.sh | sh
 ```
 
 That installs the latest release into Applications, with no "can't be verified" warning (files fetched from Terminal aren't quarantined). You can also download the zip from [Releases](https://github.com/dw8-ro/protoplasma-ide/releases); the first time you open it, macOS asks you to allow it under System Settings → Privacy & Security → Open Anyway.
 
-**Updates install themselves.** The app checks GitHub every few hours and shows a bar when a new version is out: Update now, and it relaunches on the new one. While the repo is private, this needs the GitHub CLI signed in with access to it. Releases are signed with the project's own certificate (no Apple account involved), so macOS knows each version is the same app and your Keychain and privacy permissions carry over.
+**Updates install themselves.** The app checks GitHub every few hours and shows a bar when a new version is out: Update now, and it relaunches on the new one. Releases are signed with the project's own certificate (no Apple account involved), so macOS knows each version is the same app and your Keychain and privacy permissions carry over.
 
 ### From source
 

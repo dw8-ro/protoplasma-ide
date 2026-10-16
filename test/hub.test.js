@@ -486,6 +486,20 @@ test('an agent waiting on its folder trust prompt needs you until someone answer
   await gone;
 });
 
+test('Codex asking to trust its folder needs you too (its answers aren\'t Yes and No)', async () => {
+  const asking = nextState(lanes => lanes.some(l => l.session === 'codex-trust' && l.status === 'needs you'));
+  // Codex 0.163's screen, as the lane sees it once escape sequences are gone (cursor moves leave no spaces).
+  const lane = startLaneHere({ hub: url, team: team.id, token: 'tok-alice', session: 'codex-trust', cmd: 'sh',
+    args: ['-c', 'printf "Folderaccess\\nTrustthisfolder?Codexcanread,edit,andrunfileshere.\\n› 1. Trust and continue\\n  2. Back to Agent Command Center\\n"; cat'] });
+  try {
+    await Promise.race([asking, sleep(5000).then(() => { throw new Error('never needed you'); })]);
+  } finally {
+    const gone = nextState(lanes => !lanes.some(l => l.id === lane.id));
+    lane.term.kill();
+    await gone;
+  }
+});
+
 test('a reconnecting agent keeps the status its hooks gave it, after its trust prompt was answered', async () => {
   const asking = nextState(lanes => lanes.some(l => l.session === 'reconnect' && l.status === 'needs you'));
   const lane = startLaneHere({ hub: url, team: team.id, token: 'tok-alice', session: 'reconnect', cmd: 'sh',

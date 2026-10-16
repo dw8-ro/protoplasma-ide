@@ -84,8 +84,8 @@ $('#paneGrid').onclick = e => {
   }
   if (panePick !== undefined) { panes[Number(panePick)] = name; savePanes(); return render(); }
   if (paneAdd) {
-    const cmd = isInstalled(prefs.agent) ? prefs.agent : agents.find(a => a.installed)?.cmd;
-    if (!cmd) return alert('No agent CLI is installed on this Mac. Install Claude Code, Codex or OpenCode first.');
+    const cmd = defaultAgent();
+    if (!isInstalled(cmd)) return alert('No agent CLI is installed on this Mac. Install Claude Code, Codex or OpenCode first.');
     current = paneAdd;
     if (!sourceFor(paneAdd)) backToPanes = true; // the New session form asks for its folder first
     return addAgent(cmd).then(() => { if (!$('#agent').open) openPanes(panes); });

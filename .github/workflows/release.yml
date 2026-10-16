@@ -33,7 +33,9 @@ jobs:
           TAG="v$(node -p "require('./package.json').version")"
           if [ "$GITHUB_EVENT_NAME" = workflow_dispatch ]; then
             [ "$GITHUB_REF" = refs/heads/main ] || { echo "Run it on main."; exit 1; }
-            if git ls-remote --exit-code --tags origin "refs/tags/$TAG" >/dev/null; then echo "$TAG is already tagged: bump the version on main first."; exit 1; fi
+            found=0; git ls-remote --exit-code --tags origin "refs/tags/$TAG" >/dev/null || found=$? # 2: no such tag
+            if [ "$found" = 0 ]; then echo "$TAG is already tagged: bump the version on main first."; exit 1; fi
+            [ "$found" = 2 ] || { echo "Couldn't check whether $TAG is already tagged."; exit 1; }
           else
             [ "$GITHUB_REF_NAME" = "$TAG" ] || { echo "The tag $GITHUB_REF_NAME doesn't match package.json ($TAG)."; exit 1; }
           fi

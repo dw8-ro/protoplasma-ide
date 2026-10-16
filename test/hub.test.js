@@ -55,9 +55,13 @@ before(async () => {
 
   watcher = await connectWatcher('tok-alice', team.id, m => { if (m.t === 'out') outputs.push(m); });
   const ready = nextState(lanes => lanes.length === 2);
+  // A lane's first git report (about 5 s in) drops hook edits git doesn't see, like the made-up src/x.ts below; waiting
+  // for it here keeps it from landing between two tests that use those edits.
+  const reported = nextState(lanes => lanes.length === 2 && lanes.every(l => l.git));
   startLane('alice', '--open', ...printSecretThenCat); // prints before it can reach the hub
   startLane('bob', ...printSecretThenCat);
   const lanes = await ready;
+  await reported;
   alice = lanes.find(l => l.login === 'alice');
   bob = lanes.find(l => l.login === 'bob');
   while (!hookSecret(alice) || !hookSecret(bob)) await sleep(20);
@@ -98,7 +102,7 @@ test('teammates can type into open agents only', async () => {
   assert.match(outputOf(alice), /ping/);
   assert.doesNotMatch(outputOf(bob), /nope/);
   const now = nextState(() => true);
-  watcher.send(JSON.stringify({ t: 'look', session: null })); // any state will do
+  watcher.send(JSON.stringify({ t: 'look', session: 'typing' })); // any state will do; only a change of session sends one
   assert.equal((await now).find(l => l.id === alice.id).typedBy, '', 'typing into your own agent isn\'t worth a note');
 
   // Bob types into Alice's agent: she's told who.
@@ -128,6 +132,7 @@ test('asks before an agent edits a file a teammate already edited', async () => 
 });
 
 test('tells each agent what its teammates are doing', async () => {
+  await sleep(6000);
   const { hookSpecificOutput } = await (await postHook(bob, { hook_event_name: 'UserPromptSubmit', prompt: 'hi' })).json();
   assert.match(hookSpecificOutput.additionalContext, /Alice.*src\/x\.ts/);
 });

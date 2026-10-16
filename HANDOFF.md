@@ -20,6 +20,8 @@ Read this first in a new session, then [AGENTS.md](AGENTS.md) for how the code f
   a reset kept-alive connection, which this Mac's hub closes when it moves to the network at an invite (lan.test.js
   caught it on Linux). The README installs with `curl` (the repo is going public), and release.yml puts
   `docs/release-notes/<version>.md` above the generated notes; 0.5.1's carries the F1 Force Quit advice.
+  - CI on the 0.5.1 commit failed once: two hub tests leaned on when the agents' first git report (about 5 s in) landed.
+    The setup now waits for it, and the typing test sends a presence change that always gets a state back.
   - Checked on Linux only: `npm test` 79 of 79. e2e and the customer simulation need a Mac and weren't rerun.
   - Codex passes `PROTO_SHARED_TEAM` through to its commands (it only filters names with KEY, SECRET or TOKEN), so the
     pre-push guard works for it. `codex resume --last` still exists.

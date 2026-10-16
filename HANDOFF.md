@@ -4,10 +4,12 @@ Read this first in a new session, then [AGENTS.md](AGENTS.md) for how the code f
 
 ## Where things stand
 
-- **Released: v0.5.1** (16 Oct 2026, commit `7e96090`): signed, `Protoplasma-0.5.1-mac-arm64.zip`, notes from
+- **Released: v0.5.2** (16 Oct 2026, commit `0445df4`): the Claude hook relay for hubs on a Mac (below) and the new
+  README. Released from the Actions page like 0.5.1.
+- **Before that: v0.5.1** (16 Oct 2026, commit `7e96090`): signed, `Protoplasma-0.5.1-mac-arm64.zip`, notes from
   `docs/release-notes/0.5.1.md` (the F1 Force Quit advice first). Made with Actions → Release → Run workflow, because the
   cloud session can't push tags; the release created the tag. Installed copies see it within about 6 hours.
-- **Before that: v0.5.0** (commit `2779b8b`), with N1–N10 and D1–D8. It's signed with the project's certificate, and its
+- **v0.5.0** (commit `2779b8b`), with N1–N10 and D1–D8. It's signed with the project's certificate, and its
   release notes say Mac-hosted teams need everyone on 0.5. Installed copies see it within about 6 hours, where the
   user's `gh` can see the private repo.
 - **After 0.5.0 (on `main` locally, not pushed or released yet):** a customer simulation of 0.5.0

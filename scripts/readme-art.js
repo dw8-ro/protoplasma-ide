@@ -1,5 +1,5 @@
 // Renders the README images in docs/readme/ from the screenshots in docs/ (npm run screenshot makes those): each page
-// in scripts/readme-art/ in GitHub's dark and light themes, at 1.3x its 1280x720 layout, and the diagram as SVG.
+// in scripts/readme-art/ in GitHub's dark and light themes, at 1.3x its 1280-wide layout, and the diagram as SVG.
 // Usage: npm run readme-art
 const fs = require('fs');
 const path = require('path');
@@ -8,6 +8,7 @@ const diagram = require('./readme-art/diagram');
 
 const PAGES = ['hero', 'agents', 'code', 'sessions', 'overlap', 'start'];
 const ZOOM = 1.3;
+const HEIGHT = { hero: 820 }; // the hero is taller than the 720 the rest use, so its 16:10 window can be bigger
 const out = path.join(__dirname, '..', 'docs', 'readme');
 
 app.whenReady().then(async () => {
@@ -22,6 +23,7 @@ app.whenReady().then(async () => {
     win.webContents.invalidate();
   });
   for (const page of PAGES) {
+    win.setContentSize(1280 * ZOOM, Math.round((HEIGHT[page] || 720) * ZOOM));
     for (const theme of ['dark', 'light']) {
       await win.loadFile(path.join(__dirname, 'readme-art', `${page}.html`), { query: { theme, zoom: String(ZOOM) } });
       // Every crop's screenshot decoded and the font in place, then painted, before the picture is taken.

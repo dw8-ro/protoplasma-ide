@@ -1,4 +1,4 @@
-// Shared by the README image pages. ?theme=dark|light picks the colours; ?zoom= renders the 1280x720 layout larger.
+// Shared by the README image pages. ?theme=dark|light picks the colours; ?zoom= renders the 1280-wide layout larger.
 const query = new URLSearchParams(location.search);
 document.documentElement.dataset.theme = query.get('theme') === 'light' ? 'light' : 'dark';
 document.documentElement.style.zoom = query.get('zoom') || 1;

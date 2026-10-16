@@ -143,6 +143,35 @@ async function access(s, url) {
   return { token: pass, ca: pin.pem, owners };
 }
 
+/**
+ * Where Claude Code sends its hooks when its hub is on a Mac: an http address on 127.0.0.1 that passes each hook on to
+ * the hub, pinned to the certificate that hub presented. Claude Code can't pin a self-signed certificate itself, so
+ * without this every hook to such a hub fails (and fails open). `hubFor(laneId)` resolves to { url, ca } for one of this
+ * Mac's agents, or to nothing. The relay adds no credentials: a hook still carries only its own agent's secret.
+ */
+let relaying = null, relayTo = () => null;
+function hookRelay(hubFor) {
+  relayTo = hubFor;
+  relaying ??= new Promise((resolve, reject) => {
+    const server = http.createServer(async (req, res) => {
+      const id = /^\/hooks\/([\w-]{1,64})$/.exec(req.url)?.[1];
+      const to = id && req.method === 'POST' ? await Promise.resolve(relayTo(id)).catch(() => null) : null;
+      if (!to) return res.writeHead(404).end();
+      // Claude Code waits 3 s for a hook, so the hub gets a little less.
+      const out = https.request(`${to.url}/hooks/${id}`, { method: 'POST', ca: to.ca, checkServerIdentity: () => undefined,
+        signal: AbortSignal.timeout(2500), headers: { authorization: String(req.headers.authorization || ''), 'content-type': 'application/json' } }, r => {
+        res.writeHead(r.statusCode, { 'content-type': r.headers['content-type'] || 'application/json' });
+        r.pipe(res);
+      });
+      out.on('error', () => (res.headersSent ? res.destroy() : res.writeHead(502).end()));
+      req.pipe(out);
+    });
+    server.on('error', reject).listen(0, '127.0.0.1', () => resolve(`http://127.0.0.1:${server.address().port}`));
+    server.unref();
+  });
+  return relaying;
+}
+
 /** Whether `pem` is the certificate of a hub this app signs in to at `hostname`. Chromium asks, for the hub socket. */
 function isPinned(hostname, pem) {
   let fp;
@@ -252,4 +281,4 @@ const stopAnnouncing = () => new Promise(resolve => {
   setTimeout(done, 1000);
 });
 
-module.exports = { onlineHub, access, isPinned, hubApi, hubCert, teamsAt, listTeams, stopHosting, createTeam, invite, removeMember, deleteTeam, addMemory, removeMemory, saveSession, setSessionDone, renameSession, deleteSession, addComment, removeComment, addStep, updateStep, removeStep, stopAnnouncing };
+module.exports = { onlineHub, access, hookRelay, isPinned, hubApi, hubCert, teamsAt, listTeams, stopHosting, createTeam, invite, removeMember, deleteTeam, addMemory, removeMemory, saveSession, setSessionDone, renameSession, deleteSession, addComment, removeComment, addStep, updateStep, removeStep, stopAnnouncing };

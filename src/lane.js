@@ -129,6 +129,8 @@ const MACHINE = crypto.createHash('sha256').update(os.hostname()).digest('hex').
  * Starts an agent CLI in a pseudo-terminal and streams it to the hub, reconnecting whenever the hub comes back.
  * @param {object} o
  * @param {string} o.hub hub URL
+ * @param {string} [o.hookBase] where Claude Code sends its hooks instead of the hub: the app's relay for a hub on a Mac,
+ *   whose self-signed certificate Claude Code can't check (teams.js hookRelay)
  * @param {string} o.team team id
  * @param {string} [o.token] GitHub token proving who you are (read:user is enough)
  * @param {() => Promise<{token: string, ca?: string}>} [o.credentials] instead of `token`: asked before each connection,
@@ -144,13 +146,13 @@ const MACHINE = crypto.createHash('sha256').update(os.hostname()).digest('hex').
  * @returns {{ id: string, term: import('node-pty').IPty, repo: string, write: (data: string) => void, rejoin: () => void,
  *   resize: (cols: number, rows: number) => void }}
  */
-function startLane({ hub, team, token, credentials = () => ({ token }), session, cmd = 'claude', args = [], cwd = process.cwd(), open = false, cols = 120, rows = 36, env = process.env, onRefused }) {
+function startLane({ hub, hookBase, team, token, credentials = () => ({ token }), session, cmd = 'claude', args = [], cwd = process.cwd(), open = false, cols = 120, rows = 36, env = process.env, onRefused }) {
   hub = new URL(hub).origin;
   if (!fs.statSync(cwd, { throwIfNoEntry: false })?.isDirectory()) throw new Error(`Folder not found: ${cwd}`);
   if (!installed(cmd, env)) throw new Error(`The "${cmd}" command isn't installed on this Mac. Install it, then start the agent again.`);
   const id = crypto.randomUUID();
   const hookSecret = crypto.randomBytes(24).toString('hex');
-  if (path.basename(cmd) === 'claude') args = ['--settings', claudeHookSettings(`${hub}/hooks/${id}`), ...args];
+  if (path.basename(cmd) === 'claude') args = ['--settings', claudeHookSettings(`${hookBase || hub}/hooks/${id}`), ...args];
   // TODO: hooks for Codex and OpenCode. Their lanes get terminal sharing but no overlap warnings yet.
 
   let term;

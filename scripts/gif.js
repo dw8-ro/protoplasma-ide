@@ -4,6 +4,7 @@ const fs = require('fs');
 const { GIFEncoder, quantize, applyPalette } = require('gifenc');
 
 const PAD = 24, RADIUS = 14;
+const LIGHTS = [[255, 95, 87], [254, 188, 46], [40, 200, 64]];
 const PAGES = { dark: { page: [13, 17, 23], ring: [255, 255, 255, 0.14] }, light: { page: [255, 255, 255], ring: [0, 0, 0, 0.16] } };
 
 /** An RGBA frame (width x height) inside its frame: returns { rgba, width, height }. */
@@ -29,6 +30,17 @@ function framed(rgba, width, height, theme) {
       out[o] = px[0]; out[o + 1] = px[1]; out[o + 2] = px[2]; out[o + 3] = 255;
     }
   }
+  // The window's traffic lights, which capturePage leaves out (main.js puts them at 18, 18: centres 24 + 20n, 23 points).
+  const k = width / 1440;
+  LIGHTS.forEach((colour, n) => {
+    const cx = PAD + (24 + 20 * n) * k, cy = PAD + 23 * k, r = 6 * k;
+    for (let y = Math.floor(cy - r - 1); y <= Math.ceil(cy + r + 1); y++) {
+      for (let x = Math.floor(cx - r - 1); x <= Math.ceil(cx + r + 1); x++) {
+        const cover = Math.min(1, Math.max(0, r - Math.hypot(x + 0.5 - cx, y + 0.5 - cy) + 0.5)), o = (y * W + x) * 4;
+        for (let i = 0; i < 3; i++) out[o + i] = out[o + i] * (1 - cover) + colour[i] * cover;
+      }
+    }
+  });
   return { rgba: out, width: W, height: H };
 }
 

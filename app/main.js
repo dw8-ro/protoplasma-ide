@@ -186,8 +186,14 @@ ipcMain.handle('startLane', signedIn(async o => {
   const shared = o.cmd !== 'claude' && team.members?.length > 0;
   const why = o.repo ? 'This repo has its own Git hooks, so Protoplasma\'s push guard isn\'t installed' : 'Protoplasma only installs its push guard in folders it makes, not in one you pick';
   const notice = shared && !folder.guarded ? `${why}: this agent can push to main or force-push without being stopped.` : '';
-  const lane = startLane({ hub: team.hub, team: team.id, credentials: () => teams.access(signedInAs, team.hub), session: String(o.session), cmd: o.cmd, cwd, args: o.resume ? RESUME[o.cmd] : [],
+  // Claude Code can't check a Mac hub's self-signed certificate, so its hooks go to such a hub through a relay on this
+  // Mac that is pinned to it (teams.hookRelay). The online hub has a real certificate and gets them directly.
+  const credentials = () => teams.access(signedInAs, team.hub);
+  const relayed = o.cmd === 'claude' && team.hub !== teams.onlineHub && team.hub.startsWith('https:');
+  const hookBase = relayed ? await teams.hookRelay(hookTarget) : undefined;
+  const lane = startLane({ hub: team.hub, hookBase, team: team.id, credentials, session: String(o.session), cmd: o.cmd, cwd, args: o.resume ? RESUME[o.cmd] : [],
     open: !!o.open, env: shared ? { ...env, PROTO_SHARED_TEAM: '1' } : env, onRefused: reason => toWindow('lane:refused', lane.id, reason) });
+  lane.hub = { url: team.hub, credentials };
   lanes.set(lane.id, lane);
   folders.add(cwd);
   lane.cwd = cwd;
@@ -197,6 +203,11 @@ ipcMain.handle('startLane', signedIn(async o => {
   lane.term.onExit(() => { lanes.delete(lane.id); toWindow('lane:exit', lane.id); });
   return { id: lane.id, repo: lane.repo, notice };
 }));
+// The hub one of this Mac's agents sends its hooks to, with the certificate to pin it to, for the relay.
+async function hookTarget(id) {
+  const hub = lanes.get(id)?.hub;
+  return hub && { url: hub.url, ca: (await hub.credentials()).ca };
+}
 ipcMain.on('lane:write', (_, id, d) => lanes.get(id)?.write(d));
 ipcMain.handle('sessions:folder', (_, repo, name) => github.sessionFolderPath(String(repo), String(name)));
 ipcMain.handle('sessions:removeFolder', signedIn(async (repo, name) => {

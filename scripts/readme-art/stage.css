@@ -1,6 +1,6 @@
 /* The README images: real windows and crops of docs/*.png floating over a soft glow of the two people's colours
-   (purple: you, teal: a teammate). Each image fades to GitHub's own page colour at its edges, so it has no visible box
-   in either theme. Pages are laid out at 1280x720; readme-art.js renders them larger. */
+   (purple: you, teal: a teammate). Each image fades to GitHub's default page colour at its edges, so it has no visible
+   box in the default light and dark themes. Pages are laid out 1280 wide; readme-art.js renders them larger. */
 :root {
   --me: #a78bfa;
   --mate: #5eead4;

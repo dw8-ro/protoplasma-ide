@@ -114,6 +114,35 @@ test('an agent connects to a hub on a Mac only through the certificate it pinned
   } finally { imposter.term.kill(); lane.term.kill(); }
 });
 
+test('Claude Code\'s hooks reach a hub on a Mac through the relay, pinned to its certificate', async () => {
+  const garage = (await teams.teamsAt(bob, aliceUrl))[0];
+  // A stand-in for claude that prints the settings it was given and the hook secret, then waits.
+  const bin = path.join(tmp, 'bin');
+  fs.mkdirSync(bin, { recursive: true });
+  fs.writeFileSync(path.join(bin, 'claude'), '#!/bin/sh\necho "args:$*"\necho "secret:$PROTO_HOOK_SECRET"\nexec cat\n', { mode: 0o755 });
+  const relay = await teams.hookRelay(async id => (id === lane.id ? { url: aliceUrl, ca: aliceCert } : null));
+  const lane = startLane({ hub: aliceUrl, hookBase: relay, team: garage.id, session: 'hooks', cmd: path.join(bin, 'claude'),
+    credentials: async () => ({ token: (await teams.access(bob, aliceUrl)).token, ca: aliceCert }) });
+  let out = '';
+  lane.term.onData(d => { out += d; });
+  const post = (id, secret, body) => fetch(`${relay}/hooks/${id}`, { method: 'POST', headers: { authorization: `Bearer ${secret}` }, body: JSON.stringify(body) });
+  try {
+    for (let i = 0; i < 50 && !/secret:\w+/.test(out); i++) await sleep(20);
+    assert.ok(out.includes(`${relay}/hooks/${lane.id}`), 'Claude Code is pointed at the relay');
+    const secret = /secret:(\w+)/.exec(out)[1];
+    // Straight to the hub, Claude Code can't check its self-signed certificate.
+    await assert.rejects(fetch(`${aliceUrl}/hooks/${lane.id}`, { method: 'POST', headers: { authorization: `Bearer ${secret}` }, body: '{}' }));
+    let res;
+    for (let i = 0; i < 50 && res?.status !== 200; i++) { // the agent joins the hub in the meantime
+      res = await post(lane.id, secret, { hook_event_name: 'UserPromptSubmit', prompt: 'fix the lobby' });
+      if (res.status !== 200) await sleep(100);
+    }
+    assert.equal(res.status, 200, 'the hook reached the hub');
+    assert.equal((await post(lane.id, 'a-wrong-hook-secret-123', { hook_event_name: 'Stop' })).status, 401, 'the hub still checks the secret');
+    assert.equal((await post('another-lane', secret, { hook_event_name: 'Stop' })).status, 404, 'only this Mac\'s own agents');
+  } finally { lane.term.kill(); }
+});
+
 test('an agent only takes typing from the hub when it was started open', async () => {
   // A hub that types into every agent that connects, whatever it was told.
   const fake = new WebSocket.Server({ port: 0, host: '127.0.0.1' });

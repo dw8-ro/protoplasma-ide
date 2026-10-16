@@ -35,6 +35,12 @@ Read this first in a new session, then [AGENTS.md](AGENTS.md) for how the code f
   (`scripts/gif.js`, used by `npm run demo`). The direction was picked by a small design panel; the README text was
   reviewed for accuracy, GitHub rendering and polish. Re-run `npm run screenshot`, `npm run readme-art` and
   `npm run demo` together when the UI changes.
+- **0.5.2 (16 Oct 2026): Claude Code's hooks reach hubs on a Mac again.** Since 0.5.0 (D2) a hub on a Mac serves
+  https with a self-signed certificate, which the app pins but Claude Code's HTTP hooks can't. On teams hosted on a Mac
+  every Claude hook failed open: no team context, no ask before a conflicting edit or a risky push, and the status stuck
+  at Idle. Found by the README review. Fixed with a loopback relay (teams.js `hookRelay`, main.js `hookTarget`, lane.js
+  `hookBase`), tested in lan.test.js and with the real `claude` 2.1.301 against a TLS hub (status went working with the
+  relay, stayed idle without). Teams on the online hub were never affected. e2e doesn't send a hook to a Mac hub yet.
 - **Hub:** the hosted hub on Railway (`https://hub-production-fba9.up.railway.app`) runs `17f747e`: D1 ids, D2 passes
   (`/passes`, `/hubs`) and D4. Nothing since then touches `src/hub.js`, so pushing doesn't redeploy it.
 - **Checks on `c72f427`:**

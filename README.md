@@ -19,6 +19,7 @@
 
 <p align="center">
   <a href="#install">Install</a> ·
+  <a href="#how-you-use-it">How you use it</a> ·
   <a href="#what-it-does">What it does</a> ·
   <a href="#how-it-works">How it works</a> ·
   <a href="#working-on-the-same-code">Working on the same code</a> ·
@@ -48,7 +49,7 @@ That installs the latest release into Applications and opens it, with no "can't 
 
 The [GitHub CLI](https://cli.github.com) (`brew install gh`, then `gh auth login`) powers the repo list, cloning, pull requests and issues. The app runs without it, and on first run it checks for it and for your agents and tells you what's missing.
 
-**Updates install themselves.** The app checks GitHub every few hours and shows a bar when a new version is out: Update now, and it relaunches on the new one. Releases are signed with the project's own certificate (no Apple account involved), so macOS knows each version is the same app and your Keychain and privacy permissions carry over.
+**Updates install themselves.** The app checks GitHub every few hours and shows a bar when a new version is out. Click **Update now** and it relaunches on the new version. Releases are signed with the project's own certificate (no Apple account involved), so macOS knows each version is the same app and your Keychain and privacy permissions carry over.
 
 ## How you use it
 
@@ -56,13 +57,13 @@ The [GitHub CLI](https://cli.github.com) (`brew install gh`, then `gh auth login
 2. **Start a session** with **New** (⌘N). Say what you're working on, pick one of your GitHub repos (or a folder on your Mac) and an agent: Claude Code, Codex or OpenCode. Protoplasma clones the repo, gives the session its own branch and folder, and opens your agent.
 3. **Talk to your agent.** It's the real CLI in a terminal, so you type to it exactly as you would in Terminal, slash commands included.
 4. **Open the code.** Click **Code**, or any file the session has changed, or press ⌘P. The repo opens in an editor with its files, search and source control, and your agent moves to a panel underneath. As the agent edits a file you have open, you see the change straight away. A **Terminal** tab beside the agent gives you a plain shell in the same folder, and **Conflicts** lists files you and a teammate are both changing, with a side-by-side compare.
-5. **Work alongside your team.** Everyone's agents in the session are listed on the right with what they were last asked. Open any of them full size or beside yours, or a teammate's version of a file their agent is changing (if they share files). Plan the work as steps, comment on lines of code (⇧⌘M), and keep notes the agents read. A file changed in two places is flagged for everyone, and Claude asks before touching it. **New pane** puts several sessions side by side.
+5. **Work alongside your team.** Everyone's agents in the session are listed on the right with what they were last asked. Open any of them full size or beside yours, or a teammate's version of a file their agent is changing (if they share files). Plan the work as steps, comment on lines of code (⇧⌘M), and keep notes the agents read. **New pane** puts several sessions side by side.
 6. **Ship it.** Write a message under source control and **Commit & Push**, then open a pull request.
 
 <p align="center">
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/readme/demo-dark.gif">
-  <img src="docs/readme/demo-light.gif" alt="Asking an agent for a test, watching it being written in the editor, and a teammate's change to the same file being flagged">
+  <img src="docs/readme/demo-light.gif" alt="Asking an agent for a test and watching it being written in the editor, then a file you and a teammate both changed being flagged as an overlap">
 </picture>
 </p>
 
@@ -89,7 +90,7 @@ The [GitHub CLI](https://cli.github.com) (`brew install gh`, then `gh auth login
 
 ### The real agent, not a wrapper
 
-Each agent is the actual `claude`, `codex` or `opencode` process on your Mac, under your own account, in a real terminal. Your settings, permission modes, slash commands, custom commands and skills all work, because nothing sits between you and the CLI.
+Each agent is the actual `claude`, `codex` or `opencode` process on your Mac, under your own account, in a real terminal. Your settings, permission modes, slash commands, custom commands and skills all work, because you type straight into the CLI. Protoplasma only adds hooks to Claude Code, merged with your own settings, that give it the team's context and ask you before a conflicting edit or a risky push.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/readme/agents-dark.png">
@@ -98,7 +99,7 @@ Each agent is the actual `claude`, `codex` or `opencode` process on your Mac, un
 
 ### Collisions caught early
 
-Every checkout reports the files it has changed compared with main, committed or not, whoever or whatever changed them. A file changed in two places is an overlap for everyone, in the sidebar, on the session's card and beside each agent, before it turns into a merge conflict. Claude Code is asked before it edits a file a teammate has changed.
+While an agent runs, its checkout reports the files changed compared with main, committed or not, whoever or whatever changed them. A file changed in two places is flagged for everyone before it turns into a merge conflict: in the sidebar, on the session's card and beside each agent. Claude Code asks you before it edits a file that another running agent on the same repo has changed, a teammate's or one of yours in another session.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/readme/overlap-dark.png">
@@ -107,16 +108,18 @@ Every checkout reports the files it has changed compared with main, committed or
 
 ### The code beside it
 
-An editor built on Monaco (the editor inside VS Code), with an Explorer that marks what changed since the last commit and which files teammates' agents are changing. Your agent moves to a panel underneath, so you can watch it work on the file you have open.
+An editor built on Monaco (the editor inside VS Code), with an Explorer that marks what changed since the last commit and which files teammates' agents are changing. Your agent moves to a panel underneath, with the session's people and agents beside it, and you see its edits to the file you have open as it makes them.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/readme/code-dark.png">
-  <img src="docs/readme/code-light.png" alt="The code view: the Explorer and join.ts open in the editor, with your agent in the panel underneath">
+  <img src="docs/readme/code-light.png" alt="The code view: the Explorer and join.ts open in the editor, with the session panel underneath flagging an overlap">
 </picture>
 
 ### Sessions for every piece of work
 
-Each session keeps its goal, branch and comments, and stays on the board after its agents stop, with **Resume** to pick the conversation back up and the last screen of recently stopped agents one click away. Its status says at a glance which agents are working, which need you, and where work overlaps.
+Each session keeps its goal, branch, plan and comments, and stays on the board after its agents stop, with **Resume** to pick the conversation back up and the last screen of recently stopped agents one click away. Its status says at a glance which agents are working, which need you, and where work overlaps. Only Claude Code says when it's waiting for your approval; a Codex or OpenCode agent waiting on one shows as Idle, so check its terminal.
+
+A plan is a list of steps with owners that anyone ticks off. Notes go with a repo or with one file in it, so every session on that repo shares them. Claude gets the plan and the repo's notes with every prompt, and a file's notes just before it reads or edits it.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/readme/sessions-dark.png">
@@ -125,7 +128,7 @@ Each session keeps its goal, branch and comments, and stays on the board after i
 
 ### Start from any repo, with any agent
 
-Pick one of your GitHub repos or a folder on your Mac, and the agent to run. A session started from a repo gets its own branch and folder, so `main` only changes through a push or a pull request. Plans, notes and comments live with the session: Claude gets the plan and the repo's notes with every prompt, and a file's notes just before it reads or edits it.
+Pick one of your GitHub repos or a folder on your Mac, and the agent to run. A session started from a repo gets its own branch and folder, so `main` only changes through a push or a pull request.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/readme/start-dark.png">
@@ -146,8 +149,8 @@ Pick one of your GitHub repos or a folder on your Mac, and the agent to run. A s
 ## Working on the same code
 
 1. **A branch per session.** A session started from a GitHub repo gets its own git worktree on `session/<name>`, branched from the latest default branch, or continuing a teammate's pushed branch. It has no upstream, so a bare `git push` can't land on `main`. Names that differ only in case or punctuation are the same session.
-2. **Overlap warnings.** A file changed in two checkouts of the same repo is flagged for everyone, and Claude is asked before it edits one.
-3. **Push guard.** When the team has other people, Claude is asked before pushing to `main`, `master` or the repo's default branch, force-pushing, or deleting a branch on the remote. Codex and OpenCode can't be asked, so in repos the app cloned a `pre-push` hook stops those pushes instead. It's a safeguard against mistakes, not a lock: `git push --no-verify` skips the hook. If your team needs a guarantee, protect `main` on GitHub too, for teammates whose agents push with their own accounts. People pushing from their own terminal aren't affected.
+2. **Overlap warnings**, described under [Collisions caught early](#collisions-caught-early).
+3. **Push guard.** When the team has other people, Claude Code asks you before pushing to `main`, `master` or the repo's default branch, force-pushing, or deleting a branch on the remote. Codex and OpenCode can't be asked, so in repos the app cloned a `pre-push` hook stops those pushes instead. It's a safeguard against mistakes, not a lock: `git push --no-verify` skips the hook. If your team needs a guarantee, protect `main` on GitHub too, for teammates whose agents push with their own accounts. People pushing from their own terminal aren't affected.
 4. **Behind notice.** Each lane fetches about once a minute. A branch missing commits from main (or from its own pushed copy) shows `↓3`, and Claude is told to pull before changing more.
 5. **Shared session branches.** Everyone in a session works on `session/<name>`, each in their own checkout. **Commit & Push** puts your commit on top of whatever a teammate pushed first. If you both changed the same lines, it stops and offers **Pull**: their work comes in, the files you both changed are marked C, and once you've fixed them in the editor, **Commit & Push** finishes the merge.
 
@@ -180,10 +183,11 @@ npm run e2e         # drives the real app through every main flow, the code view
 npm run screenshot  # regenerates the screenshots in docs/
 npm run readme-art  # builds the README images in docs/readme/ from them
 npm run demo        # records docs/demo.gif and the README's framed copies
-npm run playground  # two copies of the app, David and Max, on one local hub and repo, each with a control API
-                    # (create a team in David's copy and invite max; the API wants the printed token as x-play-token)
+npm run playground  # two copies of the app on one local hub and repo, each with a control API
 npm run icon        # renders the app icon from app/icon.svg
 ```
+
+In the playground, create a team in David's copy and invite `max`. The control API wants the token the playground prints, in an `x-play-token` header.
 
 `package.json`'s `allowScripts` names the exact versions of Electron and node-pty whose install scripts may run. When you bump either, update its entry too, or its install step is skipped and `npm start` fails.
 

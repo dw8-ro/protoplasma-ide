@@ -25,7 +25,8 @@ Function names below are stable. Line numbers drift, so search by name.
 | `npm run playground` | Two app copies (David on port 7801, Max on 7802) on a local hub and repo, each with an HTTP control API | |
 | `for s in 1 2 3 4 5 6 7 8; do node scripts/customer/s$s.js; done` | The customer simulation (docs/usage-test/REPORT.md): 91 checks driven with real clicks and typing against a running playground, start to finish on one fresh playground | `npm run playground` running |
 | `npm run hub` | A standalone hub on `PORT` (default 7681). Memory only unless `DATA_DIR` is set. | |
-| `npm run screenshot` / `npm run demo` | Regenerate `docs/*.png` and `docs/demo.gif` from a staged fake team (`scripts/stage.js`) | |
+| `npm run screenshot` / `npm run demo` | Regenerate `docs/*.png` and `docs/demo.gif` (plus its framed copies in `docs/readme/`) from a staged fake team (`scripts/stage.js`) | |
+| `npm run readme-art` | Builds the README images in `docs/readme/` (dark and light) from `docs/*.png`: the pages in `scripts/readme-art/`, rendered offscreen, and the how-it-works SVG | Run after `npm run screenshot` |
 | `npm run icon` | Renders `app/icon.svg` to `build/icon.png` and `build/icon.icns` | |
 | `npm run release` | Bumps the patch version, tags `v<version>` and pushes. GitHub Actions builds, signs and publishes. | On `main`, with `main` equal to `origin/main` |
 
@@ -56,14 +57,15 @@ app/code.js       the Monaco code view (~770)
 app/panes.js      pane mode (~90)
 app/index.html    CSP, all CSS (tokens and themes), icon sprite, all markup and dialogs (~1040)
 app/config.json   githubClientId (OAuth app, device flow), onlineHub (the Railway URL)
-scripts/          e2e.js, playground.js + playground-app.js, stage.js, screenshot.js, demo.js, sign.sh, icon.js
+scripts/          e2e.js, playground.js + playground-app.js, stage.js, screenshot.js, demo.js + gif.js, readme-art.js +
+                  readme-art/ (the README image pages and diagram), sign.sh, icon.js
 test/             hub.test.js (40), hub-live.test.js (5), workspace.test.js (13), files.test.js (10), lan.test.js (6),
                   identity.test.js (2), updates.test.js (3)
 .github/workflows ci.yml (npm test on every push to main and PR), package.yml (dist check), release.yml (tag → release)
 Dockerfile        the hosted hub image (only src/hub.js + src/shared.js + ws)
 install.sh        the one-line installer
 build/            icon.icns, icon.png, extend-info.plist (Info.plist keys merged in by dist)
-docs/             README images, recheck/ (review records)
+docs/             screenshots (sources), readme/ (the README's images, dark and light), recheck/ (review records)
 ```
 
 ## How it fits together

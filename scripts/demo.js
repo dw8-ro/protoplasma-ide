@@ -1,9 +1,10 @@
-// Records docs/demo.gif with the made-up team from stage.js: David asks his agent for a test, opens the code and
-// watches it being written, Max's change to the same file is flagged, and Max leaves a comment.
+// Records docs/demo.gif, and its framed copies for the README in docs/readme/, with the made-up team from stage.js: David
+// asks his agent for a test, opens the code and watches it being written, Max's change to the same file is flagged, and
+// Max leaves a comment.
 // Usage: npm run demo
 const fs = require('fs');
 const path = require('path');
-const { GIFEncoder, quantize, applyPalette } = require('gifenc');
+const { framed, writeGif } = require('./gif');
 const { boot, stageRepo, applyEdits, ownAgent, teammate, hook, sleep, c, claudeBanner, accepting } = require('./stage');
 
 const WIDTH = 1120, HEIGHT = 700, FRAME_MS = 200;
@@ -111,36 +112,22 @@ boot(async (win, hub) => {
   await sleep(FRAME_MS * 2);
 
   const out = path.join(__dirname, '..', 'docs', 'demo.gif');
-  writeGif(out, frames);
+  const rgba = frames.map(bgra => {
+    const px = new Uint8Array(bgra.length);
+    for (let i = 0; i < bgra.length; i += 4) { px[i] = bgra[i + 2]; px[i + 1] = bgra[i + 1]; px[i + 2] = bgra[i]; px[i + 3] = 255; }
+    return px;
+  });
+  writeGif(out, rgba, WIDTH, HEIGHT, FRAME_MS);
+  // The README's copies, framed for GitHub's dark and light pages.
+  fs.mkdirSync(path.join(__dirname, '..', 'docs', 'readme'), { recursive: true });
+  for (const theme of ['dark', 'light']) {
+    const f = rgba.map(frame => framed(frame, WIDTH, HEIGHT, theme));
+    writeGif(path.join(__dirname, '..', 'docs', 'readme', `demo-${theme}.gif`), f.map(x => x.rgba), f[0].width, f[0].height, FRAME_MS);
+  }
   if (process.env.DEMO_FRAMES) { // stills of every 12th frame, for checking the recording
     const { nativeImage } = require('electron');
     frames.forEach((bitmap, i) => i % 12 || fs.writeFileSync(path.join(process.env.DEMO_FRAMES, `frame-${String(i).padStart(3, '0')}.png`),
       nativeImage.createFromBitmap(bitmap, { width: WIDTH, height: HEIGHT }).toPNG()));
   }
-  console.log(`saved docs/demo.gif (${frames.length} frames, ${Math.round(fs.statSync(out).size / 1024)} KB)`);
+  console.log(`saved docs/demo.gif and docs/readme/demo-{dark,light}.gif (${frames.length} frames, ${Math.round(fs.statSync(out).size / 1024)} KB)`);
 });
-
-// One shared palette, and pixels that didn't change since the previous frame left transparent, so the GIF stays small.
-function writeGif(file, bitmaps) {
-  const rgba = bitmaps.map(bgra => {
-    const out = new Uint8Array(bgra.length);
-    for (let i = 0; i < bgra.length; i += 4) { out[i] = bgra[i + 2]; out[i + 1] = bgra[i + 1]; out[i + 2] = bgra[i]; out[i + 3] = 255; }
-    return out;
-  });
-  const pick = [0, rgba.length >> 2, rgba.length >> 1, (rgba.length * 3) >> 2, rgba.length - 1].map(i => rgba[i]);
-  const sample = new Uint8Array(pick.reduce((n, f) => n + f.length, 0));
-  pick.reduce((offset, f) => { sample.set(f, offset); return offset + f.length; }, 0);
-  const colours = quantize(sample, 255);
-  const palette = [...colours, [0, 0, 0]]; // index 255: transparent
-  const gif = GIFEncoder();
-  let previous = null;
-  for (const frame of rgba) {
-    const index = applyPalette(frame, colours);
-    const drawn = index.slice();
-    if (previous) for (let i = 0; i < index.length; i++) if (index[i] === previous[i]) index[i] = 255;
-    gif.writeFrame(index, WIDTH, HEIGHT, { palette: previous ? undefined : palette, delay: FRAME_MS, transparent: !!previous, transparentIndex: 255, dispose: 1 });
-    previous = drawn;
-  }
-  gif.finish();
-  fs.writeFileSync(file, gif.bytes());
-}

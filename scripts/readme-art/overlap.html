@@ -1,0 +1,29 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Collisions caught early</title>
+<link rel="stylesheet" href="stage.css">
+</head>
+<body>
+<div class="stage">
+  <div class="field">
+    <div class="pool"></div>
+    <div class="grid"></div>
+    <div class="glow me" style="left: -120px; top: 100px; width: 680px; height: 560px"></div>
+    <div class="glow mate" style="left: 740px; top: 100px; width: 680px; height: 560px"></div>
+    <div class="glow red" style="left: 520px; top: 220px; width: 360px; height: 360px"></div>
+  </div>
+  <!-- the sidebar alert, the session card on the board, and both agents in the session panel -->
+  <div class="crop" data-src="sessions" data-x="18" data-y="262" data-w="458" data-h="114" data-s="1.5" style="left: 132px; top: 104px; --ring: var(--red-ring)"></div>
+  <div class="crop" data-src="sessions" data-x="1321" data-y="242" data-w="734" data-h="526" data-s="1.5" style="left: 132px; top: 214px">
+    <i class="mark" data-x="1336" data-y="590" data-w="704" data-h="54"></i>
+  </div>
+  <div class="crop" data-src="session" data-x="2270" data-y="218" data-w="580" data-h="826" data-s="1.4" style="left: 740px; top: 68px">
+    <i class="mark" data-x="2372" data-y="514" data-w="408" data-h="44"></i>
+    <i class="mark" data-x="2372" data-y="861" data-w="408" data-h="44"></i>
+  </div>
+</div>
+<script src="crop.js"></script>
+</body>
+</html>

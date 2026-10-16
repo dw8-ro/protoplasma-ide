@@ -1,0 +1,64 @@
+/* The README images: real windows and crops of docs/*.png floating over a soft glow of the two people's colours
+   (purple: you, teal: a teammate). Each image fades to GitHub's own page colour at its edges, so it has no visible box
+   in either theme. Pages are laid out at 1280x720; readme-art.js renders them larger. */
+:root {
+  --me: #a78bfa;
+  --mate: #5eead4;
+  --overlap: #f87171;
+  --needs: #fbbf24;
+  --page: #0d1117;
+  --core: #09090c;
+  --grid: rgba(255, 255, 255, .045);
+  --ring: rgba(255, 255, 255, .12);
+  --hi: rgba(255, 255, 255, .32);
+  --shadow: 0 50px 100px -30px rgba(0, 0, 0, .85), 0 22px 44px -18px rgba(0, 0, 0, .7);
+  --glow: .6;
+  --red-ring: rgba(248, 113, 113, .85);
+}
+:root[data-theme="light"] {
+  --page: #ffffff;
+  --core: #f5f5f8;
+  --grid: rgba(20, 20, 40, .055);
+  --ring: rgba(0, 0, 0, .14);
+  --hi: rgba(255, 255, 255, 0);
+  --shadow: 0 44px 80px -30px rgba(40, 30, 80, .38), 0 16px 32px -14px rgba(20, 20, 40, .26);
+  --glow: .55;
+  --red-ring: rgba(220, 60, 60, .8);
+}
+* { box-sizing: border-box; margin: 0; }
+html, body { width: 1280px; height: 720px; background: var(--page); overflow: hidden; }
+body { position: relative; font-family: Inter, -apple-system, system-ui, sans-serif; -webkit-font-smoothing: antialiased; }
+
+.stage { position: absolute; inset: 0; overflow: hidden; background: var(--page); }
+
+/* Everything decorative sits in .field, which fades out towards the edges. */
+.field { position: absolute; inset: 0;
+  -webkit-mask-image: radial-gradient(90% 95% at 50% 50%, #000 62%, transparent 100%);
+          mask-image: radial-gradient(90% 95% at 50% 50%, #000 62%, transparent 100%); }
+.pool { position: absolute; inset: 0; background: radial-gradient(65% 70% at 50% 52%, var(--core) 30%, transparent 100%); }
+.grid { position: absolute; inset: 0;
+  background-image: linear-gradient(to right, var(--grid) 1px, transparent 1px),
+                    linear-gradient(to bottom, var(--grid) 1px, transparent 1px);
+  background-size: 40px 40px; background-position: -1px -1px; }
+
+/* A glow: a soft round light, placed with left/top/width/height. */
+.glow { position: absolute; border-radius: 50%; opacity: var(--glow); filter: blur(80px); }
+.glow.me { background: radial-gradient(closest-side, var(--me), transparent); }
+.glow.mate { background: radial-gradient(closest-side, var(--mate), transparent); }
+.glow.red { background: radial-gradient(closest-side, var(--overlap), transparent); }
+.glow.amber { background: radial-gradient(closest-side, var(--needs), transparent); }
+
+/* Shadows melt into the page colour along the edges too. */
+.stage::after { content: ""; position: absolute; inset: 0; pointer-events: none;
+  background: linear-gradient(to bottom, var(--page), transparent 24px), linear-gradient(to top, var(--page), transparent 24px),
+              linear-gradient(to right, var(--page), transparent 28px), linear-gradient(to left, var(--page), transparent 28px); }
+
+/* A crop of a window: see crop.js. A crisp 1px ring, a deep soft shadow, and a hairline of light along the top. */
+.crop { position: absolute; overflow: hidden; background: #141416; box-shadow: 0 0 0 1px var(--ring), var(--shadow); }
+.crop img { position: absolute; display: block; max-width: none; }
+.crop::after { content: ""; position: absolute; left: 12%; right: 12%; top: 0; height: 1px;
+  background: linear-gradient(90deg, transparent, var(--hi), transparent); }
+
+/* A red ring around the part of a crop that shows an overlap: x, y, w, h in the crop's own pixels (see crop.js). */
+.mark { position: absolute; border-radius: 10px; pointer-events: none;
+  box-shadow: 0 0 0 1.5px var(--red-ring), 0 0 24px 2px rgba(248, 113, 113, .35); }

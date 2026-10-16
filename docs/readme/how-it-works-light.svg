@@ -1,0 +1,58 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="500" viewBox="0 0 1280 500">
+  <title>How Protoplasma works: each Mac runs the app and its agents; the hub relays terminals and team state between them</title>
+  <defs>
+    <marker id="head" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M0 0 10 5 0 10z" fill="#818b98"/>
+    </marker>
+  </defs>
+  
+  <rect x="40" y="40" width="300" height="420" rx="20" fill="#f6f8fa" stroke="#7c3aed" stroke-opacity=".55" stroke-width="1.5"/>
+  <text x="64" y="80" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, Inter, Helvetica, Arial, sans-serif" font-size="15" font-weight="600" fill="#7c3aed" text-anchor="start">YOUR MAC</text>
+  <rect x="64" y="104" width="252" height="104" rx="14" fill="#ffffff" stroke="#d1d9e0"/>
+  <text x="86" y="146" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, Inter, Helvetica, Arial, sans-serif" font-size="20" font-weight="600" fill="#1f2328" text-anchor="start">Protoplasma</text>
+  <text x="86" y="176" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, Inter, Helvetica, Arial, sans-serif" font-size="15" font-weight="400" fill="#59636e" text-anchor="start">sessions, code, team</text>
+  <line x1="190" y1="208" x2="190" y2="292" stroke="#d1d9e0" stroke-width="1.5"/>
+  <text x="202" y="256" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, Inter, Helvetica, Arial, sans-serif" font-size="14" font-weight="400" fill="#59636e" text-anchor="start">starts</text>
+  <rect x="64" y="292" width="252" height="132" rx="14" fill="#ffffff" stroke="#7c3aed" stroke-opacity=".7"/>
+  <circle cx="86" cy="320" r="5" fill="#7c3aed"/>
+  <text x="100" y="326" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, Inter, Helvetica, Arial, sans-serif" font-size="14" font-weight="400" fill="#59636e" text-anchor="start">you</text>
+  <text x="86" y="366" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="22" font-weight="600" fill="#1f2328" text-anchor="start">claude</text>
+  <text x="86" y="398" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, Inter, Helvetica, Arial, sans-serif" font-size="15" font-weight="400" fill="#59636e" text-anchor="start">the real CLI, in a terminal</text>
+  
+  <rect x="940" y="40" width="300" height="420" rx="20" fill="#f6f8fa" stroke="#0d9488" stroke-opacity=".55" stroke-width="1.5"/>
+  <text x="964" y="80" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, Inter, Helvetica, Arial, sans-serif" font-size="15" font-weight="600" fill="#0d9488" text-anchor="start">TEAMMATE'S MAC</text>
+  <rect x="964" y="104" width="252" height="104" rx="14" fill="#ffffff" stroke="#d1d9e0"/>
+  <text x="986" y="146" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, Inter, Helvetica, Arial, sans-serif" font-size="20" font-weight="600" fill="#1f2328" text-anchor="start">Protoplasma</text>
+  <text x="986" y="176" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, Inter, Helvetica, Arial, sans-serif" font-size="15" font-weight="400" fill="#59636e" text-anchor="start">sessions, code, team</text>
+  <line x1="1090" y1="208" x2="1090" y2="292" stroke="#d1d9e0" stroke-width="1.5"/>
+  <text x="1102" y="256" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, Inter, Helvetica, Arial, sans-serif" font-size="14" font-weight="400" fill="#59636e" text-anchor="start">starts</text>
+  <rect x="964" y="292" width="252" height="132" rx="14" fill="#ffffff" stroke="#0d9488" stroke-opacity=".7"/>
+  <circle cx="986" cy="320" r="5" fill="#0d9488"/>
+  <text x="1000" y="326" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, Inter, Helvetica, Arial, sans-serif" font-size="14" font-weight="400" fill="#59636e" text-anchor="start">a teammate</text>
+  <text x="986" y="366" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="22" font-weight="600" fill="#1f2328" text-anchor="start">codex</text>
+  <text x="986" y="398" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, Inter, Helvetica, Arial, sans-serif" font-size="15" font-weight="400" fill="#59636e" text-anchor="start">the real CLI, in a terminal</text>
+
+  <rect x="520" y="132" width="240" height="236" rx="22" fill="#f6f8fa" stroke="#1f2328" stroke-opacity=".35" stroke-width="1.5"/>
+  <text x="640" y="182" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, Inter, Helvetica, Arial, sans-serif" font-size="24" font-weight="700" fill="#1f2328" text-anchor="middle">Hub</text>
+  <text x="640" y="210" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, Inter, Helvetica, Arial, sans-serif" font-size="14" font-weight="400" fill="#59636e" text-anchor="middle">online, or on a teammate's Mac</text>
+  <text x="640" y="258" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, Inter, Helvetica, Arial, sans-serif" font-size="15" font-weight="400" fill="#1f2328" text-anchor="middle">relays terminals</text>
+  <text x="640" y="288" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, Inter, Helvetica, Arial, sans-serif" font-size="15" font-weight="400" fill="#1f2328" text-anchor="middle">flags overlapping files</text>
+  <text x="640" y="318" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, Inter, Helvetica, Arial, sans-serif" font-size="15" font-weight="400" fill="#1f2328" text-anchor="middle">answers Claude Code hooks</text>
+  <text x="640" y="348" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, Inter, Helvetica, Arial, sans-serif" font-size="15" font-weight="400" fill="#1f2328" text-anchor="middle">keeps sessions, plans, notes</text>
+
+  
+  <line x1="520" y1="156" x2="316" y2="156" stroke="#818b98" stroke-width="1.75" marker-end="url(#head)"/>
+  <text x="430" y="144" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, Inter, Helvetica, Arial, sans-serif" font-size="14" font-weight="400" fill="#59636e" text-anchor="middle">live team state</text>
+  
+  <line x1="760" y1="156" x2="964" y2="156" stroke="#818b98" stroke-width="1.75" marker-end="url(#head)"/>
+  <text x="850" y="144" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, Inter, Helvetica, Arial, sans-serif" font-size="14" font-weight="400" fill="#59636e" text-anchor="middle">live team state</text>
+  
+  <line x1="316" y1="316" x2="520" y2="316" stroke="#818b98" stroke-width="1.75" marker-end="url(#head)"/>
+  <text x="430" y="304" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, Inter, Helvetica, Arial, sans-serif" font-size="14" font-weight="400" fill="#59636e" text-anchor="middle">terminal, git status</text>
+  
+  <line x1="964" y1="316" x2="760" y2="316" stroke="#818b98" stroke-width="1.75" marker-end="url(#head)"/>
+  <text x="850" y="304" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, Inter, Helvetica, Arial, sans-serif" font-size="14" font-weight="400" fill="#59636e" text-anchor="middle">terminal, git status</text>
+  
+  <line x1="316" y1="356" x2="520" y2="356" stroke="#818b98" stroke-width="1.75" stroke-dasharray="6 6" marker-end="url(#head)"/>
+  <text x="430" y="344" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, Inter, Helvetica, Arial, sans-serif" font-size="14" font-weight="400" fill="#59636e" text-anchor="middle">Claude Code hooks</text>
+</svg>

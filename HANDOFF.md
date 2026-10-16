@@ -28,6 +28,13 @@ Read this first in a new session, then [AGENTS.md](AGENTS.md) for how the code f
   - Checked on Linux only: `npm test` 79 of 79. e2e and the customer simulation need a Mac and weren't rerun.
   - Codex passes `PROTO_SHARED_TEAM` through to its commands (it only filters names with KEY, SECRET or TOKEN), so the
     pre-push guard works for it. `codex resume --last` still exists.
+- **README redesigned for going public (16 Oct 2026):** new images in `docs/readme/`, each in a dark and a light version
+  that GitHub picks with `<picture>`. A hero and five feature shots (agents, overlap, code, sessions, start) are real
+  crops of `docs/*.png` over a soft glow of the two people's colours (`npm run readme-art`, pages in
+  `scripts/readme-art/`). There's a how-it-works SVG (`readme-art/diagram.js`), and the demo GIF is framed the same way
+  (`scripts/gif.js`, used by `npm run demo`). The direction was picked by a small design panel; the README text was
+  reviewed for accuracy, GitHub rendering and polish. Re-run `npm run screenshot`, `npm run readme-art` and
+  `npm run demo` together when the UI changes.
 - **Hub:** the hosted hub on Railway (`https://hub-production-fba9.up.railway.app`) runs `17f747e`: D1 ids, D2 passes
   (`/passes`, `/hubs`) and D4. Nothing since then touches `src/hub.js`, so pushing doesn't redeploy it.
 - **Checks on `c72f427`:**

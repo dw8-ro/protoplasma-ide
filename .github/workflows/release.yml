@@ -5,6 +5,9 @@ name: Release
 on:
   push:
     tags: ['v*']
+  # Or Actions → Release → Run workflow, on main: releases package.json's version, and the release makes its tag. For
+  # when a tag can't be pushed from where you are; the version still has to be bumped on main first.
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -17,14 +20,24 @@ jobs:
         with:
           fetch-depth: 0
       # Every installed copy updates to whatever is released here, so only a commit that is on main ships.
-      - name: Check the tag is a commit on main
+      - name: Check the commit is on main
         run: git merge-base --is-ancestor "$GITHUB_SHA" origin/main
       - uses: actions/setup-node@v5
         with:
           node-version: 24
           cache: npm
+      # TAG is v<package.json version>: the pushed tag must say the same, and a run from the Actions page must be on
+      # main and for a version that isn't released yet.
       - name: Check the tag matches package.json
-        run: test "v$(node -p "require('./package.json').version")" = "$GITHUB_REF_NAME"
+        run: |
+          TAG="v$(node -p "require('./package.json').version")"
+          if [ "$GITHUB_EVENT_NAME" = workflow_dispatch ]; then
+            [ "$GITHUB_REF" = refs/heads/main ] || { echo "Run it on main."; exit 1; }
+            if git ls-remote --exit-code --tags origin "refs/tags/$TAG" >/dev/null; then echo "$TAG is already tagged: bump the version on main first."; exit 1; fi
+          else
+            [ "$GITHUB_REF_NAME" = "$TAG" ] || { echo "The tag $GITHUB_REF_NAME doesn't match package.json ($TAG)."; exit 1; }
+          fi
+          echo "TAG=$TAG" >> "$GITHUB_ENV"
       - run: npm ci
       - run: npm test
       - run: npm run dist
@@ -34,11 +47,12 @@ jobs:
           MAC_CERT_PASSWORD: ${{ secrets.MAC_CERT_PASSWORD }}
         run: |
           scripts/sign.sh dist/Protoplasma-darwin-arm64/Protoplasma.app
-          ditto -c -k --keepParent dist/Protoplasma-darwin-arm64/Protoplasma.app "Protoplasma-${GITHUB_REF_NAME#v}-mac-arm64.zip"
+          ditto -c -k --keepParent dist/Protoplasma-darwin-arm64/Protoplasma.app "Protoplasma-${TAG#v}-mac-arm64.zip"
       - name: Publish
         env:
           GH_TOKEN: ${{ github.token }}
-        # docs/release-notes/<version>.md, when there is one, goes above the generated list of changes.
+        # docs/release-notes/<version>.md, when there is one, goes above the generated list of changes. --target makes the
+        # tag at this commit when it doesn't exist yet (a run from the Actions page); a pushed tag stays where it is.
         run: |
-          NOTES="docs/release-notes/${GITHUB_REF_NAME#v}.md"
-          gh release create "$GITHUB_REF_NAME" Protoplasma-*-mac-arm64.zip --title "Protoplasma ${GITHUB_REF_NAME#v}" --generate-notes ${NOTES:+$( [ -f "$NOTES" ] && echo "--notes-file $NOTES")}
+          NOTES="docs/release-notes/${TAG#v}.md"
+          gh release create "$TAG" Protoplasma-*-mac-arm64.zip --target "$GITHUB_SHA" --title "Protoplasma ${TAG#v}" --generate-notes ${NOTES:+$( [ -f "$NOTES" ] && echo "--notes-file $NOTES")}

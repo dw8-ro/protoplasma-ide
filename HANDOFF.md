@@ -31,8 +31,9 @@ Read this first in a new session, then [AGENTS.md](AGENTS.md) for how the code f
   - `npm test`: 78 of 78.
   - `npm run e2e`: 126 of 126. It now ends by quitting through the real quit path, and fails if the app doesn't exit.
   - The customer simulation (`scripts/customer`, against `npm run playground`): 91 of 91.
-- **Repo:** `dw8-ro/protoplasma-ide`, private. David plans to make it public; until then customers need `gh` signed in
-  with access to install and update, and "Report a problem" opens a page they can't see.
+- **Repo:** `dw8-ro/protoplasma-ide`. On 16 Oct 2026 David decided to make it public so Max can install it; he flips
+  the setting himself (no tool here can). Until it's public, people need `gh` signed in with access to install and
+  update, and "Report a problem" opens a page they can't see. Commit metadata shows David's email once it's public.
 
 ## What the last stretch of work did
 
@@ -114,7 +115,7 @@ N8 (renaming a session leaves teammates' presence on the old name) was refuted: 
 new `look` straight away, so presence is right again within one round trip.
 
 ## Rules from David that still apply
-- Keep the repo private.
+- The repo goes public (David's decision, 16 Oct 2026); he changes the setting himself.
 - Never accept a Claude Code folder-trust prompt for him, and never enter passwords or handle credentials.
 - Don't invite real people to teams. Max is a placeholder until David gives his GitHub username.
 - Don't change the Railway `PROTO_OWNERS` variable without asking.

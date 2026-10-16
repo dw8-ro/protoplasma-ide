@@ -526,6 +526,10 @@ docs/             README images, recheck/ (review records)
     It then runs `npm ci`, `npm test` and `npm run dist`. `scripts/sign.sh` signs with the certificate, `ditto` makes
     the zip, and `gh release create` publishes it. Its notes are generated from the commits, with
     `docs/release-notes/<version>.md` above them when that file exists: write it before tagging.
+  - **Without pushing a tag** (a cloud session can't): bump the version on `main` (`npm version patch`, push `main`),
+    then run Release from the Actions page on `main` (`workflow_dispatch`). It releases package.json's version, refuses
+    one that's already tagged, and `gh release create --target` makes the tag. A tag made that way doesn't start a
+    second run (GitHub doesn't trigger workflows from `GITHUB_TOKEN` events).
   - **Installed copies** check 5 s after launch, every 6 hours, and from the menu's "Check for Updates…".
 - **Signing:** releases are signed with a self-signed certificate, "Protoplasma Release Signing" (valid to 2036).
   - **The only copies:** `~/.config/protoplasma-signing/` on David's Mac (`release.p12`, the password, `cert.pem`), and
@@ -541,7 +545,8 @@ docs/             README images, recheck/ (review records)
     David.
   - Health check: `/`. URL: `https://hub-production-fba9.up.railway.app`.
   - Hub changes reach installed apps only after this deploy, so push `main` when hub code changed.
-- **Install:** the README one-liner (`gh api …/install.sh | sh`) needs `gh` signed in while the repo is private.
+- **Install:** the README one-liner (`curl -fsSL https://raw.githubusercontent.com/dw8-ro/protoplasma-ide/main/install.sh | sh`)
+  needs the repo public; while it was private, people used `gh api …/install.sh | sh` with `gh` signed in.
   install.sh quits a running copy, swaps it via `.old`, and rolls back on failure.
 
 ## Conventions
@@ -555,5 +560,5 @@ docs/             README images, recheck/ (review records)
 - **Workflow:**
   - Keep anything worth rerunning in the repo (`scripts/`), not in a temporary folder.
   - Work in small sections and write findings to files as you go; the usage limit has been hit often.
-- **Repo:** the repo stays private. Commits end with `Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>`
+- **Repo:** David decided on 16 Oct 2026 to make it public, so teammates install and update without `gh`. Commits end with `Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>`
   (or the equivalent for the agent doing the work).

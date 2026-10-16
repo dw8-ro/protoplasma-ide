@@ -4,7 +4,10 @@ Read this first in a new session, then [AGENTS.md](AGENTS.md) for how the code f
 
 ## Where things stand
 
-- **Released: v0.5.0** (commit `2779b8b`), with N1–N10 and D1–D8. It's signed with the project's certificate, and its
+- **Released: v0.5.1** (16 Oct 2026, commit `7e96090`): signed, `Protoplasma-0.5.1-mac-arm64.zip`, notes from
+  `docs/release-notes/0.5.1.md` (the F1 Force Quit advice first). Made with Actions → Release → Run workflow, because the
+  cloud session can't push tags; the release created the tag. Installed copies see it within about 6 hours.
+- **Before that: v0.5.0** (commit `2779b8b`), with N1–N10 and D1–D8. It's signed with the project's certificate, and its
   release notes say Mac-hosted teams need everyone on 0.5. Installed copies see it within about 6 hours, where the
   user's `gh` can see the private repo.
 - **After 0.5.0 (on `main` locally, not pushed or released yet):** a customer simulation of 0.5.0
@@ -12,7 +15,7 @@ Read this first in a new session, then [AGENTS.md](AGENTS.md) for how the code f
   tests (`3033f93` to `c72f427`).
   - **F1 matters most:** in 0.4.x and 0.5.0, Quit, Update now and logging out close the window but leave the app
     running, so it can't be reopened. Users on those versions finish an update by force-quitting it (then it
-    installs). **Release 0.5.1 soon**, with that in its notes.
+    installs). 0.5.1 fixes it and says so in its notes.
 - **0.5.1 prepared (16 Oct 2026), for Max, who uses Codex:** checked against a real Codex CLI (0.163) in a cloud
   session. Three fixes: Codex's "Trust this folder?" ("Trust and continue" / "Back to Agent Command Center") now shows
   as needs you (`ANSWERS` in lane.js, test in hub.test.js); Add agent falls back to an installed agent when the
@@ -126,9 +129,10 @@ new `look` straight away, so presence is right again within one round trip.
 - Commits end with `Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>`.
 
 ## Suggested next steps
-1. Push `main` and release 0.5.1 (`npm run release`, a patch), noting that anyone on 0.4.x or 0.5.0 whose window
-   closes after Update now should Force Quit Protoplasma once; the update then installs and opens. Needs David's OK.
-2. Make the repo public when David decides (N12): updates and "Report a problem" then work without `gh`.
+1. ~~Release 0.5.1~~ (done, 16 Oct 2026).
+2. David makes the repo public (Settings → Danger Zone → Change visibility), then: check
+   `curl -fsSL https://raw.githubusercontent.com/dw8-ro/protoplasma-ide/main/install.sh` and the release zip download
+   without signing in, and install once on a Mac. Then Max installs (he uses Codex) and David invites his GitHub login.
 3. The remaining test gaps: the slow-viewer drop, the file-relay timeout, `files.js` watch, `updates.js`
    stage/sameSigner/swap.sh.
 4. Codex and OpenCode have no hooks, so no overlap warnings or file notes for them (lane.js TODO).

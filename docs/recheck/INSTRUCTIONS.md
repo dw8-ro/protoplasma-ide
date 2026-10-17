@@ -4,7 +4,7 @@ Protoplasma is an Electron app for multiplayer AI coding, laid out like the Amoe
 each person runs real agent CLIs (Claude Code, Codex, OpenCode) in terminals on their own Mac; a **hub** relays the
 terminals to teammates, tracks which files each checkout changed (overlaps), and answers Claude Code hooks (team context,
 "ask" before risky pushes or edits to files a teammate changed). There's a Monaco code view, pane mode, plans, memory
-notes and comments. The repo is the current working directory (version 0.4.1, commit 35d334f).
+notes and comments. The repo is the current working directory (version 0.4.1, commit 817f96a).
 
 Layout: `src/hub.js` (server), `src/lane.js` (runs an agent in a PTY, git status), `src/workspace.js` (session
 worktrees, pre-push guard), `src/shared.js`; `app/main.js` (Electron main), `app/preload.js`, `app/teams.js` (hub

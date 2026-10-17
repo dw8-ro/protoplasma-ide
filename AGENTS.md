@@ -569,5 +569,5 @@ docs/             screenshots (sources), readme/ (the README's images, dark and 
 - **Workflow:**
   - Keep anything worth rerunning in the repo (`scripts/`), not in a temporary folder.
   - Work in small sections and write findings to files as you go; the usage limit has been hit often.
-- **Repo:** David decided on 16 Oct 2026 to make it public, so teammates install and update without `gh`. Commits end with `Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>`
-  (or the equivalent for the agent doing the work).
+- **Repo:** David decided on 16 Oct 2026 to make it public, so teammates install and update without `gh`. Commits are
+  authored as `dw8-ro <61916598+dw8-ro@users.noreply.github.com>`, with no Claude or AI attribution lines (no `Co-Authored-By`, no session links).

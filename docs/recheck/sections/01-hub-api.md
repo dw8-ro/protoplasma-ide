@@ -1,4 +1,4 @@
-# Section 1: hub API and storage (src/hub.js, commit 35d334f)
+# Section 1: hub API and storage (src/hub.js, commit 817f96a)
 
 Throwaway scripts: `scratch/01/` (child.js + lib.js start a hub in its own process with a stub verifier; http.js, crash.js, persist.js, gate.js). No repo files touched.
 

@@ -26,5 +26,8 @@ and open work are in HANDOFF.md. Both are loaded here:
   updating itself mid-run (its binary is briefly missing). Rerun before debugging.
 - **Usage limit:** it has been hit many times. Prefer working inline. If you do use subagents, use few, give each a
   narrow scope, and have them write findings to a file as they go so a cut-off loses nothing.
-- **Commits** end with `Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>`. Commit or push only when David asks.
+- **Commits** are authored as `dw8-ro <61916598+dw8-ro@users.noreply.github.com>`, with no Claude or AI attribution
+  lines (no `Co-Authored-By`, no session links): David's choice, 17 Oct 2026. In a new clone, set
+  `git config user.name dw8-ro` and `git config user.email 61916598+dw8-ro@users.noreply.github.com` first. Commit or
+  push only when David asks.
   Pushing `main` can redeploy the hosted hub (see "Hosted hub" under "Releases, signing and the hosted hub" in AGENTS.md).

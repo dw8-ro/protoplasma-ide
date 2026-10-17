@@ -4,17 +4,17 @@ Read this first in a new session, then [AGENTS.md](AGENTS.md) for how the code f
 
 ## Where things stand
 
-- **Released: v0.5.2** (16 Oct 2026, commit `0445df4`): the Claude hook relay for hubs on a Mac (below) and the new
+- **Released: v0.5.2** (16 Oct 2026, commit `b05602d`): the Claude hook relay for hubs on a Mac (below) and the new
   README. Released from the Actions page like 0.5.1.
-- **Before that: v0.5.1** (16 Oct 2026, commit `7e96090`): signed, `Protoplasma-0.5.1-mac-arm64.zip`, notes from
+- **Before that: v0.5.1** (16 Oct 2026, commit `d2d5379`): signed, `Protoplasma-0.5.1-mac-arm64.zip`, notes from
   `docs/release-notes/0.5.1.md` (the F1 Force Quit advice first). Made with Actions → Release → Run workflow, because the
   cloud session can't push tags; the release created the tag. Installed copies see it within about 6 hours.
-- **v0.5.0** (commit `2779b8b`), with N1–N10 and D1–D8. It's signed with the project's certificate, and its
+- **v0.5.0** (commit `abc1b9a`), with N1–N10 and D1–D8. It's signed with the project's certificate, and its
   release notes say Mac-hosted teams need everyone on 0.5. Installed copies see it within about 6 hours, where the
   user's `gh` can see the private repo.
 - **After 0.5.0 (on `main` locally, not pushed or released yet):** a customer simulation of 0.5.0
   ([docs/usage-test/REPORT.md](docs/usage-test/REPORT.md)), the fixes for its six findings, N11 and N12, and more
-  tests (`3033f93` to `c72f427`).
+  tests (`8093a70` to `d4f09ea`).
   - **F1 matters most:** in 0.4.x and 0.5.0, Quit, Update now and logging out close the window but leave the app
     running, so it can't be reopened. Users on those versions finish an update by force-quitting it (then it
     installs). 0.5.1 fixes it and says so in its notes.
@@ -43,9 +43,14 @@ Read this first in a new session, then [AGENTS.md](AGENTS.md) for how the code f
   at Idle. Found by the README review. Fixed with a loopback relay (teams.js `hookRelay`, main.js `hookTarget`, lane.js
   `hookBase`), tested in lan.test.js and with the real `claude` 2.1.301 against a TLS hub (status went working with the
   relay, stayed idle without). Teams on the online hub were never affected. e2e doesn't send a hook to a Mac hub yet.
-- **Hub:** the hosted hub on Railway (`https://hub-production-fba9.up.railway.app`) runs `17f747e`: D1 ids, D2 passes
+- **History rewritten (17 Oct 2026, David's choice):** every commit on `main` is by `dw8-ro` with GitHub's private
+  address, and the `Co-Authored-By: Claude` and session lines are gone. The code is unchanged; every commit ID changed,
+  and the IDs these docs mention were updated to match. The release tags (v0.2.0 to v0.5.2) still point at the old
+  commits, because moving a tag would start the release workflow again. David's Mac needs
+  `git fetch origin && git reset --hard origin/main` once.
+- **Hub:** the hosted hub on Railway (`https://hub-production-fba9.up.railway.app`) runs `7383b45`: D1 ids, D2 passes
   (`/passes`, `/hubs`) and D4. Nothing since then touches `src/hub.js`, so pushing doesn't redeploy it.
-- **Checks on `c72f427`:**
+- **Checks on `d4f09ea`:**
   - `npm test`: 78 of 78.
   - `npm run e2e`: 126 of 126. It now ends by quitting through the real quit path, and fails if the app doesn't exit.
   - The customer simulation (`scripts/customer`, against `npm run playground`): 91 of 91.
@@ -73,13 +78,13 @@ Tests ran after each batch, and each batch is one commit:
 
 | Commit | Batch | Main changes |
 |---|---|---|
-| `f82a38b` | A: hub | Bad WebSocket frames and resets no longer crash the hub. Session names made only of dots are refused (a session named `..` used to turn "Delete session" into "delete the team"). Sockets can send at most 1 MB before sign-in. Malformed tokens are refused without asking GitHub. The push guard understands quoting, `bash -lc`, `eval` and `ssh`. The shell-write check only flags real writes. `teams.json` is validated. Members are included in `state`. |
-| `80a396b` | B: agents and session folders | git status uses `-z`. Lanes ping every 20 s. Trust-prompt detection needs the question and both answers. A session folder holding ignored files that aren't build output (like `.env`) is kept, not deleted. Two agents starting one session share one folder. A renamed default branch is found again. The pre-push hook is written atomically. |
-| `dd7d174` | C: main process, teams, GitHub, updates | The single-instance lock comes first. The agent login-shell environment has a hard time limit. Sign-out stops hosting, shells and folders. GitHub and hub calls time out. Clones go into `.partial` first. Team keys are `where\|id`. Updates check the signer and bundle id, and the swap logs to `~/Library/Logs/Protoplasma-update.log`. SIGTERM quits without the dialog. |
-| `a132b61` | D: code view | Subfolder sessions work (`prefix`). Reads and writes are confined to the session folder, symlinks included. Find in files uses `grep -z`. Commit & Push commits only the folder (`add -A -- .`) and refuses during a conflict or on a detached HEAD. Unsaved edits parked for a deleted session folder are dropped, so they no longer block quitting, and saving a deleted file recreates its folder. Also a 3-line hub change. |
-| `23a8af5` | E: screens and panes | Watching an agent no longer types your terminal's replies into it. Session aliases are followed after renames. Notifications skip agents already on screen. Keyboard access throughout. Deleted teams stop their agents. |
-| `d13e370` | F: markup and styles | Contrast (`--faint`), focus outlines, ARIA tabs, `<bdi>` around paths. The in-app privacy text now says what the hub really relays. |
-| `9d8fd0f` | G: tooling, tests, docs | The playground control API needs a token. e2e has a 15-minute limit and an unexpected-alert check, and cleans up. Releases only ship commits on `main`. A Package workflow builds the app. `install.sh` replaces a running copy. Tests use an isolated git config and clean up. The README matches the code. |
+| `746f2a0` | A: hub | Bad WebSocket frames and resets no longer crash the hub. Session names made only of dots are refused (a session named `..` used to turn "Delete session" into "delete the team"). Sockets can send at most 1 MB before sign-in. Malformed tokens are refused without asking GitHub. The push guard understands quoting, `bash -lc`, `eval` and `ssh`. The shell-write check only flags real writes. `teams.json` is validated. Members are included in `state`. |
+| `2f4403b` | B: agents and session folders | git status uses `-z`. Lanes ping every 20 s. Trust-prompt detection needs the question and both answers. A session folder holding ignored files that aren't build output (like `.env`) is kept, not deleted. Two agents starting one session share one folder. A renamed default branch is found again. The pre-push hook is written atomically. |
+| `e7ba1bf` | C: main process, teams, GitHub, updates | The single-instance lock comes first. The agent login-shell environment has a hard time limit. Sign-out stops hosting, shells and folders. GitHub and hub calls time out. Clones go into `.partial` first. Team keys are `where\|id`. Updates check the signer and bundle id, and the swap logs to `~/Library/Logs/Protoplasma-update.log`. SIGTERM quits without the dialog. |
+| `2243974` | D: code view | Subfolder sessions work (`prefix`). Reads and writes are confined to the session folder, symlinks included. Find in files uses `grep -z`. Commit & Push commits only the folder (`add -A -- .`) and refuses during a conflict or on a detached HEAD. Unsaved edits parked for a deleted session folder are dropped, so they no longer block quitting, and saving a deleted file recreates its folder. Also a 3-line hub change. |
+| `cd1d970` | E: screens and panes | Watching an agent no longer types your terminal's replies into it. Session aliases are followed after renames. Notifications skip agents already on screen. Keyboard access throughout. Deleted teams stop their agents. |
+| `8e44014` | F: markup and styles | Contrast (`--faint`), focus outlines, ARIA tabs, `<bdi>` around paths. The in-app privacy text now says what the hub really relays. |
+| `4b76354` | G: tooling, tests, docs | The playground control API needs a token. e2e has a 15-minute limit and an unexpected-alert check, and cleans up. Releases only ship commits on `main`. A Package workflow builds the app. `install.sh` replaces a running copy. Tests use an isolated git config and clean up. The README matches the code. |
 
 193 of the 196 items are fixed. The rest are listed below.
 
@@ -141,7 +146,8 @@ new `look` straight away, so presence is right again within one round trip.
 - The layout and wording follow Amoeba (useamoeba.com), so people coming from it understand Protoplasma at once. Teams
   are permanent: deleting or leaving one happens only in Settings → Team.
 - The usage limit has been hit often. Work in small sections, write findings to files as you go, and use few subagents.
-- Commits end with `Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>`.
+- Commits are authored as `dw8-ro <61916598+dw8-ro@users.noreply.github.com>`, with no Claude or AI attribution lines
+  (no `Co-Authored-By`, no session links).
 
 ## Suggested next steps
 1. ~~Release 0.5.1~~ (done, 16 Oct 2026).

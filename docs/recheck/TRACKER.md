@@ -1,6 +1,6 @@
 # Recheck of Protoplasma 0.4.1 (clean restart): one small section at a time, findings only; fixes after compiling
 
-Recheck folder: docs/recheck (copied from the original session scratchpad). Shared instructions: INSTRUCTIONS.md. Findings: sections/NN-name.md. Compiled list: COMPILED.md. Line numbers in all of these are from 0.4.1 (35d334f) and have moved since.
+Recheck folder: docs/recheck (copied from the original session scratchpad). Shared instructions: INSTRUCTIONS.md. Findings: sections/NN-name.md. Compiled list: COMPILED.md. Line numbers in all of these are from 0.4.1 (817f96a) and have moved since.
 
 | # | Section | Scope | Status |
 |---|---------|-------|--------|

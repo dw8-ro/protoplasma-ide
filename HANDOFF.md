@@ -1,6 +1,7 @@
-# Handoff: Protoplasma IDE, 16 October 2026
+# Handoff: Protoplasma IDE, 17 October 2026
 
-Read this first in a new session, then [AGENTS.md](AGENTS.md) for how the code fits together.
+Read this first in a new session, then [AGENTS.md](AGENTS.md) for how the code fits together. What the last session
+did and what's left to do: [docs/sessions/2026-10-17.md](docs/sessions/2026-10-17.md).
 
 ## Where things stand
 
@@ -10,9 +11,8 @@ Read this first in a new session, then [AGENTS.md](AGENTS.md) for how the code f
   `docs/release-notes/0.5.1.md` (the F1 Force Quit advice first). Made with Actions → Release → Run workflow, because the
   cloud session can't push tags; the release created the tag. Installed copies see it within about 6 hours.
 - **v0.5.0** (commit `abc1b9a`), with N1–N10 and D1–D8. It's signed with the project's certificate, and its
-  release notes say Mac-hosted teams need everyone on 0.5. Installed copies see it within about 6 hours, where the
-  user's `gh` can see the private repo.
-- **After 0.5.0 (on `main` locally, not pushed or released yet):** a customer simulation of 0.5.0
+  release notes say Mac-hosted teams need everyone on 0.5. Installed copies see it within about 6 hours.
+- **After 0.5.0 (shipped in 0.5.1):** a customer simulation of 0.5.0
   ([docs/usage-test/REPORT.md](docs/usage-test/REPORT.md)), the fixes for its six findings, N11 and N12, and more
   tests (`8093a70` to `d4f09ea`).
   - **F1 matters most:** in 0.4.x and 0.5.0, Quit, Update now and logging out close the window but leave the app
@@ -135,7 +135,7 @@ low severity.
 | N9 | **Fixed** | app/renderer.js `pending` | Output for a local agent that has no terminal yet is buffered without limit, e.g. when you switch team while it starts, until you go back or it exits. | Cap the buffer like `tails` (keep the last 1,000,000 characters). |
 | N10 | **Fixed** | src/hub.js `lanAddresses`, scripts/icon.js | `lanAddresses` is exported but unused (and is the only user of hub.js's `os` import). icon.js leaves its temp iconset folder behind. | Delete them; remove the folder after `iconutil`. |
 | N11 | **Fixed** (regenerated 15 Oct 2026) | docs/*.png, docs/demo.gif | The README images were made on 2026-10-05, before 0.4.0's pane mode, plans, code comments and Conflicts. | `npm run screenshot` and `npm run demo`, then commit. |
-| N12 | **Fixed (the message)**: a login that can't see the repo is told so; going public is still David's call | app/updates.js | While the repo is private, installed copies find and download updates only through a `gh` signed in with access. Without gh they say "Couldn't reach GitHub"; signed in without access they wrongly say "No releases yet". The README says gh is needed. | Make the repo public (David's call), or map gh's 404 to "no access to the release repo". |
+| N12 | **Fixed (the message)**: a login that can't see the repo is told so; the repo is public since 17 Oct 2026 | app/updates.js | While the repo is private, installed copies find and download updates only through a `gh` signed in with access. Without gh they say "Couldn't reach GitHub"; signed in without access they wrongly say "No releases yet". The README says gh is needed. | Make the repo public (David's call), or map gh's 404 to "no access to the release repo". |
 
 N8 (renaming a session leaves teammates' presence on the old name) was refuted: each app follows the rename and sends a
 new `look` straight away, so presence is right again within one round trip.

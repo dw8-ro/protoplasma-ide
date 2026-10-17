@@ -9,10 +9,10 @@ TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT
 
 if command -v gh >/dev/null 2>&1 && gh auth status >/dev/null 2>&1; then
-  gh release download -R "$REPO" -p 'Protoplasma-*-mac-arm64.zip' -D "$TMP" # works for a private repo you can see
+  gh release download -R "$REPO" -p 'Protoplasma-*-mac-arm64.zip' -D "$TMP" # a signed-in gh isn't held to GitHub's hourly limit for anonymous requests
 else
   URL=$(curl -fsSL "https://api.github.com/repos/$REPO/releases/latest" | grep -o '"browser_download_url": *"[^"]*mac-arm64\.zip"' | cut -d'"' -f4)
-  [ -n "$URL" ] || { echo "Couldn't find a release. If the repo is private, sign in first: gh auth login" >&2; exit 1; }
+  [ -n "$URL" ] || { echo "Couldn't get the latest release from GitHub. Check your connection and try again in a few minutes, or download it from https://github.com/$REPO/releases" >&2; exit 1; }
   curl -fsSL -o "$TMP/Protoplasma.zip" "$URL"
 fi
 

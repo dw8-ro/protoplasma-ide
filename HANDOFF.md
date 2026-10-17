@@ -45,8 +45,11 @@ Read this first in a new session, then [AGENTS.md](AGENTS.md) for how the code f
   relay, stayed idle without). Teams on the online hub were never affected. e2e doesn't send a hook to a Mac hub yet.
 - **History rewritten (17 Oct 2026, David's choice):** every commit on `main` is by `dw8-ro` with GitHub's private
   address, and the `Co-Authored-By: Claude` and session lines are gone. The code is unchanged; every commit ID changed,
-  and the IDs these docs mention were updated to match. The release tags (v0.2.0 to v0.5.2) still point at the old
-  commits, because moving a tag would start the release workflow again. David's Mac needs
+  and the IDs these docs mention were updated to match. Once the repo was public, the old commits were still reachable
+  through the release tags, a leftover `refs/claude-teleport/…` ref and old Actions runs, carrying David's personal
+  email. A one-off workflow on a temporary branch moved each tag to its rewritten twin (same tree), deleted the ref and
+  the runs of commits no longer on `main`, then deleted its branch. GitHub still serves the old commits to anyone who
+  has their IDs, until it garbage-collects them; only GitHub Support can purge them sooner. David's Mac needs
   `git fetch origin && git reset --hard origin/main` once.
 - **Hub:** the hosted hub on Railway (`https://hub-production-fba9.up.railway.app`) runs `7383b45`: D1 ids, D2 passes
   (`/passes`, `/hubs`) and D4. Nothing since then touches `src/hub.js`, so pushing doesn't redeploy it.
@@ -54,9 +57,9 @@ Read this first in a new session, then [AGENTS.md](AGENTS.md) for how the code f
   - `npm test`: 78 of 78.
   - `npm run e2e`: 126 of 126. It now ends by quitting through the real quit path, and fails if the app doesn't exit.
   - The customer simulation (`scripts/customer`, against `npm run playground`): 91 of 91.
-- **Repo:** `dw8-ro/protoplasma-ide`. On 16 Oct 2026 David decided to make it public so Max can install it; he flips
-  the setting himself (no tool here can). Until it's public, people need `gh` signed in with access to install and
-  update, and "Report a problem" opens a page they can't see. Commit metadata shows David's email once it's public.
+- **Repo:** `dw8-ro/protoplasma-ide`, public since 17 Oct 2026. Checked that day from a Linux sandbox: the one-line
+  installer (run end to end with macOS commands stubbed), the signed 0.5.2 zip, the update check for 0.4.2 to 0.5.2
+  copies without `gh`, every README image, badge and link, and the hosted hub. Not done on a real Mac yet.
 
 ## What the last stretch of work did
 
@@ -138,7 +141,7 @@ N8 (renaming a session leaves teammates' presence on the old name) was refuted: 
 new `look` straight away, so presence is right again within one round trip.
 
 ## Rules from David that still apply
-- The repo goes public (David's decision, 16 Oct 2026); he changes the setting himself.
+- The repo is public (since 17 Oct 2026).
 - Never accept a Claude Code folder-trust prompt for him, and never enter passwords or handle credentials.
 - Don't invite real people to teams. Max is a placeholder until David gives his GitHub username.
 - Don't change the Railway `PROTO_OWNERS` variable without asking.
@@ -151,9 +154,13 @@ new `look` straight away, so presence is right again within one round trip.
 
 ## Suggested next steps
 1. ~~Release 0.5.1~~ (done, 16 Oct 2026).
-2. David makes the repo public (Settings → Danger Zone → Change visibility), then: check
-   `curl -fsSL https://raw.githubusercontent.com/dw8-ro/protoplasma-ide/main/install.sh` and the release zip download
-   without signing in, and install once on a Mac. Then Max installs (he uses Codex) and David invites his GitHub login.
+2. ~~Make the repo public~~ (done, 17 Oct 2026). Next: install once on a real Mac with the README one-liner, then Max
+   installs (he uses Codex) and David invites his GitHub login.
+   - Settings worth turning on now that it's public: a ruleset on `main` blocking force pushes and deletion, private
+     vulnerability reporting, approval for workflows from all outside contributors, and read-only default workflow
+     permissions. On David's GitHub account: "Keep my email addresses private" and "Block command line pushes that
+     expose my email".
+   - Copies on 0.4.x or 0.5.0 go straight to 0.5.2, whose notes don't repeat 0.5.1's Force Quit advice (F1).
 3. The remaining test gaps: the slow-viewer drop, the file-relay timeout, `files.js` watch, `updates.js`
    stage/sameSigner/swap.sh.
 4. Codex and OpenCode have no hooks, so no overlap warnings or file notes for them (lane.js TODO).

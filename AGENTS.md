@@ -322,8 +322,8 @@ docs/             screenshots (sources), readme/ (the README's images, dark and 
   - **Session folders:** `sessionFolder` runs clone, then push guard, then worktree. A repo with no commits uses the
     clone itself. `sessionFolderPath` must build the same `<clone>@<slug>` as workspace.js.
 - **updates.js:**
-  - **Finding a release:** `latestRelease` tries the public API first. While the repo is private, it falls back to
-    `gh api`, so **installed copies only update when the user's `gh` is signed in with access to the repo**.
+  - **Finding a release:** `latestRelease` asks the public API (no sign-in; GitHub allows 60 such requests an
+    hour per IP). If that fails, it falls back to `gh api` when `gh` is signed in.
   - **Installing:** `stage` downloads, unzips with `ditto`, strips quarantine, then requires `sameSigner`: the same
     certificate requirement, or for ad hoc copies, the same bundle id. Then a detached `swap.sh` replaces the app after
     it quits. swap.sh takes args `$1`–`$5`, logs to `~/Library/Logs/Protoplasma-update.log`, and puts the old app back on
@@ -555,7 +555,7 @@ docs/             screenshots (sources), readme/ (the README's images, dark and 
   - Health check: `/`. URL: `https://hub-production-fba9.up.railway.app`.
   - Hub changes reach installed apps only after this deploy, so push `main` when hub code changed.
 - **Install:** the README one-liner (`curl -fsSL https://raw.githubusercontent.com/dw8-ro/protoplasma-ide/main/install.sh | sh`)
-  needs the repo public; while it was private, people used `gh api …/install.sh | sh` with `gh` signed in.
+  works without signing in, because the repo is public (since 17 Oct 2026).
   install.sh quits a running copy, swaps it via `.old`, and rolls back on failure.
 
 ## Conventions
@@ -569,5 +569,5 @@ docs/             screenshots (sources), readme/ (the README's images, dark and 
 - **Workflow:**
   - Keep anything worth rerunning in the repo (`scripts/`), not in a temporary folder.
   - Work in small sections and write findings to files as you go; the usage limit has been hit often.
-- **Repo:** David decided on 16 Oct 2026 to make it public, so teammates install and update without `gh`. Commits are
+- **Repo:** public since 17 Oct 2026, so teammates install and update without `gh`. Commits are
   authored as `dw8-ro <61916598+dw8-ro@users.noreply.github.com>`, with no Claude or AI attribution lines (no `Co-Authored-By`, no session links).

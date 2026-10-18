@@ -22,7 +22,9 @@ const gitError = (errOut, fallback) => {
   return [...said.slice(-6), refused && `(${refused})`].filter(Boolean).join(' ') || message;
 };
 // Paths as they are (not C-quoted), never a password prompt nobody can see, and a limit for a network that hangs.
-const git = (root, args, env) => new Promise((resolve, reject) => execFile('git', ['-c', 'core.quotePath=false', ...args],
+// No core.fsmonitor command from the folder's own config, and no bare repository found rather than pointed at (see
+// lane.js SAFE_GIT for what that doesn't cover).
+const git = (root, args, env) => new Promise((resolve, reject) => execFile('git', ['-c', 'core.fsmonitor=false', '-c', 'safe.bareRepository=explicit', '-c', 'core.quotePath=false', ...args],
   // Commits and pushes run the repo's own hooks (tests, linters), which get much longer.
   { cwd: root, env: { ...env, GIT_TERMINAL_PROMPT: '0', GIT_OPTIONAL_LOCKS: '0' }, maxBuffer: 64e6, timeout: { commit: 0, push: 900_000 }[args[0]] ?? 120_000 },
   (err, out, errOut) => (err ? reject(Object.assign(new Error(err.killed ? 'Git took too long, so it was stopped.' : gitError(errOut || out, err.message)),

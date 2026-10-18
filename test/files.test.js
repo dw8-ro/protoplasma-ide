@@ -137,3 +137,18 @@ test('Find in files matches any case, keeps CRLF files and odd names whole', asy
   assert.deepEqual(hits, [{ path: 'a:12:b.txt', line: 1, text: 'hello there' }, { path: 'windows.txt', line: 2, text: 'Hello World' }]);
   assert.deepEqual(await files.search(repo, 'nowhere-to-be-found', env), []);
 });
+
+test('reading a folder\'s git status never runs a command its own config names', async () => {
+  // Such a folder could be one an agent is still asking whether to trust.
+  const repo = path.join(tmp, 'hostile'), mark = path.join(tmp, 'fsmonitor-ran');
+  fs.mkdirSync(repo);
+  git(repo, 'init', '-q', '-b', 'main');
+  fs.writeFileSync(path.join(repo, 'a'), 'hi\n');
+  git(repo, 'add', 'a');
+  git(repo, 'commit', '-qm', 'i');
+  git(repo, 'config', 'core.fsmonitor', `touch '${mark}'; echo`);
+  fs.writeFileSync(path.join(repo, 'a'), 'changed\n');
+  assert.deepEqual((await files.status(repo, env)).changes, [{ path: 'a', state: 'M' }]);
+  assert.equal((await require('../src/lane').gitStatus(repo, { env })).files, 1);
+  assert.equal(fs.existsSync(mark), false);
+});

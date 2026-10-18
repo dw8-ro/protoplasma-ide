@@ -73,9 +73,15 @@ async function prepare(release, bundle, pid, env, dir) {
   }
   await run('ditto', ['-x', '-k', zip, path.join(dir, 'new')], env);
   const fresh = path.join(dir, 'new', 'Protoplasma.app');
-  if (!fs.existsSync(path.join(fresh, 'Contents', 'Info.plist'))) throw new Error('The update didn\'t contain the app.');
+  // A real folder (a link to the installed app would pass every check, and the swap would then delete the app).
+  if (!fs.lstatSync(fresh, { throwIfNoEntry: false })?.isDirectory() || !fs.existsSync(path.join(fresh, 'Contents', 'Info.plist'))) {
+    throw new Error('The update didn\'t contain the app.');
+  }
   await run('xattr', ['-dr', 'com.apple.quarantine', fresh], env).catch(() => {}); // usually there's nothing to remove
   await sameSigner(bundle, fresh, env);
+  // The signed app must be the version the release says, or an old signed copy could be passed off as an update.
+  const inside = (await run('/usr/bin/plutil', ['-extract', 'CFBundleShortVersionString', 'raw', '-o', '-', path.join(fresh, 'Contents', 'Info.plist')], env).catch(() => '')).trim();
+  if (inside !== release.version) throw new Error(`The update is labelled ${release.version} but contains ${inside || 'another version'}, so it wasn't installed.`);
   // $1 the app, $2 the new copy, $3 this folder (the download, about 150 MB), $4 the app's pid. It waits as long as the app
   // runs (a cancelled quit installs at the next one); if the swap fails it says so, and keeps a log, instead of quietly reopening.
   const script = path.join(dir, 'swap.sh'), log = path.join(os.homedir(), 'Library', 'Logs', 'Protoplasma-update.log');

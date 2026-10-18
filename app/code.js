@@ -558,7 +558,7 @@ function commentOn(ed) {
   panelHidden = false;
   panelTab = 'session';
   render();
-  $('#commentText').focus();
+  setTimeout(() => $('#commentText').focus()); // after Monaco finishes the action, which can take focus back to the editor
 }
 // The text of lines `from` to `to`, as a comment keeps it to find them again: each trimmed, at most 300 characters.
 const blockAt = (model, from, to) => {
@@ -575,10 +575,12 @@ function linesOf(c, model) {
   const first = c.snippet.split('\n')[0], lines = model.getLinesContent();
   const starts = line => line >= 1 && line <= count && lines[line - 1].trim().slice(0, 300) === first;
   const whole = line => !c.snippet.includes('\n') || blockAt(model, line, line + span) === c.snippet;
-  // Nearest to where it was: first where the whole block still matches, else where its first line does.
+  // Nearest to where it was: first where the whole block still matches, else where its first line does. Only the file's
+  // own lines are looked at, from the nearest (a file that shrank, or a comment claiming line 10,000,000, starts at the end).
+  const near = Math.min(c.line, count);
   for (const check of [line => starts(line) && whole(line), starts]) {
-    for (let d = 0; d < Math.max(count, c.line); d++) { // a file that shrank: the old line may be past its end
-      for (const line of [c.line - d, c.line + d]) if (check(line)) return { line, endLine: Math.min(count, line + span) };
+    for (let d = 0; d < count; d++) {
+      for (const line of [near - d, near + d]) if (check(line)) return { line, endLine: Math.min(count, line + span) };
     }
   }
   return null;

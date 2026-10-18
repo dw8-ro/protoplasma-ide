@@ -101,3 +101,54 @@ test('the last 20 stopped agents are kept per team, newest first', async () => {
   assert.equal(stopped[0].id, 'stopped-21');
   assert.ok(!stopped.some(s => s.id === 'stopped-0' || s.id === 'stopped-1'), 'the oldest went');
 });
+
+test('an id made from a hook secret only connects with that secret', async () => {
+  const { laneIdOf } = require('../src/shared');
+  assert.equal((await lane({ id: laneIdOf('someone-elses-hook-secret') })).code, 4000, 'another secret, even with no agent holding the id');
+  const mine = await lane({ id: laneIdOf(SECRET) });
+  assert.ok(mine.ws, 'its own secret');
+  await closed(mine.ws);
+});
+
+test('edits reported by hooks stay within a git report\'s limits', async () => {
+  const l = await lane({});
+  await hook(l.id, { hook_event_name: 'PostToolUse', tool_name: 'Edit', tool_input: { file_path: `/r/${'x'.repeat(400)}.ts` } });
+  for (let i = 0; i < 205; i++) await hook(l.id, { hook_event_name: 'PostToolUse', tool_name: 'Edit', tool_input: { file_path: `/r/f${i}.ts` } });
+  const files = (await state()).lanes.find(x => x.id === l.id).files;
+  assert.equal(files.length, 200);
+  assert.ok(files.every(f => f.length <= 300));
+  await closed(l.ws);
+});
+
+test('an edit counts from its PreToolUse, which also shows the agent working again after a permission', async () => {
+  const l = await lane({});
+  await hook(l.id, { hook_event_name: 'PermissionRequest' });
+  await hook(l.id, { hook_event_name: 'PreToolUse', tool_name: 'Write', tool_input: { file_path: '/r/new.ts' } });
+  const mine = (await state()).lanes.find(x => x.id === l.id);
+  assert.deepEqual([mine.status, mine.files], ['working', ['new.ts']]);
+  await closed(l.ws);
+});
+
+test('only the session creator\'s (or the owner\'s) agent sets a session\'s repo', async () => {
+  await api('tok-alice', 'POST', `/teams/${team.id}/sessions`, { name: 'alices-work', task: 'x' });
+  const theirs = await lane({ session: 'alices-work', repo: 'bob/evil' }, 'tok-bob');
+  const repoOf = async () => (await state()).sessions.find(x => x.name === 'alices-work').repo;
+  assert.equal(await repoOf(), undefined, 'a teammate\'s agent doesn\'t');
+  const mine = await lane({ session: 'alices-work', repo: 'alice/real' });
+  assert.equal(await repoOf(), 'alice/real');
+  await Promise.all([closed(theirs.ws), closed(mine.ws)]);
+});
+
+test('a stopped agent\'s id can\'t be taken on another team, where it would turn the agent away when it\'s back', async () => {
+  const other = (await api('tok-alice', 'POST', '/teams', { name: 'Other' })).body;
+  await api('tok-alice', 'POST', `/teams/${other.id}/members`, { login: 'bob' });
+  assert.equal((await lane({ id: 'stopped-21', team: other.id }, 'tok-bob')).code, 4000);
+});
+
+// Last: its 30 stopped agents push everyone else's out of the team's stopped list.
+test('one person runs at most 30 agents in a team, since every teammate\'s app keeps a terminal for each', async () => {
+  const mine = await Promise.all(Array.from({ length: 30 }, () => lane({}, 'tok-bob')));
+  assert.ok(mine.every(l => l.ws), 'thirty join');
+  assert.equal((await lane({}, 'tok-bob')).code, 4000, 'the next is refused');
+  await Promise.all(mine.map(l => closed(l.ws)));
+});

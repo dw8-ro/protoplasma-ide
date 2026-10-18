@@ -128,7 +128,7 @@ function cloneRepo(repo, env) {
   if (!cloning.has(dir)) {
     cloning.set(dir, (async () => {
       if (fs.existsSync(dir) && fs.readdirSync(dir).length) throw new Error(`There's already a folder at ${dir} that isn't a clone of ${repo}. Move it away, then try again.`);
-      const partial = `${dir}.partial`;
+      const partial = `${dir}@.partial`; // a name no repo (no @) or session folder (a slug never starts with .) can have
       fs.rmSync(partial, { recursive: true, force: true });
       fs.mkdirSync(path.dirname(dir), { recursive: true });
       await gh(['repo', 'clone', repo, partial], env, 30 * 60_000);

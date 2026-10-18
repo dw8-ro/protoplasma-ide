@@ -110,7 +110,9 @@ async function stopHosting() {
 
 const unreachable = () => new Error('Couldn\'t reach the team\'s hub. Check your connection and try again.');
 const pins = new Map();   // hub url -> { host, fp, pem }: the certificate a hub on another Mac presented
+const vouched = new Map(); // hub url -> its pin, once that passed a team owner check: all the hub socket may accept
 const passes = new Map(); // "<login> <fingerprint>" -> { pass, owners, expires } from the online hub
+const forget = url => { pins.delete(url); vouched.delete(url); };
 
 /** The certificate a hub on another Mac presents, read without trusting it: a pass for it is good at no other. */
 const certOf = url => new Promise((resolve, reject) => {
@@ -125,9 +127,10 @@ const certOf = url => new Promise((resolve, reject) => {
 
 /**
  * How to sign in to the hub at `url`: `token` to send, plus `ca`, the one certificate it must present (this Mac's or
- * another Mac's hub), and for another Mac's hub `owners`, who the online hub says runs it.
+ * another Mac's hub), and for another Mac's hub `owners`, who the online hub says runs it. With `owner` (the team's), a
+ * hub on another Mac that isn't that person's gets refused.
  */
-async function access(s, url) {
+async function access(s, url, owner) {
   if (url === onlineHub) return { token: s.token };
   if (local && url === local.url) return { token: s.token, ca: local.pem };
   if (!url.startsWith('https:')) throw new Error('That hub isn\'t encrypted, so Protoplasma won\'t sign in to it.');
@@ -140,6 +143,13 @@ async function access(s, url) {
     passes.set(key, { pass: got.pass, owners: got.owners.map(o => String(o).toLowerCase()), expires: Number(got.expires) || 0 });
   }
   const { pass, owners } = passes.get(key);
+  // A failed request reads the certificate again, so whatever answers at this address next (another device given the
+  // address, or a look-alike on the network) would be pinned. It has to be the team owner's hub to get anything.
+  if (owner && !owners.includes(owner.toLowerCase())) {
+    forget(url); // the owner's hub may be back next time
+    throw new Error(`The hub at that address isn't ${owner}'s any more, so Protoplasma won't connect to it.`);
+  }
+  if (owner) vouched.set(url, pin);
   return { token: pass, ca: pin.pem, owners };
 }
 
@@ -176,11 +186,15 @@ function hookRelay(hubFor) {
 function isPinned(hostname, pem) {
   let fp;
   try { fp = fingerprint(new crypto.X509Certificate(pem).raw); } catch { return false; }
-  return [...pins.values(), ...(local ? [{ host: '127.0.0.1', fp: local.fp }] : [])].some(p => p.host === hostname && p.fp === fp);
+  // Chromium says the host but not the port, so only pins a team owner check vouched for count: one left by listing a
+  // look-alike nearby hub on the same address must not let it answer for the team's.
+  return [...vouched.values(), ...(local ? [{ host: '127.0.0.1', fp: local.fp }] : [])].some(p => p.host === hostname && p.fp === fp);
 }
 
-async function hubApi(s, url, method, route, body) {
-  const { token, ca } = await access(s, url);
+/** A request to the hub at `to`: a URL, or a team (its hub, which must still be its owner's). */
+async function hubApi(s, to, method, route, body) {
+  const url = to.hub || to;
+  const { token, ca } = await access(s, url, to.owner);
   // A kept-alive connection the hub has just closed (this Mac's hub moving to the network at an invite closes its idle
   // ones) fails at once; the request never reached the hub, so it's sent again on a new connection.
   const send = () => new Promise((resolve, reject) => {
@@ -196,7 +210,7 @@ async function hubApi(s, url, method, route, body) {
     req.on('error', e => reject(Object.assign(e, { retry: req.reusedSocket && e.code === 'ECONNRESET' }))).end(body && JSON.stringify(body));
   });
   const res = await send().catch(e => (e.retry ? send() : Promise.reject(e))).catch(() => {
-    pins.delete(url); // a hub that came back with a new certificate is read again next time
+    forget(url); // a hub that came back with a new certificate is read again next time
     throw unreachable();
   });
   let data = null;
@@ -243,34 +257,34 @@ async function createTeam(s, { name, online }) {
 }
 
 const invite = async (s, team, { login, id }) => {
-  const result = await hubApi(s, team.hub, 'POST', `/teams/${encodeURIComponent(team.id)}/members`, { login, id });
+  const result = await hubApi(s, team, 'POST', `/teams/${encodeURIComponent(team.id)}/members`, { login, id });
   if (local && team.hub === local.url) share(); // they'll need to reach it
   return result;
 };
 const removeMember = (s, team, login) =>
-  hubApi(s, team.hub, 'DELETE', `/teams/${encodeURIComponent(team.id)}/members/${encodeURIComponent(login)}`);
-const deleteTeam = (s, team) => hubApi(s, team.hub, 'DELETE', `/teams/${encodeURIComponent(team.id)}`);
+  hubApi(s, team, 'DELETE', `/teams/${encodeURIComponent(team.id)}/members/${encodeURIComponent(login)}`);
+const deleteTeam = (s, team) => hubApi(s, team, 'DELETE', `/teams/${encodeURIComponent(team.id)}`);
 
-const addMemory = (s, team, note) => hubApi(s, team.hub, 'POST', `/teams/${encodeURIComponent(team.id)}/memories`, note);
+const addMemory = (s, team, note) => hubApi(s, team, 'POST', `/teams/${encodeURIComponent(team.id)}/memories`, note);
 const removeMemory = (s, team, id) =>
-  hubApi(s, team.hub, 'DELETE', `/teams/${encodeURIComponent(team.id)}/memories/${encodeURIComponent(id)}`);
+  hubApi(s, team, 'DELETE', `/teams/${encodeURIComponent(team.id)}/memories/${encodeURIComponent(id)}`);
 
 // "." and ".." would vanish from the URL (and ".." would point at the team itself), so they're never sent.
 const sessionRoute = (team, name = '') => {
   if (/^\.+$/.test(name)) throw new Error('A session name needs a letter or a number.');
   return `/teams/${encodeURIComponent(team.id)}/sessions${name && `/${encodeURIComponent(name)}`}`;
 };
-const saveSession = (s, team, session) => hubApi(s, team.hub, 'POST', sessionRoute(team), session);
-const setSessionDone = (s, team, name, done) => hubApi(s, team.hub, 'POST', sessionRoute(team, name), { done });
-const renameSession = (s, team, name, rename) => hubApi(s, team.hub, 'POST', sessionRoute(team, name), { rename });
-const deleteSession = (s, team, name) => hubApi(s, team.hub, 'DELETE', sessionRoute(team, name));
+const saveSession = (s, team, session) => hubApi(s, team, 'POST', sessionRoute(team), session);
+const setSessionDone = (s, team, name, done) => hubApi(s, team, 'POST', sessionRoute(team, name), { done });
+const renameSession = (s, team, name, rename) => hubApi(s, team, 'POST', sessionRoute(team, name), { rename });
+const deleteSession = (s, team, name) => hubApi(s, team, 'DELETE', sessionRoute(team, name));
 const commentRoute = (team, name, id = '') => `${sessionRoute(team, name)}/comments${id && `/${encodeURIComponent(id)}`}`;
-const addComment = (s, team, name, text, ref = {}) => hubApi(s, team.hub, 'POST', commentRoute(team, name), { text, ...ref });
+const addComment = (s, team, name, text, ref = {}) => hubApi(s, team, 'POST', commentRoute(team, name), { text, ...ref });
 const stepRoute = (team, name, id = '') => `${sessionRoute(team, name)}/steps${id && `/${encodeURIComponent(id)}`}`;
-const addStep = (s, team, name, step) => hubApi(s, team.hub, 'POST', stepRoute(team, name), step);
-const updateStep = (s, team, name, id, change) => hubApi(s, team.hub, 'POST', stepRoute(team, name, id), change);
-const removeStep = (s, team, name, id) => hubApi(s, team.hub, 'DELETE', stepRoute(team, name, id));
-const removeComment = (s, team, name, id) => hubApi(s, team.hub, 'DELETE', commentRoute(team, name, id));
+const addStep = (s, team, name, step) => hubApi(s, team, 'POST', stepRoute(team, name), step);
+const updateStep = (s, team, name, id, change) => hubApi(s, team, 'POST', stepRoute(team, name, id), change);
+const removeStep = (s, team, name, id) => hubApi(s, team, 'DELETE', stepRoute(team, name, id));
+const removeComment = (s, team, name, id) => hubApi(s, team, 'DELETE', commentRoute(team, name, id));
 
 // At quit: the goodbye goes out before the socket closes, so other Macs stop listing this one at once.
 const stopAnnouncing = () => new Promise(resolve => {

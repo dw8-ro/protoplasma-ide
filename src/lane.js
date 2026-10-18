@@ -7,7 +7,7 @@ const crypto = require('crypto');
 const { execFile, execFileSync } = require('child_process');
 const pty = require('node-pty');
 const WebSocket = require('ws');
-const { EDIT_TOOLS, appendScrollback } = require('./shared');
+const { EDIT_TOOLS, appendScrollback, laneIdOf } = require('./shared');
 
 const RECONNECT_MS = 3000;
 const REJOIN_MS = 30_000; // after being removed from a team: an invite back lets the agent rejoin
@@ -35,16 +35,22 @@ function claudeHookSettings(url) {
   const hook = { type: 'http', url, timeout: 3, headers: { Authorization: 'Bearer $PROTO_HOOK_SECRET' }, allowedEnvVars: ['PROTO_HOOK_SECRET'] };
   return JSON.stringify({ hooks: {
     UserPromptSubmit: [{ hooks: [hook] }],
-    // Read: deliver a file's notes before any edit. Bash: confirm risky pushes.
+    // Read: deliver a file's notes before any edit. Bash: confirm risky pushes. Edits are recorded here too: there's no
+    // PostToolUse, which would send the hub every tool's whole output (files read, command output, MCP results).
     PreToolUse: [{ matcher: ['Read', 'Bash', ...EDIT_TOOLS].join('|'), hooks: [hook] }],
-    PostToolUse: [{ hooks: [hook] }],
     PermissionRequest: [{ hooks: [hook] }],
     Stop: [{ hooks: [hook] }],
   } });
 }
 
+// Git run in the background doesn't run a folder's core.fsmonitor command, and only uses a bare repository it's pointed
+// at, not one it finds (a committed bare repo brings its own config): the agent may still be asking whether to trust
+// that folder, and polling in a folder someone picked waits while it does (`picked`). ponytail: git has no switch for the rest of a folder's own config
+// (filter and diff drivers, core.sshCommand on a fetch), which only a .git that came with the folder can set (a
+// downloaded archive; never a clone). Hold all git until the trust prompt is answered if that matters.
+const SAFE_GIT = ['-c', 'core.fsmonitor=false', '-c', 'safe.bareRepository=explicit'];
 const git = (cwd, ...args) => {
-  try { return execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim(); } catch { return ''; }
+  try { return execFileSync('git', [...SAFE_GIT, ...args], { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim(); } catch { return ''; }
 };
 // The repo root as git reports it (symlinks resolved, e.g. /private/var/...) and as the agent sees it (/var/...), so
 // the hub recognises a file whichever way an agent writes its path.
@@ -65,7 +71,7 @@ const githubRepo = cwd => repoFromRemote(git(cwd, 'remote', 'get-url', 'origin')
  */
 async function gitStatus(cwd, { env = process.env, fetch = false } = {}) {
   // null when git failed (a timeout, too much output): then there's nothing to report, not "no changes".
-  const run = (...args) => new Promise(resolve => execFile('git', ['-c', 'core.quotePath=false', ...args],
+  const run = (...args) => new Promise(resolve => execFile('git', [...SAFE_GIT, '-c', 'core.quotePath=false', ...args],
     { cwd, encoding: 'utf8', maxBuffer: 10e6, timeout: 20_000, env: gitEnv(env) }, (err, out) => resolve(err ? null : out)));
   const line = async (...args) => (await run(...args) || '').trim();
   if (fetch) await fetchGit(cwd, env);
@@ -105,7 +111,8 @@ async function gitStatus(cwd, { env = process.env, fetch = false } = {}) {
   }
   for (const file of added.slice(0, MAX_CHANGED)) changed.push(file); // (a spread of a huge list would overflow the stack)
   const local = sinceUpstream === null ? changed : [...new Set([...(sinceUpstream || '').split('\0').filter(Boolean), ...added])];
-  return { ...stats, changed: changed.slice(0, MAX_CHANGED), local: local.slice(0, MAX_CHANGED) };
+  // untracked: the new files (not sent to the hub; see code:readLane).
+  return { ...stats, changed: changed.slice(0, MAX_CHANGED), local: local.slice(0, MAX_CHANGED), untracked: added.slice(0, MAX_CHANGED) };
 }
 // Git run in the background never asks for anything: no password prompt nobody sees, no ssh passphrase on a terminal.
 const gitEnv = env => ({ ...env, GIT_TERMINAL_PROMPT: '0', GIT_OPTIONAL_LOCKS: '0', GIT_SSH_COMMAND: env.GIT_SSH_COMMAND || 'ssh -o BatchMode=yes' });
@@ -116,7 +123,7 @@ const fetchGit = (cwd, env = process.env) => new Promise(resolve => {
   const own = !env.GIT_SSH_COMMAND && git(cwd, 'config', 'core.sshCommand');
   const e = gitEnv(env);
   if (own) delete e.GIT_SSH_COMMAND;
-  execFile('git', ['fetch', '--quiet'], { cwd, timeout: 20_000, env: e }, () => resolve());
+  execFile('git', [...SAFE_GIT, 'fetch', '--quiet'], { cwd, timeout: 20_000, env: e }, () => resolve());
 });
 
 // node-pty doesn't report a missing command (the lane would start and exit at once), so look for it first.
@@ -143,15 +150,17 @@ const MACHINE = crypto.createHash('sha256').update(os.hostname()).digest('hex').
  * @param {number} [o.cols] @param {number} [o.rows] the terminal's size
  * @param {object} [o.env] its environment
  * @param {(reason: string) => void} [o.onRefused] called when the hub turns it away (a 4xxx close)
+ * @param {boolean} [o.picked] the folder is one a person picked (not a clone the app made, whose git config is the
+ *   app's own): no git runs there while the agent asks whether to trust it
  * @returns {{ id: string, term: import('node-pty').IPty, repo: string, write: (data: string) => void, rejoin: () => void,
  *   resize: (cols: number, rows: number) => void }}
  */
-function startLane({ hub, hookBase, team, token, credentials = () => ({ token }), session, cmd = 'claude', args = [], cwd = process.cwd(), open = false, cols = 120, rows = 36, env = process.env, onRefused }) {
+function startLane({ hub, hookBase, team, token, credentials = () => ({ token }), session, cmd = 'claude', args = [], cwd = process.cwd(), open = false, cols = 120, rows = 36, env = process.env, onRefused, picked = false }) {
   hub = new URL(hub).origin;
   if (!fs.statSync(cwd, { throwIfNoEntry: false })?.isDirectory()) throw new Error(`Folder not found: ${cwd}`);
   if (!installed(cmd, env)) throw new Error(`The "${cmd}" command isn't installed on this Mac. Install it, then start the agent again.`);
-  const id = crypto.randomUUID();
   const hookSecret = crypto.randomBytes(24).toString('hex');
+  const id = laneIdOf(hookSecret);
   if (path.basename(cmd) === 'claude') args = ['--settings', claudeHookSettings(`${hookBase || hub}/hooks/${id}`), ...args];
   // TODO: hooks for Codex and OpenCode. Their lanes get terminal sharing but no overlap warnings yet.
 
@@ -177,6 +186,8 @@ function startLane({ hub, hookBase, team, token, credentials = () => ({ token })
   const send = msg => ws?.readyState === WebSocket.OPEN && ws.send(JSON.stringify(msg));
 
   let lastGit = null; // last reported git stats
+  let newFiles = []; // its last report's untracked files
+  const began = Date.now();
   let retry = null, signingIn = false, creds = null; // creds: the sign-in last used, { token, ca? }
   // A hub on someone's Mac must present the certificate its pass names; `ca` pins the connection to exactly that one.
   const socketTo = c => new WebSocket(`${hub.replace(/^http/, 'ws')}/lane`, c.ca ? { ca: c.ca, checkServerIdentity: () => undefined } : undefined);
@@ -252,12 +263,16 @@ function startLane({ hub, hookBase, team, token, credentials = () => ({ token })
   // Report git progress (and branch switches) as the agent works, only when something changed.
   let polls = 0, polling = false, fetching = false;
   const pollGit = setInterval(async () => {
+    if (asking && picked) return; // nothing runs in a picked folder its agent hasn't been told to trust yet (see SAFE_GIT)
     if (polls++ % FETCH_EVERY === 0 && !fetching) { fetching = true; fetchGit(cwd, env).finally(() => { fetching = false; }); } // beside the poll, not in it
     if (polling) return;
     polling = true;
     const next = await gitStatus(cwd, { env }).finally(() => { polling = false; });
-    if (exited || !next?.branch || JSON.stringify(next) === JSON.stringify(lastGit)) return;
-    lastGit = next;
+    if (exited || !next?.branch) return;
+    const { untracked, ...stats } = next;
+    newFiles = untracked;
+    if (JSON.stringify(stats) === JSON.stringify(lastGit)) return;
+    lastGit = stats;
     send({ t: 'git', ...lastGit });
   }, GIT_POLL_MS);
   pollGit.unref();
@@ -279,7 +294,9 @@ function startLane({ hub, hookBase, team, token, credentials = () => ({ token })
     setTimeout(() => last.terminate(), 10_000).unref();
   });
 
-  return { id, term, repo: hello.repo, write, rejoin: connect, resize(c, r) {
+  // changed(): the files its last git report has changed (paths from the repo's top), as the hub was told; isNew(rel):
+  // whether one of them is untracked; began: when it started.
+  return { id, term, repo: hello.repo, write, rejoin: connect, changed: () => lastGit?.changed || [], isNew: rel => newFiles.includes(rel), began, resize(c, r) {
     if (exited || !(c > 0 && r > 0)) return; // a hidden terminal measures 0
     lastInput = Date.now(); // the redraw that follows isn't work
     try { term.resize(c, r); } catch { return; } // the agent exited a moment ago

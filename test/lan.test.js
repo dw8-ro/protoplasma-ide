@@ -92,6 +92,22 @@ test('a hub only lists teams owned by whoever the online hub says runs it', asyn
   assert.deepEqual(await teams.teamsAt(bob, malloryUrl), []);
 });
 
+test('a team\'s hub must still be its owner\'s: something else answering at its address gets nothing', async () => {
+  // Mallory's hub where Alice's was: a team request, and an agent's or a window's sign-in, are refused before anything is sent.
+  const garage = { ...(await teams.teamsAt(bob, aliceUrl))[0], hub: malloryUrl };
+  await assert.rejects(teams.access(bob, malloryUrl, 'alice'), /isn't alice's/);
+  await assert.rejects(teams.hubApi(bob, garage, 'POST', `/teams/${garage.id}/memories`, { text: 'hi' }), /isn't alice's/);
+  assert.match((await teams.access(bob, aliceUrl, 'Alice')).token, /^p1\./, 'the owner\'s own hub is fine');
+});
+
+test('the hub socket accepts only a certificate a team owner check vouched for, not any pinned on that address', async () => {
+  // Both hubs are on 127.0.0.1, and Chromium names only the host: listing Mallory's pins its certificate there.
+  await teams.teamsAt(bob, malloryUrl);
+  assert.equal(teams.isPinned('127.0.0.1', malloryCert), false);
+  await teams.access(bob, aliceUrl, 'alice');
+  assert.equal(teams.isPinned('127.0.0.1', aliceCert), true);
+});
+
 test('an agent connects to a hub on a Mac only through the certificate it pinned', async () => {
   const garage = (await teams.teamsAt(bob, aliceUrl))[0];
   const lanesOn = async () => {

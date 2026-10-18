@@ -19,7 +19,7 @@ Function names below are stable. Line numbers drift, so search by name.
 |---|---|---|
 | `npm install` | Installs dependencies (postinstall makes node-pty's `spawn-helper` executable) | Node 24 |
 | `npm start` | Runs the app from source. Updates are off in source runs. | |
-| `npm test` | 80 integration tests in `test/*.test.js`: real hub, real lanes, real git. About a minute. | git ≥ 2.28, macOS. No network or Electron needed. |
+| `npm test` | 91 integration tests in `test/*.test.js`: real hub, real lanes, real git. About a minute. | git ≥ 2.28, macOS. No network or Electron needed. |
 | `npm run e2e` | Drives the real Electron app through every main flow and prints `PASS`/`FAIL` per step, ending with `N/M passed`. 15-minute cap. | The `claude` CLI on the login-shell PATH and a GUI session. One step needs `gh auth status` to succeed (online). |
 | `npm run dist` | Packages `dist/Protoplasma-darwin-arm64/Protoplasma.app`, unsigned. | |
 | `npm run playground` | Two app copies (David on port 7801, Max on 7802) on a local hub and repo, each with an HTTP control API | |
@@ -59,8 +59,8 @@ app/index.html    CSP, all CSS (tokens and themes), icon sprite, all markup and 
 app/config.json   githubClientId (OAuth app, device flow), onlineHub (the Railway URL)
 scripts/          e2e.js, playground.js + playground-app.js, stage.js, screenshot.js, demo.js + gif.js, readme-art.js +
                   readme-art/ (the README image pages and diagram), sign.sh, icon.js
-test/             hub.test.js (40), hub-live.test.js (5), workspace.test.js (13), files.test.js (10), lan.test.js (7),
-                  identity.test.js (2), updates.test.js (3)
+test/             hub.test.js (40), hub-live.test.js (11), workspace.test.js (13), files.test.js (11), lan.test.js (9),
+                  identity.test.js (4), updates.test.js (3)
 .github/workflows ci.yml (npm test on every push to main and PR), package.yml (dist check), release.yml (tag → release)
 Dockerfile        the hosted hub image (only src/hub.js + src/shared.js + ws)
 install.sh        the one-line installer
@@ -117,7 +117,11 @@ docs/             screenshots (sources), readme/ (the README's images, dark and 
     a login now held by another id, and follows a rename (`renamePerson`). Every owner and author check runs after it,
     so they can keep comparing logins. Invites carry the id the app got from GitHub (`findUser`).
 - **Sign-in:** `identify` caches a good token for 2 minutes and a rejected one for 10 s, keyed by its sha256.
-  Concurrent lookups share one request. A GitHub outage is never cached: REST answers 503 and a WebSocket closes with
+  Concurrent lookups share one request. GitHub-shaped tokens the hub hasn't seen check out get a hub-wide budget of
+  `MAX_LOOKUPS` (60) GitHub checks a minute, counted before the wait; past it they get 503/1013. Tokens that checked
+  out in the last day (`known`, hashes kept in `known.json` so a restart or redeploy doesn't forget them) skip the
+  budget. No client address is trusted. During a flood, new sign-ins (and anyone away for over a day) wait (ponytail:
+  per-address budgets if that happens). A GitHub outage is never cached: REST answers 503 and a WebSocket closes with
   1013. `githubUser` returns null without asking GitHub for anything not shaped like a GitHub token (`gh?_…`,
   `github_pat_…` or 40 hex characters).
 - **WebSockets:** the first frame carries `{token, team}`, and `authenticate` checks it. Frames sent while it's checked
@@ -132,8 +136,14 @@ docs/             screenshots (sources), readme/ (the README's images, dark and 
   | 1011 | Hub error | Retries |
 
 - **`onLane`:**
-  - Validates the hello: the id matches `[\w-]{1,64}`, `hookSecret` is at least 16 characters, the session name isn't
-    made only of dots, and the id isn't held by another login.
+  - Validates the hello: the id matches `[\w-]{1,64}`, `hookSecret` is at least 16 characters, an `h-` id equals
+    `laneIdOf(hookSecret)`, the session name isn't made only of dots, and the id isn't held by another login. A new
+    session past `MAX_SESSIONS` is refused (`full`), as the REST route does.
+  - A session's `repo` is set only by an agent of whoever started it (or the team owner), with `repoBy` saying whose,
+    so another teammate's agent can't pick what the one-click "Add an agent" clones and runs. Renderer `sourceFor` uses
+    it only when `repoBy` is the creator or owner (older records have none), else a running agent of theirs, else asks.
+    A hello's `repo` must look like `owner/name`.
+  - One person runs at most `MAX_LANES` (30) live agents per team: every teammate's app keeps a terminal for each.
   - Builds the lane record. `tree` is a hash of login, machine and root, and identifies one checkout.
   - On a reconnect, carries over status, prompt and files.
   - Relays `out` to every watcher on the team, and handles `size`, `git` and `status`.
@@ -150,9 +160,11 @@ docs/             screenshots (sources), readme/ (the README's images, dark and 
 - **Hooks:** `POST /hooks/:laneId` with `Authorization: Bearer <hookSecret>`, compared timing-safe. `onHook` handles:
   - **UserPromptSubmit:** sets the lane to working and adds `teamContext`: the session goal, plan, other agents and their
     files, notes, and a behind warning.
-  - **PreToolUse Bash:** `pushRisk` or `shellWriteRisk` → `ask`.
-  - **PreToolUse on another tool:** adds the file's notes. For edit tools (`EDIT_TOOLS`), asks when `othersOn` the file.
-  - **PostToolUse:** records the edit.
+  - **PreToolUse:** sets the lane to working (so it recovers after a permission). Bash: `pushRisk` or `shellWriteRisk`
+    → `ask`. Another tool: adds the file's notes; for edit tools (`EDIT_TOOLS`), records the edit (`recordEdit`: 300
+    characters, 200 files at most) and asks when `othersOn` the file.
+  - **PostToolUse:** only from apps before 0.5.3, which still register it: records the edit. New agents don't send it,
+    because it carries every tool's whole output (files read, command output, MCP results).
   - **PermissionRequest:** sets the lane to "needs you". **Stop:** sets it to idle.
 
   Claude Code's hook timeout is 3 s, so hook answers must stay fast. If the hook fails, Claude Code carries on.
@@ -201,9 +213,10 @@ docs/             screenshots (sources), readme/ (the README's images, dark and 
 - **`startLane(opts)`:**
   - Throws straight away for a missing folder, a CLI that isn't installed, or a spawn failure. node-pty would hide a
     missing command, so `installed()` checks first.
-  - Makes an id (a UUID) and a 48-hex `hookSecret`.
+  - Makes a 48-hex `hookSecret` and the id from it (`laneIdOf` in shared.js: `h-` and 32 hex), so only whoever holds
+    the secret can connect under that id. `changed()` returns its last git report's files, which `code:readLane` checks.
   - For `claude`, adds `--settings` with HTTP hooks (`claudeHookSettings`: UserPromptSubmit, PreToolUse
-    `Read|Bash|EDIT_TOOLS`, PostToolUse, PermissionRequest and Stop, with a 3 s timeout). They go to `hookBase` when
+    `Read|Bash|EDIT_TOOLS`, PermissionRequest and Stop, with a 3 s timeout; never PostToolUse). They go to `hookBase` when
     given, else to the hub.
   - A hub on a Mac has a self-signed certificate that Claude Code can't check, so its hooks would all fail (and fail
     open). main.js passes `hookBase` = teams.js `hookRelay`, a loopback http server that forwards `POST /hooks/:id` to
@@ -226,8 +239,14 @@ docs/             screenshots (sources), readme/ (the README's images, dark and 
   - Reconnects after 3 s for codes below 4000, or every 30 s after 4003. It doesn't retry after 4000 or 4001.
   - On exit while offline, sends one last hello with the final screen.
 - **`gitStatus(cwd, {env})`:**
-  - Polled every 5 s, with `fetchGit` beside every 12th poll. `fetchGit` leaves out `GIT_SSH_COMMAND` when the repo
-    sets `core.sshCommand`, which would otherwise be overridden (a key per host, several accounts).
+  - Polled every 5 s, with `fetchGit` beside every 12th poll; in a folder someone picked (`picked`, not an app-made
+    clone), not while the agent asks whether to trust it.
+    `fetchGit` leaves out `GIT_SSH_COMMAND` when the repo sets `core.sshCommand`, which would otherwise be overridden
+    (a key per host, several accounts).
+  - lane.js's git calls and files.js's `git()` pass `SAFE_GIT` (`core.fsmonitor=false`, `safe.bareRepository=explicit`),
+    so a folder's core.fsmonitor command never runs and a committed bare repo is ignored. Git has no switch for the rest
+    of a folder's own config (filter and diff drivers, core.sshCommand), which only a `.git` that came with a folder can
+    set (a downloaded archive, never a clone): a known limit (ponytail in lane.js).
   - Main is `origin/HEAD`, else `origin/main` or `origin/master`; the diff is from the merge-base.
   - Uses `-z` output and caps file lists at 200 (`MAX_CHANGED`, which must equal the hub's).
   - Returns null when git fails.
@@ -298,11 +317,14 @@ docs/             screenshots (sources), readme/ (the README's images, dark and 
   - Bonjour is created lazily, so macOS asks for local-network permission only when you host or browse.
   - `hostHere` starts the This Mac hub once (`hosting ??=`), and `stopHosting` runs at sign-out (it also forgets passes).
     `register` retries the certificate registration at each listing until it works.
-  - `access(s, url)` decides what to sign in with. The online hub gets the GitHub token. This Mac's hub gets the token
-    and `ca` (its own certificate). Any other hub must be https. It gets pinned to the certificate it presents (`certOf`,
-    `pins`), then gets a pass for that fingerprint from the online hub (`passes`, renewed an hour before it expires),
-    plus `owners`, who registered it.
-  - `hubApi(s, url, …)` makes every hub request through `access`, with `ca` pinning the connection. It times out after
+  - `access(s, url, owner)` decides what to sign in with. The online hub gets the GitHub token. This Mac's hub gets the
+    token and `ca` (its own certificate). Any other hub must be https. It gets pinned to the certificate it presents
+    (`certOf`, `pins`), then gets a pass for that fingerprint from the online hub (`passes`, renewed an hour before it
+    expires), plus `owners`, who registered it. With `owner` (the team's), it refuses unless `owners` includes them:
+    lanes, the hub socket (`teams:token`) and every team request pass it, so whatever answers at a team's address after
+    a re-pin gets nothing.
+  - `hubApi(s, to, …)` makes every hub request through `access`, with `ca` pinning the connection. `to` is a URL, or a
+    team (its `hub`, checked against its `owner`). It times out after
     15 s for the online hub (Railway cold start) and 5 s otherwise. A failed request forgets the pin, so a hub with a new
     certificate is read again.
   - `listTeams` asks every hub at once. A nearby hub goes through `teamsAt`, which keeps only teams owned by its
@@ -310,7 +332,8 @@ docs/             screenshots (sources), readme/ (the README's images, dark and 
   - `hookRelay(hubFor)` starts (once) the loopback relay for Claude Code's hooks to hubs on a Mac. `hubFor(laneId)` is
     main.js `hookTarget`: the lane's hub and its pinned `ca`, only for this Mac's own lanes.
   - `isPinned(hostname, pem)` backs main.js's `setCertificateVerifyProc`: Chromium accepts a self-signed certificate
-    only when it's the one pinned for that host.
+    only when it's this Mac's hub's, or a pin that passed a team owner check (`vouched`). Chromium names the host but
+    not the port, so a pin left by listing a look-alike nearby hub on the same address mustn't count.
   - Electron is required late (in `localDataDir`), so tests can load this file.
   - `sessionRoute` refuses names made only of dots.
 - **github.js:**
@@ -318,14 +341,18 @@ docs/             screenshots (sources), readme/ (the README's images, dark and 
     `PROTO_GITHUB_TOKEN` overrides the saved token, and nothing is written then.
   - **`gh(args, env)`** maps gh's errors to plain messages.
   - **Clones:** `checkRepo` validates `owner/name` before anything builds a path or gh call from it. `cloneRepo` clones
-    into `<dir>.partial` and then renames it, and shares one clone between concurrent callers.
+    into `<dir>@.partial` (a name no repo or session folder can have) and then renames it, and shares one clone between
+    concurrent callers. A clone can be an app bundle (a repo named `tool.app`), so `repo:reveal` only selects it in
+    Finder (`showItemInFolder`), never opens it.
   - **Session folders:** `sessionFolder` runs clone, then push guard, then worktree. A repo with no commits uses the
     clone itself. `sessionFolderPath` must build the same `<clone>@<slug>` as workspace.js.
 - **updates.js:**
   - **Finding a release:** `latestRelease` asks the public API (no sign-in; GitHub allows 60 such requests an
     hour per IP). If that fails, it falls back to `gh api` when `gh` is signed in.
-  - **Installing:** `stage` downloads, unzips with `ditto`, strips quarantine, then requires `sameSigner`: the same
-    certificate requirement, or for ad hoc copies, the same bundle id. Then a detached `swap.sh` replaces the app after
+  - **Installing:** `stage` downloads, unzips with `ditto`, strips quarantine, then requires a real folder (a link to
+    the installed app would make the swap delete it), `sameSigner` (the same certificate requirement, or for ad hoc
+    copies, the same bundle id), and the release's version as the signed `CFBundleShortVersionString`, so an old signed
+    copy can't be passed off as an update. Then a detached `swap.sh` replaces the app after
     it quits. swap.sh takes args `$1`–`$5`, logs to `~/Library/Logs/Protoplasma-update.log`, and puts the old app back on
     failure.
 - **files.js:**
@@ -359,7 +386,8 @@ docs/             screenshots (sources), readme/ (the README's images, dark and 
   - `setHTML(el, html)` writes only when the string changed, so focus and terminals survive redraws. Don't also set
     `innerHTML` directly on the same element, or its cache goes stale.
 - **Escaping:** every string from the hub or a teammate goes through `esc()`. The renderer can start agents and write
-  files, so XSS would be serious. The git numbers are interpolated raw only because the hub coerces them to integers.
+  files, so XSS would be serious. The git numbers are coerced to integers (`| 0`) where they're interpolated, since a
+  hub on someone's Mac could send anything. The CSP allows no inline scripts, as a second line.
 - **The hub socket:** `watch(conn)` asks main for a token (`proto.hubToken`, which renews passes) before each
   connection, connects to `${hub}/watch`, and handles `state`, `out`, `replay`, `file:get` and `file:put`.
 - **Terminals:** `createTerminal` makes one per lane, and the element is moved between `#lanes` and pane columns, never
@@ -368,7 +396,12 @@ docs/             screenshots (sources), readme/ (the README's images, dark and 
   - Teammates' terminals keep the owner's columns and rows, and `fitFont` scales the font, down to 6 px.
   - A teammate terminal sends input only while focused, and never xterm's automatic replies.
 - **Sharing files:** `answerFile` replies only for this Mac's own live lane, only with **Share the files your agents
-  change** on, and only for files in `lane.files`. Only the renderer enforces the share setting and the `lane.files` check. The hub routes requests only to the
+  change** on, and only for files in `lane.files`. The renderer enforces the share setting; main's `code:readLane` then
+  checks the file against the agent's own last git report (`lane.changed()`), since `lane.files` comes from the hub.
+  A file that is a link, or under a linked folder, is refused (a committed link to `.env` is a "changed file" too), as is
+  a new (untracked) file made before the agent started (`lane.isNew`, `lane.began`: a pushed `.gitignore` change can
+  make an old `.env` count as new). `answerFile` answers only for an agent of the open team.
+  The hub allows each person 4 open file requests and 120 a minute (`fileRate`). It routes requests only to the
   agent owner's windows, accepts answers only from that login, and enforces the 1,000,000-character cap
   (`MAX_SHARED_FILE`).
 - **Session names:** `slug` and `existingSession` in renderer.js copy `slug` in `src/shared.js` and `findSession` in the
@@ -423,7 +456,8 @@ docs/             screenshots (sources), readme/ (the README's images, dark and 
   passes the hook's own Authorization header through; it must never add a token or pass.
 - **Typing in:** remote input only goes to lanes started with `open`, on the watcher's own team. lane.js also drops
   `in` itself unless it was started open, whatever a hub sends.
-- **Lane ids:** an id held by one login, live or stopped, can't be claimed by another.
+- **Lane ids:** an id held by one login, live or stopped, can't be claimed by another. An `h-` id is made from its
+  hook secret, so it can't be claimed without the secret even after the hub restarts (older apps' random ids can).
 - **Code view:** every `code:*` handler takes its root through `inFolder`, except `code:root` (which registers the
   folder) and `code:readLane` (keyed by one of this Mac's live lane ids and confined to that lane's folder). Every path from the renderer passes
   `inside()` (filesystem) or `within()` (git only).
@@ -435,7 +469,7 @@ docs/             screenshots (sources), readme/ (the README's images, dark and 
 - **Git prompts:** `GIT_TERMINAL_PROMPT=0` is set by the git helpers in files.js, workspace.js and lane.js `gitEnv`,
   so nothing there hangs on an invisible prompt. The clone (`gh repo clone`) and a few local-only calls (lane.js's sync
   `git()`, github.js `rev-parse`, files.js `underWay`) don't set it. Route any new network git call through one of the
-  prompt-free helpers.
+  prompt-free helpers, and any git the app runs on its own in a folder through one that passes `SAFE_GIT`.
 - **Releases:** never publish an ad hoc release. `sign.sh` exits 1 in CI without the certificate.
 - **Open security decisions** (D1 to D4) are in HANDOFF.md:
   - logins vs numeric ids;

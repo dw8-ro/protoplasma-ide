@@ -28,4 +28,7 @@ const slug = name => {
 /** A hub certificate's fingerprint (sha256 of its DER bytes, base64url): what a pass names as the one hub it's for. */
 const fingerprint = der => require('crypto').createHash('sha256').update(der).digest('base64url');
 
-module.exports = { SCROLLBACK, EDIT_TOOLS, appendScrollback, slug, fingerprint };
+/** An agent's id, made from its hook secret, so only whoever holds the secret can connect under it. */
+const laneIdOf = hookSecret => `h-${require('crypto').createHash('sha256').update(String(hookSecret)).digest('hex').slice(0, 32)}`;
+
+module.exports = { SCROLLBACK, EDIT_TOOLS, appendScrollback, slug, fingerprint, laneIdOf };

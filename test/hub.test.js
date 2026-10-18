@@ -229,7 +229,7 @@ async function rawLane(id, hello = {}) {
   lane.send(JSON.stringify({ t: 'hello', token: 'tok-alice', team: team.id, id, hookSecret: SECRET, session: 's1', cmd: 'claude', root: '/r', ...hello }));
   await joined;
   const hook = async body => {
-    const res = await fetch(`${url}/hooks/${id}`, { method: 'POST', headers: { authorization: `Bearer ${SECRET}` }, body: JSON.stringify({ cwd: '/r', ...body }) });
+    const res = await fetch(`${url}/hooks/${id}`, { method: 'POST', headers: { authorization: `Bearer ${hello.hookSecret || SECRET}` }, body: JSON.stringify({ cwd: '/r', ...body }) });
     return (await res.json().catch(() => null))?.hookSpecificOutput ?? null;
   };
   const close = async () => { const gone = nextState(lanes => !lanes.some(l => l.id === id)); lane.close(); await gone; };
@@ -508,13 +508,16 @@ test('Codex asking to trust its folder needs you too (its answers aren\'t Yes an
 test('a reconnecting agent keeps the status its hooks gave it, after its trust prompt was answered', async () => {
   const asking = nextState(lanes => lanes.some(l => l.session === 'reconnect' && l.status === 'needs you'));
   const lane = startLaneHere({ hub: url, team: team.id, token: 'tok-alice', session: 'reconnect', cmd: 'sh',
-    args: ['-c', 'printf "Do you trust the files in this folder?\\n ❯ 1. Yes, proceed\\n   2. No, exit"; cat'] });
+    args: ['-c', 'echo "secret:$PROTO_HOOK_SECRET"; printf "Do you trust the files in this folder?\\n ❯ 1. Yes, proceed\\n   2. No, exit"; cat'] });
+  let out = '';
+  lane.term.onData(d => { out += d; });
   await asking;
   const answered = nextState(lanes => lanes.find(l => l.id === lane.id)?.status === 'idle');
   lane.write('\r');
   await answered;
-  // Another connection with its id drops the agent's own, as a network blip would; a pending permission then needs you.
-  const blip = await rawLane(lane.id, { session: 'reconnect' });
+  // Another connection with its id (and secret: the id is made from it) drops the agent's own, as a network blip would;
+  // a pending permission then needs you.
+  const blip = await rawLane(lane.id, { session: 'reconnect', hookSecret: /secret:(\w+)/.exec(out)[1] });
   const needs = nextState(lanes => lanes.find(l => l.id === lane.id)?.status === 'needs you');
   await blip.hook({ hook_event_name: 'PermissionRequest' });
   await needs;

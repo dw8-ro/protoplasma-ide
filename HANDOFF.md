@@ -5,6 +5,38 @@ did and what's left to do: [docs/sessions/2026-10-17.md](docs/sessions/2026-10-1
 
 ## Where things stand
 
+- **Security audit after going public (17–18 Oct 2026), on branch `worktree-security-audit`, not committed or
+  released.** Three passes: one by hand, then independent agents per surface (hub, LAN trust, renderer, main
+  process, release path, and reviews of the fixes), each finding checked by a second agent trying to refute it.
+  - **Clean:** no `.env`, key, certificate, token or password in any version of any file in any public ref; nothing
+    secret in Railway's variables (only `DATA_DIR`, `PROTO_OWNERS`); CI safe for public PRs (read-only token, no
+    secrets); no HTML injection path in the renderer (every hub string goes through `esc()`, and the CSP allows no
+    inline script).
+  - **Fixed, medium:** a team on another Mac must still be its owner's hub at every connection, and the hub socket's
+    certificate check takes only owner-vouched pins (`access(s, url, owner)`, `vouched`); shared files are checked by
+    main against the agent's own last git report, never a link, never an untracked file older than the agent
+    (`code:readLane`); new agents send no PostToolUse hook, which carried every tool's whole output to the hub; a
+    session's repo comes only from its creator's or the owner's agent (`repoBy`), so a teammate can't steer others'
+    one-click "Add an agent" into their repo; "Show in Finder" selects a clone instead of opening it (a repo named
+    `tool.app` would have run).
+  - **Fixed, low:** a hub-wide budget of 60 GitHub checks a minute for unseen tokens, with known ones kept across
+    restarts (`known.json`); agent ids made from their hook secret (`laneIdOf`, `h-` ids); caps on hook-reported files,
+    sessions from hellos, agents per person (30), and file requests per person (4 open, 120 a minute); git numbers
+    coerced in the page; comment line search bounded; `core.fsmonitor` and found bare repos off for background git, and
+    no polling in a picked folder while its agent asks to be trusted; clones download into `<dir>@.partial`; the updater refuses a
+    symlinked app or a bundle whose version isn't the release's; logins like `constructor`.
+  - **Known and left:** teammates' notes, goals and file names reach agents' prompts (prompt injection by a teammate);
+    git filter drivers in a downloaded folder's own `.git/config` still run when the app reads its status; during a
+    flood of made-up tokens, new sign-ins wait (per-address budgets if that matters); session-name aliases can be
+    claimed by renames; 2 low DOMPurify advisories in Monaco.
+  - Electron 44.5.1 → 44.8.0 (Chromium security updates). **Not 44.9.0:** with it, Chromium refuses the This Mac
+    hub's pinned certificate (e2e "creates a This Mac team…" fails, net_error -202), though a small repro passes.
+    `~44.8.0` in package.json keeps installs there until that's understood. On 44.8.0 Monaco took focus back from
+    the comment box after "Comment on this", so `commentOn` (code.js) now focuses it a tick later.
+  - The hub accepts apps before 0.5.3 (random lane ids, PostToolUse), so it can deploy first.
+  - Waiting on David: commit, push `main` (redeploys the hub) and release 0.5.3; turn on secret scanning, push
+    protection, Dependabot alerts and private vulnerability reporting; reset his Mac's checkout to `origin/main` (it's
+    on the old history); optionally ask GitHub Support to purge the old commits (see "History rewritten" below).
 - **Released: v0.5.2** (16 Oct 2026, commit `b05602d`): the Claude hook relay for hubs on a Mac (below) and the new
   README. Released from the Actions page like 0.5.1.
 - **Before that: v0.5.1** (16 Oct 2026, commit `d2d5379`): signed, `Protoplasma-0.5.1-mac-arm64.zip`, notes from

@@ -543,7 +543,11 @@ proto.onRefused((id, reason) => {
 const sourceKey = (session, team = currentTeam) => `source:${team.key}:${session}`;
 function sourceFor(session) {
   try { const saved = JSON.parse(store.get(sourceKey(session)) || 'null'); if (saved) return saved; } catch {}
-  const repo = hubLanes.find(l => l.session === session && l.repo)?.repo || recordFor(session)?.repo;
+  // The session's repo as its creator's (or the owner's) agent set it, else one of their running agents'. Anyone else's
+  // agent could name any repo, and this clones and runs it without asking (a repo without `repoBy` dates from before
+  // hubs checked that).
+  const rec = recordFor(session), trusted = login => [rec?.createdBy, currentTeam.owner].some(x => x && login && same(x, login));
+  const repo = (trusted(rec?.repoBy) && rec.repo) || hubLanes.find(l => l.session === session && l.repo && trusted(l.login))?.repo;
   return repo ? { repo, worktree: prefs.sessionBranches } : null;
 }
 
@@ -1093,11 +1097,12 @@ const diffStat = lanes => {
   }
   const g = [...byBranch.values()];
   if (!g.some(x => x.added || x.removed || x.files)) return '';
-  const files = g.reduce((n, x) => n + x.files, 0);
-  return `<span class="diff" title="${files} file${files === 1 ? '' : 's'} changed"><span class="add">+${g.reduce((n, x) => n + x.added, 0)}</span><span class="del">−${g.reduce((n, x) => n + x.removed, 0)}</span></span>`;
+  const sum = key => g.reduce((n, x) => n + (x[key] | 0), 0); // whole numbers, whatever a hub sends: this goes into the page
+  const files = sum('files');
+  return `<span class="diff" title="${files} file${files === 1 ? '' : 's'} changed"><span class="add">+${sum('added')}</span><span class="del">−${sum('removed')}</span></span>`;
 };
 // Commits a lane's branch is missing from its upstream.
-const behindChip = l => (l.git?.behind ? `<span class="behind" title="${l.git.behind} commit${l.git.behind === 1 ? '' : 's'} behind. Pull before pushing.">↓${l.git.behind}</span>` : '');
+const behindChip = l => { const n = l.git?.behind | 0; return n ? `<span class="behind" title="${n} commit${n === 1 ? '' : 's'} behind. Pull before pushing.">↓${n}</span>` : ''; };
 const branchLine = lanes => {
   const names = [...new Set(lanes.map(l => l.branch).filter(Boolean))];
   const diff = diffStat(lanes);
@@ -1426,7 +1431,8 @@ $('#stepList').onclick = e => { if (e.target.dataset.unstep) sessionAction(() =>
 async function answerFile(m) {
   const reply = body => ws?.readyState === WebSocket.OPEN && ws.send(JSON.stringify({ t: 'file:put', req: m.req, ...body }));
   const lane = hubLanes.find(l => l.id === m.lane);
-  if (!lane || !local.has(m.lane)) return reply({ error: 'That agent has stopped.' });
+  // Only an agent of this team: another hub can't ask for a file of one of your agents on a team it doesn't host.
+  if (!lane || local.get(m.lane)?.teamKey !== currentTeam?.key) return reply({ error: 'That agent has stopped.' });
   if (!prefs.shareFiles) return reply({ error: `${me.name || me.login} doesn't share files. They can turn it on in Settings → Agents.` });
   if (!lane.files.includes(m.path)) return reply({ error: `Only the files ${me.name || me.login}'s agents have changed are shared.` });
   try {

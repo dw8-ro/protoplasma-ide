@@ -100,7 +100,7 @@ ipcMain.handle('teams:list', signedIn(async (o = {}) => {
 ipcMain.handle('teams:create', signedIn(async o => remember(await teams.createTeam(session, { name: String(o.name), online: !!o.online }))));
 ipcMain.handle('teams:open', signedIn(key => { team = teamFor(key); return { hub: team.hub, id: team.id, key }; }));
 // What the hub socket signs in with, asked before each connection: a pass for a hub on another Mac is renewed by then.
-ipcMain.handle('teams:token', signedIn(async key => (await teams.access(session, teamFor(String(key)).hub)).token));
+ipcMain.handle('teams:token', signedIn(async key => { const t = teamFor(String(key)); return (await teams.access(session, t.hub, t.owner)).token; }));
 ipcMain.handle('teams:invite', signedIn(async (key, login) => {
   const found = await github.findUser(String(login), session.token); // catches typos before they become a member nobody is
   if (!found) throw new Error(`There's no GitHub user called ${login}.`);
@@ -137,8 +137,8 @@ ipcMain.handle('openExternal', (_, url) => { if (/^https:\/\/github\.com\//.test
 ipcMain.handle('repo:reveal', async (_, repo) => {
   const dir = github.clonePath(String(repo));
   if (!fs.existsSync(dir)) throw new Error('That repo isn\'t cloned on this Mac yet. It will be once you start a session in it.');
-  const failed = await shell.openPath(dir); // an error message, not a rejection
-  if (failed) throw new Error(failed);
+  // Selected in Finder, never opened: a clone of a repo named like tool.app is an app bundle, and opening it runs it.
+  shell.showItemInFolder(dir);
 });
 ipcMain.on('theme', (_, theme) => { if (['dark', 'light', 'system'].includes(theme)) nativeTheme.themeSource = theme; });
 ipcMain.handle('app:info', () => ({ version: require('../package.json').version, onlineHub })); // app.getVersion() is Electron's when run from source
@@ -188,11 +188,11 @@ ipcMain.handle('startLane', signedIn(async o => {
   const notice = shared && !folder.guarded ? `${why}: this agent can push to main or force-push without being stopped.` : '';
   // Claude Code can't check a Mac hub's self-signed certificate, so its hooks go to such a hub through a relay on this
   // Mac that is pinned to it (teams.hookRelay). The online hub has a real certificate and gets them directly.
-  const credentials = () => teams.access(signedInAs, team.hub);
+  const credentials = () => teams.access(signedInAs, team.hub, team.owner);
   const relayed = o.cmd === 'claude' && team.hub !== teams.onlineHub && team.hub.startsWith('https:');
   const hookBase = relayed ? await teams.hookRelay(hookTarget) : undefined;
   const lane = startLane({ hub: team.hub, hookBase, team: team.id, credentials, session: String(o.session), cmd: o.cmd, cwd, args: o.resume ? RESUME[o.cmd] : [],
-    open: !!o.open, env: shared ? { ...env, PROTO_SHARED_TEAM: '1' } : env, onRefused: reason => toWindow('lane:refused', lane.id, reason) });
+    open: !!o.open, env: shared ? { ...env, PROTO_SHARED_TEAM: '1' } : env, onRefused: reason => toWindow('lane:refused', lane.id, reason), picked: !o.repo });
   lane.hub = { url: team.hub, credentials };
   lanes.set(lane.id, lane);
   folders.add(cwd);
@@ -248,7 +248,18 @@ ipcMain.handle('code:readLane', async (_, id, rel) => {
   if (!lane) throw new Error('That agent has stopped.');
   lane.prefix ??= await files.prefixOf(lane.cwd, await agentEnv);
   rel = String(rel);
-  return rel.startsWith(lane.prefix) ? files.read(lane.cwd, rel.slice(lane.prefix.length)) : { outside: true };
+  // Only a file this checkout has changed, as the agent's own git report says (polled every few seconds): the hub's
+  // list of the agent's files could say anything. A folder outside git has no report, so nothing in it is shared.
+  if (!rel.startsWith(lane.prefix) || !lane.changed().includes(rel)) return { outside: true };
+  // The changed file itself, never what a link there points to: a link to .env pushed to the branch is "changed" too.
+  const r = rel.slice(lane.prefix.length);
+  let real = null;
+  try { real = files.inside(lane.cwd, r); } catch {} // gone, or outside the folder: read() says which
+  if (real && real !== path.join(fs.realpathSync(lane.cwd), r)) return { outside: true };
+  // A new (untracked) file only if it was made after the agent started: one from before, like a .env that a teammate's
+  // pushed .gitignore change stopped ignoring, isn't the agent's change.
+  if (real && lane.isNew(rel) && fs.statSync(real).birthtimeMs < lane.began) return { outside: true };
+  return files.read(lane.cwd, r);
 });
 ipcMain.handle('code:watch', inFolder(root => {
   stopWatching();

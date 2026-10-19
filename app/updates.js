@@ -96,14 +96,19 @@ async function prepare(release, bundle, pid, env, dir, progress) {
   fs.writeFileSync(script, `#!/bin/sh
 exec >>"$5" 2>&1
 while kill -0 "$4" 2>/dev/null; do sleep 0.3; done
-if mv "$1" "$1.old" && mv "$2" "$1"; then
+# A leftover from an interrupted swap, with the app back in place: mv would move the app into it.
+[ -d "$1" ] && rm -rf "$1.old"
+moved=
+if mv "$1" "$1.old" && moved=1 && mv "$2" "$1"; then
   open -n "$1"
+  rm -rf "$1.old"
 else
-  [ -d "$1.old" ] && [ ! -d "$1" ] && mv "$1.old" "$1"
+  # Once the app was moved away, whatever is at $1 is a half-copied new version (mv copies across volumes).
+  [ -n "$moved" ] && { rm -rf "$1"; mv "$1.old" "$1"; }
   open -n "$1"
   osascript -e 'display alert "Protoplasma couldn’t update itself" message "The new version couldn’t replace the old one, so the old one opens again. Download the update from GitHub instead."' &
 fi
-rm -rf "$1.old" "$3"
+rm -rf "$3"
 `, { mode: 0o755 });
   fs.mkdirSync(path.dirname(log), { recursive: true });
   spawn('/bin/sh', [script, bundle, fresh, dir, String(pid), log], { env, detached: true, stdio: 'ignore' }).unref();

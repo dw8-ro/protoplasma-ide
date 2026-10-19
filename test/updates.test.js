@@ -45,12 +45,14 @@ esac
   }
 });
 
-test('an update downloads with progress, swaps in once the app quits, and reopens the new version', async () => {
+// Runs stage() against a tiny stand-in app (ad hoc signed, like a local build) served from a local server, with
+// stand-in `open` and `osascript` that record their calls, and a stand-in running app. `setup(dir, installed)` can
+// add more stand-ins to bin/ or leave things behind first. Returns what happened once `open` was called.
+async function swap(setup = () => {}) {
   const { stage } = require('../app/updates');
   const http = require('node:http');
   const { execFileSync, spawn } = require('node:child_process');
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'protoplasma-swap-'));
-  // A tiny stand-in app, ad hoc signed like a local build, in the given version.
   const makeApp = (where, version) => {
     const app = path.join(where, 'Protoplasma.app');
     fs.mkdirSync(path.join(app, 'Contents', 'MacOS'), { recursive: true });
@@ -67,28 +69,56 @@ test('an update downloads with progress, swaps in once the app quits, and reopen
   const zip = fs.readFileSync(path.join(dir, 'u.zip'));
   const server = http.createServer((req, res) => { res.setHeader('content-length', zip.length); res.end(zip); }).listen(0, '127.0.0.1');
   await new Promise(r => server.once('listening', r));
-  // A stand-in `open` that records what it was asked to open, and a stand-in running app to wait for.
-  fs.mkdirSync(path.join(dir, 'bin'));
-  fs.writeFileSync(path.join(dir, 'bin', 'open'), `#!/bin/sh\necho "$@" > "${dir}/opened"\n`, { mode: 0o755 });
+  const bin = path.join(dir, 'bin'), at = name => path.join(dir, name);
+  fs.mkdirSync(bin);
+  fs.writeFileSync(path.join(bin, 'open'), `#!/bin/sh\necho "$@" > "${at('opened')}"\n`, { mode: 0o755 });
+  fs.writeFileSync(path.join(bin, 'osascript'), `#!/bin/sh\ntouch "${at('alerted')}"\n`, { mode: 0o755 });
+  setup(dir, installed);
   const running = spawn('sleep', ['60']);
-  const env = { ...process.env, PATH: `${path.join(dir, 'bin')}:${process.env.PATH}` };
+  const env = { ...process.env, PATH: `${bin}:${process.env.PATH}` };
+  const until = async ok => { for (let i = 0; i < 50 && !ok(); i++) await new Promise(r => setTimeout(r, 100)); };
   try {
     const seen = [];
     const release = { version: '1.0.1', public: true, asset: { name: 'Protoplasma-1.0.1-mac-arm64.zip', url: `http://127.0.0.1:${server.address().port}/` } };
     await stage(release, installed, running.pid, env, f => seen.push(f));
-    assert.equal(seen.at(-1), 1, 'progress reaches the whole download');
     await new Promise(r => setTimeout(r, 700));
-    assert.equal(fs.existsSync(path.join(dir, 'opened')), false, 'nothing happens while the app still runs');
+    const early = fs.existsSync(at('opened'));
     running.kill();
-    const plist = path.join(installed, 'Contents', 'Info.plist');
-    for (let i = 0; i < 50 && !fs.existsSync(path.join(dir, 'opened')); i++) await new Promise(r => setTimeout(r, 100));
-    assert.equal(fs.readFileSync(path.join(dir, 'opened'), 'utf8').trim(), `-n ${installed}`, 'the app reopens');
-    assert.match(fs.readFileSync(plist, 'utf8'), /<string>1\.0\.1<\/string>/, 'on the new version');
-    for (let i = 0; i < 50 && fs.existsSync(`${installed}.old`); i++) await new Promise(r => setTimeout(r, 100));
-    assert.equal(fs.existsSync(`${installed}.old`), false, 'the old copy is cleaned up');
+    await until(() => fs.existsSync(at('opened')));
+    await until(() => !fs.existsSync(`${installed}.old`));
+    await new Promise(r => setTimeout(r, 300)); // the alert runs in the background
+    return { seen, early, installed, opened: fs.readFileSync(at('opened'), 'utf8').trim(), alerted: fs.existsSync(at('alerted')),
+      version: /<string>(\d+\.\d+\.\d+)<\/string>/.exec(fs.readFileSync(path.join(installed, 'Contents', 'Info.plist'), 'utf8'))?.[1],
+      old: fs.existsSync(`${installed}.old`), apps: fs.readdirSync(path.dirname(installed)) };
   } finally {
     running.kill();
     server.close();
     fs.rmSync(dir, { recursive: true, force: true });
   }
+}
+
+test('an update downloads with progress, swaps in once the app quits, and reopens the new version', async () => {
+  const r = await swap();
+  assert.equal(r.seen.at(-1), 1, 'progress reaches the whole download');
+  assert.equal(r.early, false, 'nothing happens while the app still runs');
+  assert.equal(r.opened, `-n ${r.installed}`, 'the app reopens');
+  assert.equal(r.version, '1.0.1', 'on the new version');
+  assert.equal(r.old, false, 'the old copy is cleaned up');
+  assert.equal(r.alerted, false);
+});
+
+test('a swap that fails halfway puts the old version back and says so', async () => {
+  // A stand-in mv that moves the app away but then fails to put the new one in, after leaving half of it behind.
+  const r = await swap((dir, installed) => fs.writeFileSync(path.join(dir, 'bin', 'mv'),
+    `#!/bin/sh\ncase "$1" in */new/*) mkdir -p "$2/Contents"; exit 1;; esac\nexec /bin/mv "$@"\n`, { mode: 0o755 }));
+  assert.equal(r.version, '1.0.0', 'the old version is back, not deleted');
+  assert.equal(r.opened, `-n ${r.installed}`, 'and reopens');
+  assert.equal(r.alerted, true);
+  assert.deepEqual(r.apps, ['Protoplasma.app']);
+});
+
+test('a leftover from an interrupted swap doesn\'t swallow the app', async () => {
+  const r = await swap((dir, installed) => fs.mkdirSync(`${installed}.old`));
+  assert.equal(r.version, '1.0.1');
+  assert.deepEqual(r.apps, ['Protoplasma.app']);
 });

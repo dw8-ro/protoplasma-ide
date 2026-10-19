@@ -148,8 +148,8 @@ is the one proposed to David; he hasn't chosen yet.
   code view now explains the failure instead.
 - **Test gaps** (C107, C109 to C111): most are now covered (hub-live.test.js: hello validation, size clamps, hook
   states, the 15-file cap, the stopped-agents cap; files.test.js: list and search; updates.test.js: no access vs no
-  releases). Still not: the slow-viewer drop, the file-relay timeout (10 s), `files.js` watch, and `updates.js`
-  stage/sameSigner/swap.sh (they need a signed app to swap).
+  releases). Still not: the slow-viewer drop, the file-relay timeout (10 s), and `files.js` watch.
+  `updates.js` stage, sameSigner and swap.sh are covered with a stand-in app (updates.test.js).
 
 ### Found while writing this handoff (after the recheck)
 Mapping the code for AGENTS.md turned up these, and a second pass checked each one. Rows marked **Fixed** are done (see `git log`). They're all
@@ -193,6 +193,5 @@ new `look` straight away, so presence is right again within one round trip.
      permissions. On David's GitHub account: "Keep my email addresses private" and "Block command line pushes that
      expose my email".
    - Copies on 0.4.x or 0.5.0 go straight to 0.5.2, whose notes don't repeat 0.5.1's Force Quit advice (F1).
-3. The remaining test gaps: the slow-viewer drop, the file-relay timeout, `files.js` watch, `updates.js`
-   stage/sameSigner/swap.sh.
+3. The remaining test gaps: the slow-viewer drop, the file-relay timeout, `files.js` watch.
 4. Codex and OpenCode have no hooks, so no overlap warnings or file notes for them (lane.js TODO).

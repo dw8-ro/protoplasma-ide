@@ -5,6 +5,8 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { execFile, spawn } = require('child_process');
+const { Readable } = require('stream');
+const { pipeline } = require('stream/promises');
 
 const REPO = 'dw8-ro/protoplasma-ide';
 const ASSET = /^Protoplasma-[\d.]+-mac-arm64\.zip$/;
@@ -53,21 +55,25 @@ function ownBundle(exe) {
 
 /**
  * Downloads `release` and arranges for it to replace `bundle` as soon as process `pid` exits, then reopens it.
- * If the swap fails, the old version is put back.
+ * If the swap fails, the old version is put back. `progress(fraction)` hears how far the download is.
  */
-async function stage(release, bundle, pid, env) {
+async function stage(release, bundle, pid, env, progress = () => {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'protoplasma-update-'));
-  try { await prepare(release, bundle, pid, env, dir); } catch (e) {
+  try { await prepare(release, bundle, pid, env, dir, progress); } catch (e) {
     fs.rmSync(dir, { recursive: true, force: true }); // a failed download isn't left taking up space
     throw e;
   }
 }
-async function prepare(release, bundle, pid, env, dir) {
+async function prepare(release, bundle, pid, env, dir, progress) {
   const zip = path.join(dir, release.asset.name);
   if (release.public) {
     const res = await fetch(release.asset.url, { headers: { 'user-agent': 'protoplasma' }, signal: AbortSignal.timeout(10 * 60_000) });
     if (!res.ok) throw new Error(`Couldn't download the update (GitHub answered ${res.status}).`);
-    fs.writeFileSync(zip, Buffer.from(await res.arrayBuffer()));
+    // Straight to disk, saying how far it got (about 150 MB, so not held in memory).
+    const total = Number(res.headers.get('content-length')) || 0, body = Readable.fromWeb(res.body);
+    let got = 0;
+    if (total) body.on('data', chunk => progress((got += chunk.length) / total));
+    await pipeline(body, fs.createWriteStream(zip));
   } else {
     await run('gh', ['release', 'download', `v${release.version}`, '-R', REPO, '-p', release.asset.name, '-D', dir], env);
   }
@@ -84,21 +90,23 @@ async function prepare(release, bundle, pid, env, dir) {
   if (inside !== release.version) throw new Error(`The update is labelled ${release.version} but contains ${inside || 'another version'}, so it wasn't installed.`);
   // $1 the app, $2 the new copy, $3 this folder (the download, about 150 MB), $4 the app's pid. It waits as long as the app
   // runs (a cancelled quit installs at the next one); if the swap fails it says so, and keeps a log, instead of quietly reopening.
+  // It reopens the app before cleaning up, so the restart doesn't wait on deleting the old copy. -n: Launch Services may
+  // not have noticed the old process is gone yet, and would only activate it.
   const script = path.join(dir, 'swap.sh'), log = path.join(os.homedir(), 'Library', 'Logs', 'Protoplasma-update.log');
   fs.writeFileSync(script, `#!/bin/sh
 exec >>"$5" 2>&1
 while kill -0 "$4" 2>/dev/null; do sleep 0.3; done
 if mv "$1" "$1.old" && mv "$2" "$1"; then
-  rm -rf "$1.old"
+  open -n "$1"
 else
   [ -d "$1.old" ] && [ ! -d "$1" ] && mv "$1.old" "$1"
+  open -n "$1"
   osascript -e 'display alert "Protoplasma couldn’t update itself" message "The new version couldn’t replace the old one, so the old one opens again. Download the update from GitHub instead."' &
 fi
-open "$1"
-rm -rf "$3"
+rm -rf "$1.old" "$3"
 `, { mode: 0o755 });
   fs.mkdirSync(path.dirname(log), { recursive: true });
-  spawn('/bin/sh', [script, bundle, fresh, dir, String(pid), log], { detached: true, stdio: 'ignore' }).unref();
+  spawn('/bin/sh', [script, bundle, fresh, dir, String(pid), log], { env, detached: true, stdio: 'ignore' }).unref();
 }
 
 /**

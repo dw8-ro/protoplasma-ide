@@ -1725,6 +1725,9 @@ $('#updateNow').onclick = async () => {
     $('#updateNow').disabled = false;
   } finally { downloading = false; }
 };
+proto.onUpdateProgress(pct => {
+  if (downloading) $('#updateText').textContent = pct < 100 ? `Downloading ${update.latest}… ${pct | 0}%` : `Checking ${update.latest}…`;
+});
 setInterval(checkUpdates, 6 * 60 * 60_000);
 
 // ---- Quick switcher (⌘K): sessions, workspaces, pages and actions by name ----

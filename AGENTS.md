@@ -19,7 +19,7 @@ Function names below are stable. Line numbers drift, so search by name.
 |---|---|---|
 | `npm install` | Installs dependencies (postinstall makes node-pty's `spawn-helper` executable) | Node 24 |
 | `npm start` | Runs the app from source. Updates are off in source runs. | |
-| `npm test` | 91 integration tests in `test/*.test.js`: real hub, real lanes, real git. About a minute. | git ≥ 2.28, macOS. No network or Electron needed. |
+| `npm test` | 92 integration tests in `test/*.test.js`: real hub, real lanes, real git. About a minute. | git ≥ 2.28, macOS. No network or Electron needed. |
 | `npm run e2e` | Drives the real Electron app through every main flow and prints `PASS`/`FAIL` per step, ending with `N/M passed`. 15-minute cap. | The `claude` CLI on the login-shell PATH and a GUI session. One step needs `gh auth status` to succeed (online). |
 | `npm run dist` | Packages `dist/Protoplasma-darwin-arm64/Protoplasma.app`, unsigned. | |
 | `npm run playground` | Two app copies (David on port 7801, Max on 7802) on a local hub and repo, each with an HTTP control API | |
@@ -60,7 +60,7 @@ app/config.json   githubClientId (OAuth app, device flow), onlineHub (the Railwa
 scripts/          e2e.js, playground.js + playground-app.js, stage.js, screenshot.js, demo.js + gif.js, readme-art.js +
                   readme-art/ (the README image pages and diagram), sign.sh, icon.js
 test/             hub.test.js (40), hub-live.test.js (11), workspace.test.js (13), files.test.js (11), lan.test.js (9),
-                  identity.test.js (4), updates.test.js (3)
+                  identity.test.js (4), updates.test.js (4)
 .github/workflows ci.yml (npm test on every push to main and PR), package.yml (dist check), release.yml (tag → release)
 Dockerfile        the hosted hub image (only src/hub.js + src/shared.js + ws)
 install.sh        the one-line installer

@@ -163,7 +163,10 @@ let staging = null; // an update being downloaded or waiting for quit: never two
 ipcMain.handle('updates:install', async () => {
   const bundle = updates.ownBundle(app.getPath('exe'));
   if (!release || !bundle) throw new Error('There\'s no update this copy of Protoplasma can install itself. Download it from GitHub instead.');
-  staging ??= updates.stage(release, bundle, process.pid, await agentEnv).catch(e => { staging = null; throw e; });
+  // Whole percents only: a download is thousands of chunks.
+  let shown = -1;
+  const progress = f => { const pct = Math.floor(f * 100); if (pct !== shown) toWindow('updates:progress', shown = pct); };
+  staging ??= updates.stage(release, bundle, process.pid, await agentEnv, progress).catch(e => { staging = null; throw e; });
   await staging;
   app.quit(); // asks first if agents are running; if that's cancelled, the update goes in at the next quit
 });

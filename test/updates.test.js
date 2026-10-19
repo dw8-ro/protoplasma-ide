@@ -44,3 +44,51 @@ esac
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test('an update downloads with progress, swaps in once the app quits, and reopens the new version', async () => {
+  const { stage } = require('../app/updates');
+  const http = require('node:http');
+  const { execFileSync, spawn } = require('node:child_process');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'protoplasma-swap-'));
+  // A tiny stand-in app, ad hoc signed like a local build, in the given version.
+  const makeApp = (where, version) => {
+    const app = path.join(where, 'Protoplasma.app');
+    fs.mkdirSync(path.join(app, 'Contents', 'MacOS'), { recursive: true });
+    fs.writeFileSync(path.join(app, 'Contents', 'Info.plist'), `<?xml version="1.0" encoding="UTF-8"?>
+<plist version="1.0"><dict><key>CFBundleIdentifier</key><string>com.example.protoplasma-update-test</string>
+<key>CFBundleExecutable</key><string>run</string><key>CFBundleShortVersionString</key><string>${version}</string></dict></plist>`);
+    fs.writeFileSync(path.join(app, 'Contents', 'MacOS', 'run'), '#!/bin/sh\n', { mode: 0o755 });
+    execFileSync('codesign', ['--force', '--sign', '-', app]);
+    return app;
+  };
+  const installed = makeApp(path.join(dir, 'Applications'), '1.0.0');
+  makeApp(path.join(dir, 'build'), '1.0.1');
+  execFileSync('ditto', ['-c', '-k', '--keepParent', path.join(dir, 'build', 'Protoplasma.app'), path.join(dir, 'u.zip')]);
+  const zip = fs.readFileSync(path.join(dir, 'u.zip'));
+  const server = http.createServer((req, res) => { res.setHeader('content-length', zip.length); res.end(zip); }).listen(0, '127.0.0.1');
+  await new Promise(r => server.once('listening', r));
+  // A stand-in `open` that records what it was asked to open, and a stand-in running app to wait for.
+  fs.mkdirSync(path.join(dir, 'bin'));
+  fs.writeFileSync(path.join(dir, 'bin', 'open'), `#!/bin/sh\necho "$@" > "${dir}/opened"\n`, { mode: 0o755 });
+  const running = spawn('sleep', ['60']);
+  const env = { ...process.env, PATH: `${path.join(dir, 'bin')}:${process.env.PATH}` };
+  try {
+    const seen = [];
+    const release = { version: '1.0.1', public: true, asset: { name: 'Protoplasma-1.0.1-mac-arm64.zip', url: `http://127.0.0.1:${server.address().port}/` } };
+    await stage(release, installed, running.pid, env, f => seen.push(f));
+    assert.equal(seen.at(-1), 1, 'progress reaches the whole download');
+    await new Promise(r => setTimeout(r, 700));
+    assert.equal(fs.existsSync(path.join(dir, 'opened')), false, 'nothing happens while the app still runs');
+    running.kill();
+    const plist = path.join(installed, 'Contents', 'Info.plist');
+    for (let i = 0; i < 50 && !fs.existsSync(path.join(dir, 'opened')); i++) await new Promise(r => setTimeout(r, 100));
+    assert.equal(fs.readFileSync(path.join(dir, 'opened'), 'utf8').trim(), `-n ${installed}`, 'the app reopens');
+    assert.match(fs.readFileSync(plist, 'utf8'), /<string>1\.0\.1<\/string>/, 'on the new version');
+    for (let i = 0; i < 50 && fs.existsSync(`${installed}.old`); i++) await new Promise(r => setTimeout(r, 100));
+    assert.equal(fs.existsSync(`${installed}.old`), false, 'the old copy is cleaned up');
+  } finally {
+    running.kill();
+    server.close();
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});

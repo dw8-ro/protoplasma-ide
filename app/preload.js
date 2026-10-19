@@ -43,6 +43,7 @@ contextBridge.exposeInMainWorld('proto', {
   appInfo: () => ipcRenderer.invoke('app:info'),
   checkUpdates: () => ipcRenderer.invoke('updates:check'),
   installUpdate: () => ipcRenderer.invoke('updates:install'),
+  onUpdateProgress: listen('updates:progress'),
   ghStatus: () => ipcRenderer.invoke('gh:status'),
   setBadge: count => ipcRenderer.send('badge', count),
   copy: text => ipcRenderer.send('clipboard', text),

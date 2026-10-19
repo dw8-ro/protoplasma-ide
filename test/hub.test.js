@@ -2,7 +2,9 @@
 // GitHub identity is faked: the token "tok-<name>" belongs to <name>.
 const { test, before, after } = require('node:test');
 const assert = require('node:assert/strict');
-const { spawn } = require('node:child_process');
+const { spawn, execFileSync } = require('node:child_process');
+const fs = require('node:fs');
+const os = require('node:os');
 const path = require('node:path');
 const WebSocket = require('ws');
 const { startHub } = require('../src/hub');
@@ -11,7 +13,15 @@ const { appendScrollback, SCROLLBACK } = require('../src/shared');
 
 const LANE = path.join(__dirname, '../src/lane.js');
 const SECRET = 'a-test-hook-secret'; // what raw test agents use for their hooks
-const root = path.join(__dirname, '..'); // lanes started here report this as their git root
+// Lanes started here report this as their git root. A repo of its own that nothing changes: in this checkout, a push
+// to GitHub (seen by the lanes' fetch) or an edit made while the tests run would send a new git report, which drops the
+// made-up hook edits some tests rely on. Its remote names a GitHub repo, so both lanes count as the same repo, and its
+// fetches go to a dead local proxy, so they fail at once without reaching GitHub.
+const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'protoplasma-hub-')));
+for (const args of [['init', '-q', '-b', 'main'], ['remote', 'add', 'origin', 'https://github.com/acme/hub-test.git'],
+  ['config', 'http.proxy', 'http://127.0.0.1:9'], ['-c', 'user.name=t', '-c', 'user.email=t@t', 'commit', '-q', '--allow-empty', '-m', 'start']]) {
+  execFileSync('git', args, { cwd: root, env: { ...process.env, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1' } });
+}
 // "tok-slow-<name>" takes a moment to verify, to exercise connections that drop mid-check.
 const verifyUser = async token => {
   const [, slow, login] = /^tok-(slow-)?(\w+)$/.exec(token) || [];
@@ -71,6 +81,7 @@ after(async () => {
   for (const p of processes) p.kill();
   watcher.close();
   await hub.close();
+  fs.rmSync(root, { recursive: true, force: true });
 });
 
 test('only owners create teams, and only members see them', async () => {

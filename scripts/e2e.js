@@ -447,7 +447,10 @@ async function run(win, hub) {
     for (const dir of temps) fs.rmSync(dir, { recursive: true, force: true });
     // Quits the way logging out does (SIGTERM: no "agents are still running" question), through the real quit path, and
     // must really exit: a quit that's ignored leaves the app running with no window (F1 in docs/usage-test).
+    // If it doesn't, it says how far the quit got.
+    const quitAt = Date.now(), reached = [];
+    for (const step of ['before-quit', 'will-quit', 'quit']) app.on(step, () => reached.push(`${step} at ${Date.now() - quitAt} ms`));
     process.kill(process.pid, 'SIGTERM');
-    setTimeout(() => { console.log('FAIL  the app exits when it\'s quit'); app.exit(1); }, 8000).unref();
+    setTimeout(() => { console.log(`FAIL  the app exits when it's quit  (reached: ${reached.join(', ') || 'nothing'})`); app.exit(1); }, 8000).unref();
   }
 }

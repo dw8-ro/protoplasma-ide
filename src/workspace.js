@@ -95,7 +95,7 @@ async function removeSessionWorktree(clone, session, env = process.env) {
 // their own terminal aren't affected.)
 const PUSH_GUARD = `#!/bin/sh
 # Added by Protoplasma. Stops agents on a shared team from pushing straight to main, master or the repo's default
-# branch, deleting branches, or force-pushing. People pushing from their own terminal aren't affected.
+# branch, deleting branches or tags, or force-pushing. People pushing from their own terminal aren't affected.
 [ -n "$PROTO_SHARED_TEAM" ] || exit 0
 zero=0000000000000000000000000000000000000000
 default=$(git symbolic-ref --quiet --short "refs/remotes/$1/HEAD" 2>/dev/null)
@@ -106,6 +106,13 @@ while read -r local_ref local_sha remote_ref remote_sha; do
     echo "Protoplasma: don't push straight to $branch, which your team shares. Push the session branch and open a pull request." >&2
     exit 1
   fi
+  case "$remote_ref" in
+  refs/tags/*)
+    if [ "$local_sha" = "$zero" ]; then
+      echo "Protoplasma: don't delete the shared tag \${remote_ref#refs/tags/}. A person can do it from their own terminal if it's meant." >&2
+      exit 1
+    fi ;;
+  esac
   if [ "$local_sha" = "$zero" ] && [ "$branch" != "$remote_ref" ]; then
     echo "Protoplasma: this would delete $branch on the remote, and teammates may have pushed to it. If it's meant, a person can delete it from their own terminal." >&2
     exit 1

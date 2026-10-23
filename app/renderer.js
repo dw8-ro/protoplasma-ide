@@ -431,6 +431,11 @@ function setConnection(state, text) {
   $('#connText').textContent = text;
 }
 
+// A hub on someone's Mac can send anything, so a teammate terminal's size is clamped before xterm allocates buffers for
+// it; a huge cols/rows would otherwise OOM the window. Legit sizes (the hub caps lanes at 500x200) pass through unchanged.
+const laneCols = v => { const n = v | 0; return n > 0 ? Math.min(1000, n) : 120; };
+const laneRows = v => { const n = v | 0; return n > 0 ? Math.min(400, n) : 36; };
+
 // Teammates' output arrives via the hub; our own lanes stream over IPC, so they keep working when the hub is down.
 function watch(conn) {
   const generation = ++watchGeneration;
@@ -449,7 +454,9 @@ function watch(conn) {
     let first = true;
     socket.onopen = () => socket.send(JSON.stringify({ t: 'watch', token, team: conn.id }));
     socket.onmessage = e => {
-      const m = JSON.parse(e.data);
+      let m;
+      try { m = JSON.parse(e.data); } catch { return; } // a hub on a Mac could send anything; a bad frame mustn't wedge the socket
+      if (!m || typeof m !== 'object') return;
       if (first) { // the hub replays scrollback on every (re)connect
         first = false;
         lookedAt = undefined;
@@ -459,17 +466,19 @@ function watch(conn) {
       }
       if (m.t === 'state') {
         gotState = true;
-        hubLanes = m.lanes;
-        followRenames(m.sessions || []);
+        // A hub on a Mac could send anything; iterated fields default to arrays so a non-array can't throw out of render().
+        hubLanes = Array.isArray(m.lanes) ? m.lanes : [];
+        const sessions = Array.isArray(m.sessions) ? m.sessions : [];
+        followRenames(sessions);
         for (const l of hubLanes) if (local.get(l.id)?.refused) delete local.get(l.id).refused;
-        teamWatchers = m.watchers || [];
+        teamWatchers = Array.isArray(m.watchers) ? m.watchers : [];
         if (m.members && currentTeam) {
-          currentTeam = { ...currentTeam, members: m.members }; // someone joined, left or was removed
+          currentTeam = { ...currentTeam, members: Array.isArray(m.members) ? m.members : [] }; // someone joined, left or was removed
           if ($('#settings').open) renderTeamPane();
         }
-        memories = m.memories || [];
-        sessionRecords = m.sessions || [];
-        stoppedAgents = m.stopped || [];
+        memories = Array.isArray(m.memories) ? m.memories : [];
+        sessionRecords = sessions;
+        stoppedAgents = Array.isArray(m.stopped) ? m.stopped : [];
         render();
       }
       if (m.t === 'out' && !local.has(m.lane)) write(m.lane, m.d);
@@ -1153,7 +1162,7 @@ function renderRoom(lanes) {
     if (!t.el.hidden && !t.shown) requestAnimationFrame(() => t.term.scrollToBottom()); // output while hidden can leave it scrolled up
     t.shown = !t.el.hidden;
     t.el.style.setProperty('--c', colorFor(l.login));
-    if (!mine && (t.term.cols !== l.cols || t.term.rows !== l.rows)) t.term.resize(l.cols, l.rows);
+    if (!mine) { const cols = laneCols(l.cols), rows = laneRows(l.rows); if (t.term.cols !== cols || t.term.rows !== rows) t.term.resize(cols, rows); }
     const access = mine ? (l.open ? 'Teammates can type' : 'Only you can type') : (l.open ? 'You can type' : 'View only');
     const agent = agentLabel(l, lanes.filter(o => o.session === l.session));
     const [cls, label] = STATUS[statusOf(l)] || ['idle', l.status];
@@ -1249,7 +1258,7 @@ function showReplay(m) {
   if (m.id !== replaying || !replayTerm) return;
   const agent = stoppedAgents.find(s => s.id === m.id);
   replayTerm.reset();
-  if (agent) replayTerm.resize(agent.cols, agent.rows);
+  if (agent) replayTerm.resize(laneCols(agent.cols), laneRows(agent.rows));
   replayTerm.write(forPage(m.d));
   fitReplay();
 }
@@ -1543,7 +1552,7 @@ function createTerminal(l) {
   el.className = mine ? 'lane mine' : 'lane';
   el.innerHTML = '<span class="lane-label"></span><div class="screen"></div><div class="lane-bar"></div>';
   $('#lanes').append(el);
-  const term = new Terminal({ cols: l.cols || 120, rows: l.rows || 36, fontSize: prefs.fontSize, lineHeight: prefs.lineHeight, fontFamily: terminalFont(),
+  const term = new Terminal({ cols: laneCols(l.cols), rows: laneRows(l.rows), fontSize: prefs.fontSize, lineHeight: prefs.lineHeight, fontFamily: terminalFont(),
     theme: terminalTheme(), minimumContrastRatio: contrastFloor(), cursorBlink: mine, disableStdin: !mine && !l.open, scrollback: 5000 });
   term.open(el.querySelector('.screen'));
   let resizer, refit;

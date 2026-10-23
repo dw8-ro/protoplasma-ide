@@ -440,8 +440,12 @@ docs/             screenshots (sources), readme/ (the README's images, dark and 
 - **Bundle id:** `com.electron.protoplasma` (packager's default). Never change it, because sameSigner and macOS identity
   rely on it.
 - **Agent lists:** `AGENTS` and `RESUME` in main.js, `NO_HOOKS` in lane.js, and the renderer's agent pickers.
-- **Dependencies:** `allowScripts` in package.json names the exact Electron and node-pty versions. Bump them with the
-  dependencies, or their install scripts are skipped and `npm start` fails.
+- **Dependencies:** `allowScripts` in package.json records the Electron and node-pty versions whose install scripts the
+  app needs (Electron's binary download, node-pty's prebuild; the root `postinstall` then marks `spawn-helper`
+  executable). **It is not enforced:** there's no `@lavamoat/allow-scripts` or `.npmrc`, so `npm install`/`npm ci` run
+  *every* dependency's install scripts, on dev Macs and in CI. It's a note of intent, not a sandbox. Enforcing it with
+  lavamoat (`.npmrc ignore-scripts=true` + a setup that runs only the allowed scripts) is a planned hardening; once it's
+  wired, keep these version pins in step with `devDependencies`, or the allowed scripts are skipped and `npm start` fails.
 - **Hub deploy:** the Dockerfile copies only `src/hub.js` and `src/shared.js`. A new hub dependency or file needs the
   Dockerfile updated, or the hosted hub crashes on start.
 - **Load order:** scripts that fake GitHub or agents (e2e.js, stage.js, playground-app.js) must replace

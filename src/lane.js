@@ -214,8 +214,9 @@ function startLane({ hub, hookBase, team, token, credentials = () => ({ token })
       if (activity && (byActivity || asking)) send({ t: 'status', status: activity }); // a hooked agent's status is the hub's, from its hooks
     });
     ws.on('message', raw => {
-      // Typing from teammates only reaches an agent started open, whatever the hub (or something posing as it) sends.
-      try { const m = JSON.parse(raw); if (m.t === 'in' && open && typeof m.d === 'string') write(m.d); } catch {}
+      // Typing from teammates only reaches an agent started open, whatever the hub (or something posing as it) sends; and
+      // never while the folder-trust prompt is up (asking), which only the local human at this Mac may answer.
+      try { const m = JSON.parse(raw); if (m.t === 'in' && open && !asking && typeof m.d === 'string') write(m.d); } catch {}
     });
     ws.on('close', (code, reason) => {
       if (code >= 4000) onRefused?.(String(reason));

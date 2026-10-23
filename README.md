@@ -189,7 +189,7 @@ npm run icon        # renders the app icon from app/icon.svg
 
 In the playground, create a team in David's copy and invite `max`. The control API wants the token the playground prints, in an `x-play-token` header.
 
-`package.json`'s `allowScripts` names the exact versions of Electron and node-pty whose install scripts may run. When you bump either, update its entry too, or its install step is skipped and `npm start` fails.
+`package.json`'s `allowScripts` records the two packages whose install scripts the app relies on — Electron (downloads its binary) and node-pty (its prebuild; the `postinstall` then marks `spawn-helper` executable). It is **not enforced yet**: there's no `@lavamoat/allow-scripts` or `.npmrc`, so `npm install`/`npm ci` run *every* dependency's install scripts. It's a note of intent, not a sandbox; wiring up lavamoat to enforce it is a planned hardening.
 
 ```
 app/      Electron main process, preload bridge and interface

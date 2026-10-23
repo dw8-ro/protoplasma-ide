@@ -100,6 +100,9 @@ test('the push guard stops shared-team agents pushing to main or force-pushing, 
   push(aliceTree, {}, 'origin', 'HEAD:refs/heads/main'); // a person (no PROTO_SHARED_TEAM) isn't stopped
   assert.throws(() => push(aliceTree, agent, 'origin', ':session/elsewhere'), /would delete session\/elsewhere/, 'an agent deleting a branch');
   push(aliceTree, {}, 'origin', ':session/elsewhere'); // a person may
+  git(aliceTree, 'tag', 'v-shared'); push(aliceTree, {}, 'origin', 'v-shared'); // a person tags
+  assert.throws(() => push(aliceTree, agent, 'origin', ':refs/tags/v-shared'), /delete the shared tag v-shared/, 'an agent deleting a tag');
+  push(aliceTree, {}, 'origin', ':refs/tags/v-shared'); // a person may
   // A repo whose default branch is develop: that's protected like main.
   push(aliceTree, {}, 'origin', 'HEAD:refs/heads/develop');
   git(alice, 'remote', 'set-head', 'origin', 'develop');

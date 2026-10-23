@@ -146,8 +146,11 @@ function startHub({ port = 7681, host = '0.0.0.0', dataDir, owners, tls, passIss
   const keyOf = x => x.key || slug(x.name);
   // A session answers to its name written any way, its original key, and names it had before a rename (running agents
   // keep the name they started with).
-  const findSession = (team, name) => team.sessions.find(x => x.name === name)
-    || team.sessions.find(x => slug(x.name) === slug(name) || keyOf(x) === slug(name) || (x.aliases || []).some(a => slug(a) === slug(name)));
+  const findSession = (team, name) => {
+    const want = slug(name); // once per lookup, not once per session: slug() on a long name is the costly part
+    return team.sessions.find(x => x.name === name)
+      || team.sessions.find(x => slug(x.name) === want || keyOf(x) === want || (x.aliases || []).some(a => slug(a) === want));
+  };
   // Past the cap the oldest finished session without running agents goes. If there's none, the team is full: the API
   // and agents' hellos refuse new sessions then (agents joining an existing one still get theirs).
   const running = (team, x) => teamLanes(team.id).some(l => l.session === x.name);
@@ -385,6 +388,10 @@ function startHub({ port = 7681, host = '0.0.0.0', dataDir, owners, tls, passIss
     let branch = lane.branch; // what HEAD is: switching earlier in the same command (git checkout main && git push) counts
     for (const part of commandsIn(command, /\bgit\b/)) {
       const words = wordsOf(part);
+      // An inline alias that expands to a push hides it from the subcommand check: `git -c alias.p=push p origin main`.
+      if (words.some((w, i) => w === '-c' && /^alias\.[^=]+=.*push/i.test(words[i + 1] || ''))) {
+        return 'this runs git through an inline alias (-c alias.…), which can slip a push past the usual check. Confirm it\'s intended.';
+      }
       for (let at = 0; at < words.length; at++) { // every git in it: sudo -u git git push, submodule foreach git push
         if (!isGit(words[at])) continue;
         const sub = subcommandAt(words, at), next = words.slice(sub + 1).find(w => !w.startsWith('-'));
@@ -539,6 +546,9 @@ function startHub({ port = 7681, host = '0.0.0.0', dataDir, owners, tls, passIss
     let parts;
     try { parts = new URL(req.url, 'http://x').pathname.split('/').filter(Boolean).map(decodeURIComponent); } catch { return json(400, { error: 'Bad address.' }); }
     const [resource, id, sub, subId, leaf, leafId, ...rest] = parts;
+    // No real id or session name is this long (names are capped at 60 where they're made). A long one is only ever an
+    // attempt to make slug()/findSession churn on the single-threaded hub, so it's refused before any of that runs.
+    if (parts.some(p => p.length > 200)) return json(404, { error: 'Not found.' });
     if (rest.length || (leaf && !(sub === 'sessions' && ['comments', 'steps'].includes(leaf)))) return json(404, { error: 'Not found.' });
     if (!resource && req.method === 'GET') return json(200, { app: 'protoplasma-hub' });
 
@@ -762,6 +772,8 @@ function startHub({ port = 7681, host = '0.0.0.0', dataDir, owners, tls, passIss
   });
   // A hub on someone's Mac is reached over the local network, so everything to and from it is encrypted.
   const server = tls ? https.createServer({ key: tls.key, cert: tls.cert }, onRequest) : http.createServer(onRequest);
+  server.headersTimeout = 15_000; // drop a client that dribbles its headers (slow-loris)
+  server.requestTimeout = 30_000; // and one that holds a connection open with a slow body; requests here are small
 
   // ---- WebSockets: agents (/lane) and app windows (/watch) ----
   const gitStats = g => g && typeof g === 'object'
@@ -888,14 +900,21 @@ function startHub({ port = 7681, host = '0.0.0.0', dataDir, owners, tls, passIss
     watchers.add(ws);
     broadcastState(team.id); // doubles as the newcomer's first message
     for (const l of teamLanes(team.id)) send(ws, { t: 'out', lane: l.id, d: l.history });
+    // A window drives look (switching session) and replay (opening a stopped agent) from clicks, so a handful a second is
+    // plenty. Each look that changes session runs broadcastState (rebuild + a fan-out to every teammate), so a tight loop
+    // of them would peg the single-threaded hub: they get a per-socket budget. file:get has its own (fileRate).
+    let acts = 0, actsSince = Date.now();
+    const flooding = () => { if (Date.now() - actsSince >= 1000) { acts = 0; actsSince = Date.now(); } return ++acts > 30; };
     ws.on('message', raw => {
       const m = parse(raw);
       if (m?.t === 'look') {
+        if (flooding()) return;
         const session = typeof m.session === 'string' ? str(m.session, 60) : null;
         if (session !== ws.session) { ws.session = session; broadcastState(team.id); }
         return;
       }
       if (m?.t === 'replay') { // the last screen of a stopped agent
+        if (flooding()) return;
         const agent = (stopped.get(team.id) || []).find(s => s.id === m.id);
         return agent && send(ws, { t: 'replay', id: agent.id, d: agent.history });
       }

@@ -4,9 +4,12 @@
 // Results go to results.log beside this file (not committed). See docs/usage-test/REPORT.md.
 const fs = require('fs');
 const path = require('path');
-// The running playground: PLAY_ROOT, or the newest protoplasma-playground-* folder in the temp folder.
-const newest = () => fs.readdirSync(require('os').tmpdir()).filter(d => d.startsWith('protoplasma-playground-'))
-  .map(d => path.join(require('os').tmpdir(), d)).sort((a, b) => fs.statSync(b).mtimeMs - fs.statSync(a).mtimeMs)[0];
+// The running playground: PLAY_ROOT, or the newest protoplasma-playground-* folder in the temp folder or, for one with
+// real agents (--real), in ~/Protoplasma-sim.
+const os = require('os');
+const newest = () => [os.tmpdir(), path.join(os.homedir(), 'Protoplasma-sim')]
+  .flatMap(base => { try { return fs.readdirSync(base).filter(d => d.startsWith('protoplasma-playground-')).map(d => path.join(base, d)); } catch { return []; } })
+  .filter(d => fs.existsSync(path.join(d, 'token'))).sort((a, b) => fs.statSync(b).mtimeMs - fs.statSync(a).mtimeMs)[0];
 const root = process.env.PLAY_ROOT || newest();
 const token = fs.readFileSync(path.join(root, 'token'), 'utf8').trim();
 const port = { david: 7801, max: 7802 };

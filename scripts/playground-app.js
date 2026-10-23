@@ -10,9 +10,11 @@
 //   POST /hook   { lane, ...event }     a Claude Code hook event for one of this copy's agents, e.g.
 //                                       { "lane": "<id>", "hook_event_name": "PermissionRequest" }
 //   GET  /shot                          saves a screenshot (1440 wide, same coordinates as /click)  -> { file }
-// Agents are bash shells standing in for the CLI picked, so what you type into them really changes files.
+// Agents are bash shells standing in for the CLI picked, so what you type into them really changes files. With PLAY_REAL
+// (your home folder, set by playground.js --real) they are the real CLIs, run with that home so they're signed in as you.
 // The page's confirm() and alert() are answered without a dialog (a native one would block this API): confirm returns
 // window.__confirmAnswer (true unless you set it), and every question is kept in window.__dialogs.
+// What the page logs or throws goes to <copy>/console.log, and the main process's uncaught errors to <copy>/main-errors.log.
 // Menu shortcuts (⌘K, ⌘B...) belong to the native menu, so /key can't trigger them: use /menu.
 const { app, BrowserWindow } = require('electron');
 const http = require('http');
@@ -21,7 +23,8 @@ const path = require('path');
 const hubModule = require('../src/hub');
 const laneModule = require('../src/lane');
 
-const { PLAY_PORT, PLAY_DIR, PLAY_TOKEN, PROTO_ONLINE_HUB: hub } = process.env;
+const { execFileSync } = require('child_process');
+const { PLAY_PORT, PLAY_DIR, PLAY_TOKEN, PLAY_REAL, PROTO_ONLINE_HUB: hub } = process.env;
 const people = { 'tok-david': { login: 'david', name: 'David', avatar: '' }, 'tok-max': { login: 'max', name: 'Max', avatar: '' } };
 hubModule.githubUser = async token => people[token] || null;
 app.setPath('userData', path.join(PLAY_DIR, 'userData'));
@@ -31,7 +34,7 @@ const NAMES = { claude: 'Claude Code', codex: 'Codex', opencode: 'OpenCode' };
 const bin = path.join(PLAY_DIR, 'bin'), secrets = path.join(PLAY_DIR, 'secrets');
 fs.mkdirSync(bin, { recursive: true });
 fs.mkdirSync(secrets, { recursive: true });
-for (const [cmd, name] of Object.entries(NAMES)) {
+for (const [cmd, name] of Object.entries(PLAY_REAL ? {} : NAMES)) {
   fs.writeFileSync(path.join(bin, cmd), `#!/bin/bash
 echo "$PROTO_HOOK_SECRET" > ${JSON.stringify(secrets)}/$$
 printf '\\033[1m%s\\033[0m \\033[2m(a bash shell standing in for the agent)\\033[0m\\r\\n' ${JSON.stringify(name)}
@@ -42,10 +45,18 @@ exec /bin/bash --norc --noprofile -i
 const lanes = new Map();
 const { startLane } = laneModule;
 laneModule.startLane = o => {
-  const lane = startLane({ ...o, cmd: path.join(bin, path.basename(o.cmd)) });
+  const lane = startLane(PLAY_REAL ? { ...o, env: { ...o.env, HOME: PLAY_REAL } } : { ...o, cmd: path.join(bin, path.basename(o.cmd)) });
   lanes.set(lane.id, lane);
   return lane;
 };
+// A stand-in leaves its hook secret in <copy>/secrets; a real Claude Code only has it in its environment (as e2e reads it).
+const secretOf = pid => {
+  try { return fs.readFileSync(path.join(secrets, String(pid)), 'utf8').trim(); } catch {}
+  try { return /PROTO_HOOK_SECRET=(\w+)/.exec(execFileSync('ps', ['eww', '-o', 'command=', '-p', String(pid)], { encoding: 'utf8' }))?.[1]; } catch {}
+};
+const note = (file, line) => fs.appendFileSync(path.join(PLAY_DIR, file), `${new Date().toISOString()} ${line}\n`);
+process.on('uncaughtExceptionMonitor', (e, origin) => note('main-errors.log', `[${origin}] ${e?.stack || e}`));
+process.on('unhandledRejection', e => { note('main-errors.log', `[unhandledRejection] ${e?.stack || e}`); console.error('Unhandled rejection:', e); });
 
 // ---- The control API ----
 const wrap = code => `(async () => {
@@ -94,7 +105,8 @@ http.createServer(async (req, res) => {
       const { lane, ...event } = body;
       const term = lanes.get(lane)?.term;
       if (!term) return send(404, { error: 'No agent with that id runs in this copy.' });
-      const secret = fs.readFileSync(path.join(secrets, String(term.pid)), 'utf8').trim();
+      const secret = secretOf(term.pid);
+      if (!secret) return send(404, { error: 'That agent\'s hook secret couldn\'t be read.' });
       const reply = await fetch(`${hub}/hooks/${lane}`, { method: 'POST', headers: { authorization: `Bearer ${secret}` },
         body: JSON.stringify({ cwd: lanes.get(lane).cwd || '/', ...event }) });
       return send(reply.status, await reply.json().catch(() => null));
@@ -108,10 +120,19 @@ http.createServer(async (req, res) => {
 
 app.on('browser-window-created', (_, win) => {
   win.webContents.setBackgroundThrottling(false); // keep painting, and screenshots current, while the window is hidden
+  // Electron 44 passes one event with the details; older versions passed them as arguments.
+  win.webContents.on('console-message', (e, ...old) => {
+    const m = e?.message !== undefined ? e : { level: old[0], message: old[1], lineNumber: old[2], sourceId: old[3] };
+    note('console.log', `[${m.level}] ${m.message} (${path.basename(String(m.sourceId || ''))}:${m.lineNumber})`);
+  });
+  win.webContents.on('render-process-gone', (_, details) => note('console.log', `[render-process-gone] ${JSON.stringify(details)}`));
+  win.webContents.on('unresponsive', () => note('console.log', '[unresponsive]'));
   win.webContents.on('did-finish-load', () => win.webContents.executeJavaScript(`
-    window.__dialogs = [];
+    window.__dialogs = []; window.__errors = [];
     window.confirm = question => { __dialogs.push(String(question)); return window.__confirmAnswer ?? true; };
     window.alert = message => { __dialogs.push(String(message)); };
+    addEventListener('error', e => { __errors.push(String(e.message)); console.error('[uncaught] ' + e.message + ' at ' + e.filename + ':' + e.lineno); });
+    addEventListener('unhandledrejection', e => { const r = e.reason; __errors.push(String(r && r.message || r)); console.error('[unhandled rejection] ' + (r && r.stack || r)); });
   `));
 });
 

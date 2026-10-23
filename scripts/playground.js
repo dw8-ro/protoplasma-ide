@@ -4,6 +4,10 @@
 // Usage: npm run playground   (Ctrl+C stops everything and removes it)
 // The control APIs need the token printed at start (also in <folder>/token), sent as an `x-play-token` header, so no web
 // page or other program can drive the apps.
+// With --real (npm run playground -- --real), agents are the real Claude Code, Codex and OpenCode installed on this Mac,
+// signed in as you: they get your own home folder, so your logins and settings. The playground then lives in
+// ~/Protoplasma-sim instead of the temp folder, where Codex's sandbox would let an agent write anywhere. Each new session
+// folder stops at its CLI's folder-trust prompt, which is yours to answer. Real prompts use your plans' usage.
 const { spawn, execFileSync } = require('child_process');
 const crypto = require('crypto');
 const fs = require('fs');
@@ -16,7 +20,12 @@ const { files } = require('./stage');
 const people = { 'tok-david': { login: 'david', name: 'David', avatar: '' }, 'tok-max': { login: 'max', name: 'Max', avatar: '' } };
 const verifyUser = async token => people[token] || null;
 const copies = [{ name: 'david', token: 'tok-david', port: 7801 }, { name: 'max', token: 'tok-max', port: 7802 }];
-const root = fs.mkdtempSync(path.join(os.tmpdir(), 'protoplasma-playground-'));
+const real = process.argv.includes('--real');
+const base = real ? path.join(os.homedir(), 'Protoplasma-sim') : os.tmpdir();
+fs.mkdirSync(base, { recursive: true });
+const root = fs.mkdtempSync(path.join(base, 'protoplasma-playground-'));
+// Real agents are found on your own login shell's PATH: the copies' home folders have no shell setup of their own.
+const loginPath = () => execFileSync(process.env.SHELL || '/bin/zsh', ['-ilc', 'printf __PATH__%s "$PATH"'], { encoding: 'utf8', timeout: 10000 }).split('__PATH__').pop();
 const token = crypto.randomBytes(16).toString('hex');
 fs.writeFileSync(path.join(root, 'token'), token);
 const git = (cwd, ...args) => execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
@@ -33,7 +42,7 @@ async function stop(code = 0) {
     a.kill('SIGTERM');
     setTimeout(() => { a.kill('SIGKILL'); resolve(); }, 5000);
   })));
-  fs.rmSync(root, { recursive: true, force: true });
+  fs.rmSync(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 300 }); // a quitting copy's helpers may still be writing
   process.exit(code);
 }
 process.on('SIGINT', () => stop());
@@ -62,6 +71,7 @@ exec sh -c "$(printf '%s' "$last" | sed "s#'[^']*playground.git'#'${origin}'#")"
 `, { mode: 0o755 });
 
   // Each person: a home folder with the app's clone of the repo (~/Protoplasma/david/playground), and a copy of the app.
+  const realPath = real ? loginPath() : '';
   for (const c of copies) {
     const home = path.join(root, c.name, 'home');
     const clone = path.join(home, 'Protoplasma', 'david', 'playground');
@@ -71,11 +81,15 @@ exec sh -c "$(printf '%s' "$last" | sed "s#'[^']*playground.git'#'${origin}'#")"
     git(clone, 'config', 'user.name', people[c.token].name);
     git(clone, 'config', 'user.email', `${c.name}@example.com`);
     git(clone, 'remote', 'set-head', 'origin', 'main');
-    // The stand-in agents (playground-app.js writes them to <copy>/bin) count as installed in this home's login shell.
-    for (const rc of ['.zshenv', '.bash_profile']) fs.writeFileSync(path.join(home, rc), `export PATH="${path.join(root, c.name, 'bin')}:$PATH"\n`);
+    // The stand-in agents (playground-app.js writes them to <copy>/bin) count as installed in this home's login shell,
+    // or with --real, the CLIs on your own PATH, in its order: set in .zprofile, which runs after /etc/zprofile's
+    // path_helper has moved /usr/local/bin to the front (where an older copy of a CLI can be).
+    const rcs = real ? ['.zprofile', '.bash_profile'] : ['.zshenv', '.bash_profile'];
+    for (const rc of rcs) fs.writeFileSync(path.join(home, rc), real ? `export PATH=${JSON.stringify(realPath)}\n` : `export PATH="${path.join(root, c.name, 'bin')}:$PATH"\n`);
     const log = fs.openSync(path.join(root, c.name, 'app.log'), 'a');
     apps.push(spawn(electron, [path.join(__dirname, 'playground-app.js')], { stdio: ['ignore', log, log],
-      env: { ...process.env, HOME: home, PROTO_ONLINE_HUB: hub, PROTO_GITHUB_TOKEN: c.token, PLAY_PORT: String(c.port), PLAY_DIR: path.join(root, c.name), PLAY_TOKEN: token } }));
+      env: { ...process.env, HOME: home, PROTO_ONLINE_HUB: hub, PROTO_GITHUB_TOKEN: c.token, PLAY_PORT: String(c.port), PLAY_DIR: path.join(root, c.name), PLAY_TOKEN: token,
+        PLAY_REAL: real ? os.homedir() : '' } }));
   }
   for (const c of copies) {
     let ready = false;
@@ -86,7 +100,7 @@ exec sh -c "$(printf '%s' "$last" | sed "s#'[^']*playground.git'#'${origin}'#")"
     if (!ready) throw new Error(`${c.name}'s copy didn't start (is port ${c.port} taken by another playground?). See ${path.join(root, c.name, 'app.log')}.`);
   }
 
-  console.log(`Playground ready in ${root}
+  console.log(`Playground ready in ${root}${real ? '\n  agents   the real CLIs, signed in as you' : ''}
   hub      ${hub}
   repo     david/playground (pushes go to ${origin})
 ${copies.map(c => `  ${c.name.padEnd(8)} http://127.0.0.1:${c.port}  home ${path.join(root, c.name, 'home')}  log ${path.join(root, c.name, 'app.log')}`).join('\n')}

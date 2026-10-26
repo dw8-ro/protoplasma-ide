@@ -44,10 +44,15 @@ const connectWatcher = (token, teamId, onMessage = () => {}) => new Promise((res
   ws.once('message', () => resolve(ws));
   ws.on('close', code => reject(Object.assign(new Error(`closed ${code}`), { code })));
 });
-const nextState = match => new Promise(resolve => watcher.on('message', function onMessage(raw) {
-  const m = JSON.parse(raw);
-  if (m.t === 'state' && match(m.lanes)) { watcher.off('message', onMessage); resolve(m.lanes); }
-}));
+const nextState = (match, timeout = 0) => new Promise((resolve, reject) => {
+  let timer;
+  function onMessage(raw) {
+    const m = JSON.parse(raw);
+    if (m.t === 'state' && match(m.lanes)) { clearTimeout(timer); watcher.off('message', onMessage); resolve(m.lanes); }
+  }
+  watcher.on('message', onMessage);
+  if (timeout) timer = setTimeout(() => { watcher.off('message', onMessage); reject(new Error(`No matching state after ${timeout}ms.`)); }, timeout);
+});
 const startLane = (login, ...args) => processes.push(spawn('node', [LANE, url, team.id, 's1', ...args],
   { cwd: root, env: { ...process.env, PROTO_TOKEN: `tok-${login}` }, stdio: ['ignore', 'ignore', 'inherit'] }));
 const outputOf = lane => outputs.filter(m => m.lane === lane.id).map(m => m.d).join('');
@@ -490,16 +495,20 @@ test('agents without hooks report working and idle themselves', async () => {
 });
 
 test('an agent waiting on its folder trust prompt needs you until someone answers', async () => {
-  const asking = nextState(lanes => lanes.some(l => l.session === 'trust' && l.status === 'needs you'));
-  processes.push(spawn('node', [LANE, url, team.id, 'trust', '--open', 'sh', '-c', 'printf "Do you trust the files in this folder?\\n ❯ 1. Yes, proceed\\n   2. No, exit"; cat'],
-    { cwd: root, env: { ...process.env, PROTO_TOKEN: 'tok-alice' }, stdio: ['ignore', 'ignore', 'inherit'] }));
-  const lane = (await asking).find(l => l.session === 'trust');
-  const answered = nextState(lanes => lanes.find(l => l.id === lane.id)?.status === 'idle');
-  watcher.send(JSON.stringify({ t: 'in', lane: lane.id, d: '\r' }));
-  await answered;
-  const gone = nextState(lanes => !lanes.some(l => l.id === lane.id));
-  processes.pop().kill();
-  await gone;
+  const asking = nextState(lanes => lanes.some(l => l.session === 'trust' && l.status === 'needs you'), 5000);
+  const lane = startLaneHere({ hub: url, team: team.id, token: 'tok-alice', session: 'trust', cmd: 'sh', open: true,
+    args: ['-c', 'printf "Do you trust the files in this folder?\\n ❯ 1. Yes, proceed\\n   2. No, exit"; cat'] });
+  let stopping = false;
+  const stop = () => { if (!stopping) { stopping = true; lane.term.kill(); } };
+  try {
+    await asking;
+    const answered = nextState(lanes => lanes.find(l => l.id === lane.id)?.status === 'idle', 5000);
+    watcher.send(JSON.stringify({ t: 'in', lane: lane.id, d: '\r' }));
+    await answered;
+    const gone = nextState(lanes => !lanes.some(l => l.id === lane.id), 5000);
+    stop();
+    await gone;
+  } finally { stop(); }
 });
 
 test('Codex asking to trust its folder needs you too (its answers aren\'t Yes and No)', async () => {
@@ -554,22 +563,33 @@ test('an agent is told when its branch has fallen behind', async () => {
 });
 
 test('removes an agent when its process exits, keeping its last screen to look back at', async () => {
-  const joined = nextState(lanes => lanes.some(l => l.session === 's1' && l.login === 'alice' && l.id !== alice.id));
-  startLane('alice', 'sh', '-c', 'echo farewell-from-the-agent; sleep 0.5');
-  const extra = (await joined).find(l => l.login === 'alice' && l.id !== alice.id);
-  const ended = new Promise(resolve => watcher.on('message', function onMessage(raw) {
-    const m = JSON.parse(raw);
-    if (m.t === 'state' && !m.lanes.some(l => l.id === extra.id) && m.stopped?.some(x => x.id === extra.id)) { watcher.off('message', onMessage); resolve(m.stopped); }
-  }));
-  const record = (await ended).find(x => x.id === extra.id);
-  assert.equal(record.session, 's1');
-  assert.equal(record.history, undefined, 'the screen itself is only sent on request');
-  const replay = new Promise(resolve => watcher.on('message', function onMessage(raw) {
-    const m = JSON.parse(raw);
-    if (m.t === 'replay') { watcher.off('message', onMessage); resolve(m); }
-  }));
-  watcher.send(JSON.stringify({ t: 'replay', id: extra.id }));
-  assert.match((await replay).d, /farewell-from-the-agent/);
+  const joined = nextState(lanes => lanes.some(l => l.session === 's1' && l.login === 'alice' && l.id !== alice.id), 5000);
+  const lane = startLaneHere({ hub: url, team: team.id, token: 'tok-alice', session: 's1', cmd: 'sh', args: ['-c', 'echo farewell-from-the-agent; cat'] });
+  let stopping = false;
+  const stop = () => { if (!stopping) { stopping = true; lane.term.kill(); } };
+  try {
+    const extra = (await joined).find(l => l.id === lane.id);
+    const ended = new Promise((resolve, reject) => {
+      function onMessage(raw) {
+        const m = JSON.parse(raw);
+        if (m.t === 'state' && !m.lanes.some(l => l.id === extra.id) && m.stopped?.some(x => x.id === extra.id)) {
+          clearTimeout(timer); watcher.off('message', onMessage); resolve(m.stopped);
+        }
+      }
+      const timer = setTimeout(() => { watcher.off('message', onMessage); reject(new Error('Agent did not stop.')); }, 5000);
+      watcher.on('message', onMessage);
+    });
+    stop();
+    const record = (await ended).find(x => x.id === extra.id);
+    assert.equal(record.session, 's1');
+    assert.equal(record.history, undefined, 'the screen itself is only sent on request');
+    const replay = new Promise(resolve => watcher.on('message', function onMessage(raw) {
+      const m = JSON.parse(raw);
+      if (m.t === 'replay') { watcher.off('message', onMessage); resolve(m); }
+    }));
+    watcher.send(JSON.stringify({ t: 'replay', id: extra.id }));
+    assert.match((await replay).d, /farewell-from-the-agent/);
+  } finally { stop(); }
 });
 
 test('a session can be renamed, with or without agents in it, keeping its branch name', async () => {

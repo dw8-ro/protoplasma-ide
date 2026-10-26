@@ -494,7 +494,7 @@ test('agents without hooks report working and idle themselves', async () => {
   await lane.close();
 });
 
-test('an agent waiting on its folder trust prompt needs you until someone answers', async () => {
+test('an agent waiting on its folder trust prompt needs you until someone at its Mac answers', async () => {
   const asking = nextState(lanes => lanes.some(l => l.session === 'trust' && l.status === 'needs you'), 5000);
   const lane = startLaneHere({ hub: url, team: team.id, token: 'tok-alice', session: 'trust', cmd: 'sh', open: true,
     args: ['-c', 'printf "Do you trust the files in this folder?\\n ❯ 1. Yes, proceed\\n   2. No, exit"; cat'] });
@@ -502,8 +502,16 @@ test('an agent waiting on its folder trust prompt needs you until someone answer
   const stop = () => { if (!stopping) { stopping = true; lane.term.kill(); } };
   try {
     await asking;
-    const answered = nextState(lanes => lanes.find(l => l.id === lane.id)?.status === 'idle', 5000);
+    // A teammate's Enter doesn't answer it, even in an open agent: only the person at this Mac may trust the folder.
+    let early = false;
+    const track = raw => { const m = JSON.parse(raw); if (m.t === 'state' && m.lanes.find(l => l.id === lane.id)?.status === 'idle') early = true; };
+    watcher.on('message', track);
     watcher.send(JSON.stringify({ t: 'in', lane: lane.id, d: '\r' }));
+    await sleep(500);
+    watcher.off('message', track);
+    assert.equal(early, false, 'a teammate answered the trust prompt');
+    const answered = nextState(lanes => lanes.find(l => l.id === lane.id)?.status === 'idle', 5000);
+    lane.write('\r');
     await answered;
     const gone = nextState(lanes => !lanes.some(l => l.id === lane.id), 5000);
     stop();

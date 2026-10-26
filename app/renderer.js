@@ -387,6 +387,9 @@ function renderPeople() {
   const { owner, members } = currentTeam, mine = ownsTeam(currentTeam);
   $('#peopleTeam').textContent = `${currentTeam.name}, ${currentTeam.where}`;
   $('#inviteBtn').hidden = !mine;
+  $('#inviteCopy').textContent = mine
+    ? "Invite someone by their GitHub username. They'll also need access to the team's repositories on GitHub."
+    : `Only ${owner} can invite people to this team.`;
   setHTML($('#memberList'), [owner, ...members].map(login => `
     <li>${avatar({ login })}<span class="who"><b>${esc(login)}${same(login, me.login) ? ' <span class="where">(you)</span>' : ''}</b></span>
       <span class="role">${login === owner ? 'Owner' : 'Member'}</span>

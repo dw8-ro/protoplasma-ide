@@ -305,10 +305,8 @@ Menu.setApplicationMenu(Menu.buildFromTemplate([
     { role: 'close' },
   ] },
   { role: 'editMenu' },
-  // Reloading would cut the window off from its running agents, so it's only offered when developing. macOS adds
-  // its own full-screen item to a View menu.
+  // macOS adds its own full-screen item to a View menu.
   { label: 'View', submenu: [
-    ...(app.isPackaged ? [] : [{ role: 'reload' }, { role: 'toggleDevTools' }, { type: 'separator' }]),
     { label: 'Toggle Sidebar', accelerator: 'CmdOrCtrl+B', click: menuAction('sidebar') },
     { label: 'Show Code', accelerator: 'CmdOrCtrl+Shift+E', click: menuAction('code') },
     { label: 'Toggle Panel', accelerator: 'CmdOrCtrl+J', click: menuAction('panel') },

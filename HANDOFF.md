@@ -1,99 +1,79 @@
-# Handoff: Protoplasma IDE, 17 October 2026
+# Handoff: Protoplasma IDE, 27 October 2026
 
-Read this first in a new session, then [AGENTS.md](AGENTS.md) for how the code fits together. What the last session
-did and what's left to do: [docs/sessions/2026-10-17.md](docs/sessions/2026-10-17.md).
+Read this first in a new session, then [AGENTS.md](AGENTS.md) for how the code fits together. What the last sessions
+did: [docs/sessions/2026-10-26.md](docs/sessions/2026-10-26.md) (19–26 Oct) and
+[docs/sessions/2026-10-18.md](docs/sessions/2026-10-18.md) (the security audit).
 
 ## Where things stand
 
-- **Security audit after going public (17–18 Oct 2026), on branch `worktree-security-audit`, not committed or
-  released.** Three passes: one by hand, then independent agents per surface (hub, LAN trust, renderer, main
-  process, release path, and reviews of the fixes), each finding checked by a second agent trying to refute it.
-  - **Clean:** no `.env`, key, certificate, token or password in any version of any file in any public ref; nothing
-    secret in Railway's variables (only `DATA_DIR`, `PROTO_OWNERS`); CI safe for public PRs (read-only token, no
-    secrets); no HTML injection path in the renderer (every hub string goes through `esc()`, and the CSP allows no
-    inline script).
-  - **Fixed, medium:** a team on another Mac must still be its owner's hub at every connection, and the hub socket's
-    certificate check takes only owner-vouched pins (`access(s, url, owner)`, `vouched`); shared files are checked by
-    main against the agent's own last git report, never a link, never an untracked file older than the agent
-    (`code:readLane`); new agents send no PostToolUse hook, which carried every tool's whole output to the hub; a
-    session's repo comes only from its creator's or the owner's agent (`repoBy`), so a teammate can't steer others'
-    one-click "Add an agent" into their repo; "Show in Finder" selects a clone instead of opening it (a repo named
-    `tool.app` would have run).
-  - **Fixed, low:** a hub-wide budget of 60 GitHub checks a minute for unseen tokens, with known ones kept across
-    restarts (`known.json`); agent ids made from their hook secret (`laneIdOf`, `h-` ids); caps on hook-reported files,
-    sessions from hellos, agents per person (30), and file requests per person (4 open, 120 a minute); git numbers
-    coerced in the page; comment line search bounded; `core.fsmonitor` and found bare repos off for background git, and
-    no polling in a picked folder while its agent asks to be trusted; clones download into `<dir>@.partial`; the updater refuses a
-    symlinked app or a bundle whose version isn't the release's; logins like `constructor`.
-  - **Known and left:** teammates' notes, goals and file names reach agents' prompts (prompt injection by a teammate);
-    git filter drivers in a downloaded folder's own `.git/config` still run when the app reads its status; during a
-    flood of made-up tokens, new sign-ins wait (per-address budgets if that matters); session-name aliases can be
-    claimed by renames; 2 low DOMPurify advisories in Monaco.
-  - Electron 44.5.1 → 44.8.0 (Chromium security updates). **Not 44.9.0:** with it, Chromium refuses the This Mac
-    hub's pinned certificate (e2e "creates a This Mac team…" fails, net_error -202), though a small repro passes.
-    `~44.8.0` in package.json keeps installs there until that's understood. On 44.8.0 Monaco took focus back from
-    the comment box after "Comment on this", so `commentOn` (code.js) now focuses it a tick later.
-  - The hub accepts apps before 0.5.3 (random lane ids, PostToolUse), so it can deploy first.
-  - Waiting on David: commit, push `main` (redeploys the hub) and release 0.5.3; turn on secret scanning, push
-    protection, Dependabot alerts and private vulnerability reporting; reset his Mac's checkout to `origin/main` (it's
-    on the old history); optionally ask GitHub Support to purge the old commits (see "History rewritten" below).
-- **Released: v0.5.2** (16 Oct 2026, commit `b05602d`): the Claude hook relay for hubs on a Mac (below) and the new
-  README. Released from the Actions page like 0.5.1.
-- **Before that: v0.5.1** (16 Oct 2026, commit `d2d5379`): signed, `Protoplasma-0.5.1-mac-arm64.zip`, notes from
-  `docs/release-notes/0.5.1.md` (the F1 Force Quit advice first). Made with Actions → Release → Run workflow, because the
-  cloud session can't push tags; the release created the tag. Installed copies see it within about 6 hours.
-- **v0.5.0** (commit `abc1b9a`), with N1–N10 and D1–D8. It's signed with the project's certificate, and its
-  release notes say Mac-hosted teams need everyone on 0.5. Installed copies see it within about 6 hours.
-- **After 0.5.0 (shipped in 0.5.1):** a customer simulation of 0.5.0
-  ([docs/usage-test/REPORT.md](docs/usage-test/REPORT.md)), the fixes for its six findings, N11 and N12, and more
-  tests (`8093a70` to `d4f09ea`).
-  - **F1 matters most:** in 0.4.x and 0.5.0, Quit, Update now and logging out close the window but leave the app
-    running, so it can't be reopened. Users on those versions finish an update by force-quitting it (then it
-    installs). 0.5.1 fixes it and says so in its notes.
-- **0.5.1 prepared (16 Oct 2026), for Max, who uses Codex:** checked against a real Codex CLI (0.163) in a cloud
-  session. Three fixes: Codex's "Trust this folder?" ("Trust and continue" / "Back to Agent Command Center") now shows
-  as needs you (`ANSWERS` in lane.js, test in hub.test.js); Add agent falls back to an installed agent when the
-  preferred one (Claude Code by default) isn't installed (`defaultAgent` in renderer.js); and `hubApi` retries once on
-  a reset kept-alive connection, which this Mac's hub closes when it moves to the network at an invite (lan.test.js
-  caught it on Linux). The README installs with `curl` (the repo is going public), and release.yml puts
-  `docs/release-notes/<version>.md` above the generated notes; 0.5.1's carries the F1 Force Quit advice.
-  - CI on the 0.5.1 commit failed once: two hub tests leaned on when the agents' first git report (about 5 s in) landed.
-    The setup now waits for it, and the typing test sends a presence change that always gets a state back.
-  - Checked on Linux only: `npm test` 79 of 79. e2e and the customer simulation need a Mac and weren't rerun.
-  - Codex passes `PROTO_SHARED_TEAM` through to its commands (it only filters names with KEY, SECRET or TOKEN), so the
-    pre-push guard works for it. `codex resume --last` still exists.
-- **README redesigned for going public (16 Oct 2026):** new images in `docs/readme/`, each in a dark and a light version
-  that GitHub picks with `<picture>`. A hero and five feature shots (agents, overlap, code, sessions, start) are real
-  crops of `docs/*.png` over a soft glow of the two people's colours (`npm run readme-art`, pages in
-  `scripts/readme-art/`). There's a how-it-works SVG (`readme-art/diagram.js`), and the demo GIF is framed the same way
-  (`scripts/gif.js`, used by `npm run demo`). The direction was picked by a small design panel; the README text was
-  reviewed for accuracy, GitHub rendering and polish. Re-run `npm run screenshot`, `npm run readme-art` and
-  `npm run demo` together when the UI changes.
-- **0.5.2 (16 Oct 2026): Claude Code's hooks reach hubs on a Mac again.** Since 0.5.0 (D2) a hub on a Mac serves
-  https with a self-signed certificate, which the app pins but Claude Code's HTTP hooks can't. On teams hosted on a Mac
-  every Claude hook failed open: no team context, no ask before a conflicting edit or a risky push, and the status stuck
-  at Idle. Found by the README review. Fixed with a loopback relay (teams.js `hookRelay`, main.js `hookTarget`, lane.js
-  `hookBase`), tested in lan.test.js and with the real `claude` 2.1.301 against a TLS hub (status went working with the
-  relay, stayed idle without). Teams on the online hub were never affected. e2e doesn't send a hook to a Mac hub yet.
-- **History rewritten (17 Oct 2026, David's choice):** every commit on `main` is by `dw8-ro` with GitHub's private
-  address, and the `Co-Authored-By: Claude` and session lines are gone. The code is unchanged; every commit ID changed,
-  and the IDs these docs mention were updated to match. Once the repo was public, the old commits were still reachable
-  through the release tags, a leftover `refs/claude-teleport/…` ref and old Actions runs, carrying David's personal
-  email. A one-off workflow on a temporary branch moved each tag to its rewritten twin (same tree), deleted the ref and
-  the runs of commits no longer on `main`, then deleted its branch. GitHub still serves the old commits to anyone who
-  has their IDs, until it garbage-collects them; only GitHub Support can purge them sooner. David's Mac needs
-  `git fetch origin && git reset --hard origin/main` once.
-- **Hub:** the hosted hub on Railway (`https://hub-production-fba9.up.railway.app`) runs `7383b45`: D1 ids, D2 passes
-  (`/passes`, `/hubs`) and D4. Nothing since then touches `src/hub.js`, so pushing doesn't redeploy it.
-- **Checks on `d4f09ea`:**
-  - `npm test`: 78 of 78.
-  - `npm run e2e`: 126 of 126. It now ends by quitting through the real quit path, and fails if the app doesn't exit.
-  - The customer simulation (`scripts/customer`, against `npm run playground`): 91 of 91.
-- **Repo:** `dw8-ro/protoplasma-ide`, public since 17 Oct 2026. Checked that day from a Linux sandbox: the one-line
-  installer (run end to end with macOS commands stubbed), the signed 0.5.2 zip, the update check for 0.4.2 to 0.5.2
-  copies without `gh`, every README image, badge and link, and the hosted hub. Not done on a real Mac yet.
+- **Latest release: v0.5.5** (26 Oct 2026, `5c9632c`), a security follow-up:
+  - the hub caps more DoS vectors (path length, per-socket look/replay budget, HTTP timeouts);
+  - the push guard catches git run through an inline alias, and the pre-push hook refuses deleting a shared tag;
+  - only the person at the agent's Mac can answer its folder-trust prompt;
+  - the window clamps hub-sent terminal sizes and survives a malformed `state` frame;
+  - Commit & Push times out after 15 minutes.
 
-## What the last stretch of work did
+  Its Release, Package and CI runs are green.
+- **On `main`, not released:** `f8bdabb` (26 Oct) adds an "Invite people" section to the People page and removes
+  Reload and Toggle Developer Tools from the View menu, also in source runs. CI is green. Releasing it needs
+  `docs/release-notes/0.5.6.md` first.
+- **v0.5.4** (19 Oct, `6d4d12a`): updates download with a percentage, the app reopens before the old copy is cleaned
+  up, and a swap that fails halfway always restores the old app. updates.test.js covers stage, sameSigner and swap.sh.
+- **v0.5.3** (18 Oct, `f8d61ac`): the security audit after going public. About 30 fixes, several medium, none
+  critical:
+  - a team on another Mac must still be its owner's hub at every connection (`access(s, url, owner)`, `vouched`);
+  - shared files are checked against the agent's own git report, never a link, never an untracked file older than the
+    agent (`code:readLane`);
+  - new agents send no PostToolUse hook;
+  - a session's repo comes only from its creator's or the owner's agent (`repoBy`);
+  - "Show in Finder" selects a clone instead of opening it;
+  - hub limits on unseen-token lookups, agents, sessions and file requests;
+  - `h-` lane ids made from the hook secret;
+  - Electron 44.8.0.
+
+  The audit found no secret in any public ref.
+- **Electron 44.10.0** (`~44.10.0`, 27 Oct). 44.9.0 made Chromium refuse the This Mac hub's pinned certificate (e2e
+  "creates a This Mac team…", net_error -202). On 44.10.0 the same flow connects: a run of just that e2e step (with
+  `teams.isPinned` logged) went live in three of four runs; the first printed nothing,
+  most likely the new binary's first launch. The full e2e result is below. Why 44.9.0 failed wasn't found.
+- **Known and left (from the audit):**
+  - teammates' notes, goals and file names reach agents' prompts (prompt injection by a teammate);
+  - git filter drivers in a downloaded folder's own `.git/config` still run when the app reads its status;
+  - during a flood of made-up tokens, new sign-ins wait;
+  - session-name aliases can be claimed by renames;
+  - 2 low DOMPurify advisories in Monaco;
+  - `allowScripts` in package.json isn't enforced (see AGENTS.md).
+- **Playground `--real`** (23 Oct): `npm run playground -- --real` runs the installed Claude Code, Codex and OpenCode
+  in `~/Protoplasma-sim`, signed in as David. Each new session stops at its folder-trust prompt, which is his to
+  answer. `scripts/customer/act.js` and `observe.js` drive and watch it from a shell.
+- **Hub:** the hosted hub on Railway (`https://hub-production-fba9.up.railway.app`) redeploys on pushes to `main` that
+  touch `src/hub.js`. The last one is `8df2f17` (0.5.5). It still accepts apps before 0.5.3.
+- **Repo and GitHub:** `dw8-ro/protoplasma-ide`, public since 17 Oct. On 27 Oct, `main` = `origin/main` = `f8bdabb`.
+  Secret scanning, push protection, Dependabot alerts and private vulnerability reporting are on. Since 27 Oct, a
+  ruleset ("Protect main") blocks force pushes to and deletion of the default branch, and workflows from every outside
+  contributor need approval. Default workflow permissions are read-only.
+- **History rewritten (17 Oct, David's choice):** every commit on `main` is by `dw8-ro` with GitHub's private address,
+  with no AI lines. The tags were moved to the rewritten commits. GitHub still serves the old commits to anyone who has
+  their IDs; only GitHub Support can purge them sooner. David's own checkout needs
+  `git fetch origin && git reset --hard origin/main` once, if not done.
+- **0.5.6 is ready to release** (`docs/release-notes/0.5.6.md`): Invite people and Electron 44.10.0. The new tests
+  cover the slow-viewer drop, the file-relay timeout and `files.js` watch.
+- **Checks on 27 Oct** (Electron 44.10.0, before committing):
+  - `npm test`: 97 of 97.
+  - `npm run e2e`: 126 of 126.
+  - The customer simulation: 91 of 91 on a fresh playground. The first run, straight after Electron was downloaded,
+    failed scenario 7 (Max didn't find David's team over Bonjour); on 44.8.0 and then again on 44.10.0 it passed.
+- **Not checked yet:**
+  - the README one-liner hasn't been tried on a real Mac;
+  - two physical Macs sharing a Mac-hosted team hasn't been tried.
+- **Earlier releases:**
+  - **0.5.2** (`b05602d`): the loopback hook relay for hubs on a Mac (teams.js `hookRelay`), and the README redesign
+    (`docs/readme/`, `npm run readme-art`).
+  - **0.5.1** (`d2d5379`): Codex's trust prompt, an installed-agent fallback, and the customer simulation's fixes,
+    including F1 (Quit, Update now and logging out left 0.4.x/0.5.0 running).
+  - **0.5.0** (`abc1b9a`): N1–N10 and D1–D8.
+
+## Earlier: the 0.4.1 recheck and its fixes
 
 ### 1. A full recheck of 0.4.1
 The whole app was rechecked in 16 sections, one at a time, without fixing anything yet.
@@ -146,10 +126,9 @@ is the one proposed to David; he hasn't chosen yet.
 - **C157:** after switching theme, terminal output already on screen keeps the old colours until it's redrawn.
 - **Part of C151:** there's no automatic retry when Monaco fails to load, because its AMD loader caches the failure. The
   code view now explains the failure instead.
-- **Test gaps** (C107, C109 to C111): most are now covered (hub-live.test.js: hello validation, size clamps, hook
-  states, the 15-file cap, the stopped-agents cap; files.test.js: list and search; updates.test.js: no access vs no
-  releases). Still not: the slow-viewer drop, the file-relay timeout (10 s), and `files.js` watch.
-  `updates.js` stage, sameSigner and swap.sh are covered with a stand-in app (updates.test.js).
+- **Test gaps** (C107, C109 to C111): all covered now (hub-live.test.js: hello validation, size clamps, hook states,
+  the 15-file cap, the stopped-agents cap, the file-relay timeout, the slow-viewer drop; files.test.js: list, search
+  and watch; updates.test.js: no access vs no releases; stage, sameSigner and swap.sh with a stand-in app).
 
 ### Found while writing this handoff (after the recheck)
 Mapping the code for AGENTS.md turned up these, and a second pass checked each one. Rows marked **Fixed** are done (see `git log`). They're all
@@ -184,14 +163,15 @@ new `look` straight away, so presence is right again within one round trip.
 - Commits are authored as `dw8-ro <61916598+dw8-ro@users.noreply.github.com>`, with no Claude or AI attribution lines
   (no `Co-Authored-By`, no session links).
 
+
 ## Suggested next steps
-1. ~~Release 0.5.1~~ (done, 16 Oct 2026).
-2. ~~Make the repo public~~ (done, 17 Oct 2026). Next: install once on a real Mac with the README one-liner, then Max
-   installs (he uses Codex) and David invites his GitHub login.
-   - Settings worth turning on now that it's public: a ruleset on `main` blocking force pushes and deletion, private
-     vulnerability reporting, approval for workflows from all outside contributors, and read-only default workflow
-     permissions. On David's GitHub account: "Keep my email addresses private" and "Block command line pushes that
-     expose my email".
-   - Copies on 0.4.x or 0.5.0 go straight to 0.5.2, whose notes don't repeat 0.5.1's Force Quit advice (F1).
-3. The remaining test gaps: the slow-viewer drop, the file-relay timeout, `files.js` watch.
-4. Codex and OpenCode have no hooks, so no overlap warnings or file notes for them (lane.js TODO).
+1. **Release 0.5.6:** push `main` (CI runs; the hub isn't redeployed, since `src/hub.js` didn't change), then
+   `npm run release`. Its notes carry the Force Quit advice (F1) for copies still on 0.4.x or 0.5.0.
+2. **First real install:** the README one-liner on a real Mac, then Max installs (he uses Codex), David invites his
+   GitHub login, and two physical Macs share a Mac-hosted team.
+3. **On David's GitHub account:** "Keep my email addresses private" and "Block command line pushes that expose my
+   email".
+4. **Codex and OpenCode have no hooks**, so no overlap warnings or file notes for them (lane.js TODO). Neither CLI is
+   installed on David's Mac, so this needs one installed to build and check against.
+5. Why Electron 44.9.0 refused the This Mac hub's certificate wasn't found; if a later Electron breaks it again, start
+   from e2e's "creates a This Mac team…" step with `teams.isPinned`'s host and result logged.

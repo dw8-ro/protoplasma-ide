@@ -152,3 +152,42 @@ test('one person runs at most 30 agents in a team, since every teammate\'s app k
   assert.equal((await lane({}, 'tok-bob')).code, 4000, 'the next is refused');
   await Promise.all(mine.map(l => closed(l.ws)));
 });
+
+// A watcher that stays open. Resolves once the hub has sent it the team's state.
+const watcher = token => new Promise((resolve, reject) => {
+  const ws = new WebSocket(`${url.replace('http', 'ws')}/watch`);
+  ws.on('open', () => ws.send(JSON.stringify({ t: 'watch', token, team: team.id })));
+  ws.on('message', function first(raw) { if (JSON.parse(raw).t === 'state') { ws.off('message', first); resolve(ws); } });
+  ws.on('error', reject);
+});
+
+test('a file request the agent\'s app never answers fails after 10 s', { timeout: 20_000 }, async () => {
+  const agent = await lane({});
+  const alice = await watcher('tok-alice'), bob = await watcher('tok-bob');
+  const asked = new Promise(resolve => alice.on('message', raw => { if (JSON.parse(raw).t === 'file:get') resolve(); }));
+  const answer = new Promise(resolve => bob.on('message', raw => { const m = JSON.parse(raw); if (m.t === 'file:put') resolve(m); }));
+  const started = Date.now();
+  bob.send(JSON.stringify({ t: 'file:get', ask: 'q1', lane: agent.id, path: 'a.js' }));
+  await asked; // alice's app got it and says nothing
+  const m = await answer;
+  assert.equal(m.ask, 'q1');
+  assert.match(m.error, /didn't answer/);
+  assert.ok(Date.now() - started >= 9_500, 'it waits the full 10 s');
+  await Promise.all([closed(alice), closed(bob), closed(agent.ws)]);
+});
+
+test('a viewer that stops reading is dropped instead of buffering without limit', { timeout: 30_000 }, async () => {
+  const agent = await lane({});
+  const slow = await watcher('tok-bob');
+  slow._socket.pause(); // stop reading, as a stalled network would
+  const dropped = new Promise(resolve => slow.on('close', resolve));
+  const chunk = 'x'.repeat(1024 * 1024);
+  for (let i = 0; i < 80; i++) { // 80 MB of output, well past the hub's 16 MB per viewer
+    agent.ws.send(JSON.stringify({ t: 'out', d: chunk }));
+    await new Promise(r => setTimeout(r, 10));
+  }
+  slow._socket.resume();
+  await dropped;
+  assert.ok((await state()).lanes.some(l => l.id === agent.id), 'the agent itself is unaffected');
+  await closed(agent.ws);
+});

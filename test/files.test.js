@@ -152,3 +152,22 @@ test('reading a folder\'s git status never runs a command its own config names',
   assert.equal((await require('../src/lane').gitStatus(repo, { env })).files, 1);
   assert.equal(fs.existsSync(mark), false);
 });
+
+test('watch reports changed files, and skips git internals and node_modules', async () => {
+  const dir = fs.mkdtempSync(path.join(tmp, 'watch-'));
+  git(dir, 'init', '-q');
+  fs.mkdirSync(path.join(dir, 'node_modules'));
+  const seen = [];
+  const stop = files.watch(dir, paths => seen.push(...paths));
+  try {
+    await new Promise(r => setTimeout(r, 300)); // fs.watch takes a moment to start on macOS
+    fs.writeFileSync(path.join(dir, 'node_modules', 'dep.js'), 'x');
+    fs.writeFileSync(path.join(dir, '.git', 'scratch'), 'x');
+    fs.writeFileSync(path.join(dir, 'app.js'), 'x');
+    for (let i = 0; i < 40 && !seen.includes('app.js'); i++) await new Promise(r => setTimeout(r, 50));
+    assert.ok(seen.includes('app.js'), 'a changed file is reported');
+    // macOS may still report the setup above (.git/HEAD, which counts, or the node_modules folder itself), so check
+    // only the files written inside them.
+    assert.ok(!seen.includes('node_modules/dep.js') && !seen.includes('.git/scratch'), `nothing ignored is reported: ${seen}`);
+  } finally { stop(); }
+});

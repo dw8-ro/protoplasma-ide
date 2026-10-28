@@ -43,7 +43,11 @@ did: [docs/sessions/2026-10-26.md](docs/sessions/2026-10-26.md) (19–26 Oct) an
   - git filter drivers in a downloaded folder's own `.git/config` still run when the app reads its status;
   - during a flood of made-up tokens, new sign-ins wait;
   - session-name aliases can be claimed by renames;
-  - 2 low DOMPurify advisories in Monaco;
+  - DOMPurify advisories in Monaco (1 critical, 1 high, 3 low on 28 Oct). Monaco 0.57.0 bundles DOMPurify 3.4.15 into
+    `min/vs`, and that copy is what the app loads; the separate npm package isn't used. None of them can be reached:
+    each needs `SAFE_FOR_TEMPLATES`, `IN_PLACE` or `PARSER_MEDIA_TYPE`, and Monaco passes only a tag and attribute
+    list, `ALLOW_UNKNOWN_PROTOCOLS` and DOM or TrustedType output. The CSP blocks inline script as well. Take a
+    Monaco release with a newer DOMPurify when one comes out;
   - `allowScripts` in package.json isn't enforced (see AGENTS.md).
 - **Playground `--real`** (23 Oct): `npm run playground -- --real` runs the installed Claude Code, Codex and OpenCode
   in `~/Protoplasma-sim`, signed in as David. Each new session stops at its folder-trust prompt, which is his to
@@ -167,17 +171,11 @@ new `look` straight away, so presence is right again within one round trip.
 
 
 ## Suggested next steps
-1. **Dependabot alerts (10 open on 28 Oct):**
-   - dompurify (1 critical, 1 high, 3 low) comes from monaco-editor 0.57.0, which bundles its own copy into
-     `min/vs`. Overriding the npm package won't change what the app loads; it needs a Monaco release with a newer
-     DOMPurify.
-   - undici (4 high, 1 medium) is a dev dependency of @electron/packager (via @electron/get) and isn't shipped.
-     `npm update` or an override fixes it.
-2. **First real install:** the README one-liner on a real Mac, then Max installs (he uses Codex), David invites his
+1. **First real install:** the README one-liner on a real Mac, then Max installs (he uses Codex), David invites his
    GitHub login, and two physical Macs share a Mac-hosted team.
-3. **On David's GitHub account:** "Keep my email addresses private" and "Block command line pushes that expose my
+2. **On David's GitHub account:** "Keep my email addresses private" and "Block command line pushes that expose my
    email".
-4. **Codex and OpenCode have no hooks**, so no overlap warnings or file notes for them (lane.js TODO). Neither CLI is
+3. **Codex and OpenCode have no hooks**, so no overlap warnings or file notes for them (lane.js TODO). Neither CLI is
    installed on David's Mac, so this needs one installed to build and check against.
-5. Why Electron 44.9.0 refused the This Mac hub's certificate wasn't found; if a later Electron breaks it again, start
+4. Why Electron 44.9.0 refused the This Mac hub's certificate wasn't found; if a later Electron breaks it again, start
    from e2e's "creates a This Mac team…" step with `teams.isPinned`'s host and result logged.

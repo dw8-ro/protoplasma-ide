@@ -6,7 +6,9 @@ did: [docs/sessions/2026-10-26.md](docs/sessions/2026-10-26.md) (19–26 Oct) an
 
 ## Where things stand
 
-- **Latest release: v0.5.5** (26 Oct 2026, `5c9632c`), a security follow-up:
+- **Latest release: v0.5.6** (28 Oct 2026, `cfef8e4`): Invite people on the People page, and Electron 44.10.0.
+  Signed, `Protoplasma-0.5.6-mac-arm64.zip`, made with `npm run release`; its Release run is green.
+- **v0.5.5** (26 Oct 2026, `5c9632c`), a security follow-up:
   - the hub caps more DoS vectors (path length, per-socket look/replay budget, HTTP timeouts);
   - the push guard catches git run through an inline alias, and the pre-push hook refuses deleting a shared tag;
   - only the person at the agent's Mac can answer its folder-trust prompt;
@@ -56,7 +58,7 @@ did: [docs/sessions/2026-10-26.md](docs/sessions/2026-10-26.md) (19–26 Oct) an
   with no AI lines. The tags were moved to the rewritten commits. GitHub still serves the old commits to anyone who has
   their IDs; only GitHub Support can purge them sooner. David's own checkout needs
   `git fetch origin && git reset --hard origin/main` once, if not done.
-- **0.5.6 is ready to release** (`docs/release-notes/0.5.6.md`): Invite people and Electron 44.10.0. The new tests
+- **0.5.6's tests** (`docs/release-notes/0.5.6.md` has its notes): the new tests
   cover the slow-viewer drop, the file-relay timeout and `files.js` watch.
 - **Checks on 27 Oct** (Electron 44.10.0, before committing):
   - `npm test`: 97 of 97.
@@ -165,8 +167,12 @@ new `look` straight away, so presence is right again within one round trip.
 
 
 ## Suggested next steps
-1. **Release 0.5.6:** push `main` (CI runs; the hub isn't redeployed, since `src/hub.js` didn't change), then
-   `npm run release`. Its notes carry the Force Quit advice (F1) for copies still on 0.4.x or 0.5.0.
+1. **Dependabot alerts (10 open on 28 Oct):**
+   - dompurify (1 critical, 1 high, 3 low) comes from monaco-editor 0.57.0, which bundles its own copy into
+     `min/vs`. Overriding the npm package won't change what the app loads; it needs a Monaco release with a newer
+     DOMPurify.
+   - undici (4 high, 1 medium) is a dev dependency of @electron/packager (via @electron/get) and isn't shipped.
+     `npm update` or an override fixes it.
 2. **First real install:** the README one-liner on a real Mac, then Max installs (he uses Codex), David invites his
    GitHub login, and two physical Macs share a Mac-hosted team.
 3. **On David's GitHub account:** "Keep my email addresses private" and "Block command line pushes that expose my

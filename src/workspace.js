@@ -73,7 +73,7 @@ async function makeWorktree(clone, session, dir, env) {
 }
 
 // Ignored files that a build or install makes again; anything else ignored (.env, a local database) is someone's work.
-const REMAKEABLE = /^(node_modules|dist|build|out|target|coverage|\.next|\.nuxt|\.turbo|\.cache|\.parcel-cache|\.venv|venv|__pycache__|\.pytest_cache|\.gradle|\.DS_Store)(\/|$)/;
+const REMAKEABLE = /^(node_modules|dist|dist\.noindex|build|out|target|coverage|\.next|\.nuxt|\.turbo|\.cache|\.parcel-cache|\.venv|venv|__pycache__|\.pytest_cache|\.gradle|\.DS_Store)(\/|$)/;
 /**
  * Removes a session's worktree folder. Git refuses if it has uncommitted changes; this also refuses if it holds ignored
  * files that aren't build output (git would delete them). The session branch is kept either way.

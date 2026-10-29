@@ -48,8 +48,8 @@ jobs:
           MAC_CERT_P12: ${{ secrets.MAC_CERT_P12 }}
           MAC_CERT_PASSWORD: ${{ secrets.MAC_CERT_PASSWORD }}
         run: |
-          scripts/sign.sh dist/Protoplasma-darwin-arm64/Protoplasma.app
-          ditto -c -k --keepParent dist/Protoplasma-darwin-arm64/Protoplasma.app "Protoplasma-${TAG#v}-mac-arm64.zip"
+          scripts/sign.sh dist.noindex/Protoplasma-darwin-arm64/Protoplasma.app
+          ditto -c -k --keepParent dist.noindex/Protoplasma-darwin-arm64/Protoplasma.app "Protoplasma-${TAG#v}-mac-arm64.zip"
       - name: Publish
         env:
           GH_TOKEN: ${{ github.token }}

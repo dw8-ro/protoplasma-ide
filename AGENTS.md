@@ -21,7 +21,7 @@ Function names below are stable. Line numbers drift, so search by name.
 | `npm start` | Runs the app from source. Updates are off in source runs. | |
 | `npm test` | 97 integration tests in `test/*.test.js`: real hub, real lanes, real git. About a minute. | git ≥ 2.28, macOS. No network or Electron needed. |
 | `npm run e2e` | Drives the real Electron app through every main flow and prints `PASS`/`FAIL` per step, ending with `N/M passed`. 15-minute cap. | The `claude` CLI on the login-shell PATH and a GUI session. One step needs `gh auth status` to succeed (online). |
-| `npm run dist` | Packages `dist/Protoplasma-darwin-arm64/Protoplasma.app`, unsigned. | |
+| `npm run dist` | Packages `dist.noindex/Protoplasma-darwin-arm64/Protoplasma.app`, unsigned. | |
 | `npm run playground` | Two app copies (David on port 7801, Max on 7802) on a local hub and repo, each with an HTTP control API | |
 | `for s in 1 2 3 4 5 6 7 8; do node scripts/customer/s$s.js; done` | The customer simulation (docs/usage-test/REPORT.md): 91 checks driven with real clicks and typing against a running playground, start to finish on one fresh playground | `npm run playground` running |
 | `npm run hub` | A standalone hub on `PORT` (default 7681). Memory only unless `DATA_DIR` is set. | |
@@ -31,11 +31,15 @@ Function names below are stable. Line numbers drift, so search by name.
 | `npm run release` | Bumps the patch version, tags `v<version>` and pushes. GitHub Actions builds, signs and publishes. | On `main`, with `main` equal to `origin/main` |
 
 **Verifying a change:** run `npm test`, then `npm run e2e`. For packaging changes, also run `npm run dist`, then
-`npx asar list dist/Protoplasma-darwin-arm64/Protoplasma.app/Contents/Resources/app.asar`. To try it as an installed
+`npx asar list dist.noindex/Protoplasma-darwin-arm64/Protoplasma.app/Contents/Resources/app.asar`. To try it as an installed
 app:
 1. Quit the running app first, after checking it has no agents running.
 2. Copy the `.app` to `/Applications`.
-3. Launch it with `open /Applications/Protoplasma.app`. Opening it by name can start the `dist/` copy instead.
+3. Launch it with `open /Applications/Protoplasma.app`. Opening it by name can start a build copy instead.
+
+Builds go to `dist.noindex/` because Spotlight skips folders ending in `.noindex`. Otherwise every build, in every
+worktree, shows up as another Protoplasma app. Don't unzip or copy a test app anywhere Spotlight indexes; put it under a
+`.noindex` folder too.
 
 Syntax checks: `node --check <file>` and `sh -n install.sh scripts/sign.sh`.
 

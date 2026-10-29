@@ -21,7 +21,8 @@ and open work are in HANDOFF.md. Both are loaded here:
   - Electron isn't a web page, so the in-app browser can't drive it. Use `scripts/e2e.js` (it runs page code through
     `webContents.executeJavaScript`) or the playground's control API (`x-play-token` header).
   - Computer use can't deliver Escape to the app. Send it with `webContents.sendInputEvent` instead.
-  - Launch the installed copy with `open /Applications/Protoplasma.app`. Opening it by name can start the `dist/` copy.
+  - Launch the installed copy with `open /Applications/Protoplasma.app`. Opening it by name can start a build copy.
+  Builds go to `dist.noindex/` so Spotlight doesn't list each one as another app (see AGENTS.md).
 - **e2e and the `claude` CLI:** if e2e suddenly says "the claude command isn't installed", Claude Code was probably
   updating itself mid-run (its binary is briefly missing). Rerun before debugging.
 - **Usage limit:** it has been hit many times. Prefer working inline. If you do use subagents, use few, give each a

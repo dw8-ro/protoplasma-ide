@@ -18,7 +18,7 @@
     "screenshot": "electron scripts/screenshot.js",
     "readme-art": "electron scripts/readme-art.js",
     "playground": "node scripts/playground.js",
-    "dist": "electron-packager . Protoplasma --platform=darwin --arch=arm64 --out=dist --overwrite --icon=build/icon.icns --extend-info=build/extend-info.plist --asar.unpackDir=node_modules/node-pty --ignore=\"^/(dist|docs|scripts|test|build|\\.github|install\\.sh|CLAUDE\\.md|AGENTS\\.md|HANDOFF\\.md|node_modules/monaco-editor/(esm|dev))\"",
+    "dist": "electron-packager . Protoplasma --platform=darwin --arch=arm64 --out=dist.noindex --overwrite --icon=build/icon.icns --extend-info=build/extend-info.plist --asar.unpackDir=node_modules/node-pty --ignore=\"^/(dist|docs|scripts|test|build|\\.github|install\\.sh|CLAUDE\\.md|AGENTS\\.md|HANDOFF\\.md|node_modules/monaco-editor/(esm|dev))\"",
     "postinstall": "chmod +x node_modules/node-pty/prebuilds/*/spawn-helper",
     "icon": "electron scripts/icon.js"
   },

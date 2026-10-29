@@ -174,11 +174,13 @@ test('git status keeps odd file names whole', async () => {
 
 test('a folder holding ignored files that aren\'t build output is kept', async () => {
   const { dir } = await sessionWorktree(alice, 'Has env', env);
-  fs.writeFileSync(path.join(dir, '.gitignore'), '.env\nnode_modules/\n');
+  fs.writeFileSync(path.join(dir, '.gitignore'), '.env\nnode_modules/\ndist.noindex/\n');
   git(dir, 'add', '.gitignore');
   git(dir, 'commit', '-qm', 'ignore');
   fs.mkdirSync(path.join(dir, 'node_modules'));
   fs.writeFileSync(path.join(dir, 'node_modules', 'x.js'), '');
+  fs.mkdirSync(path.join(dir, 'dist.noindex')); // where `npm run dist` builds this app
+  fs.writeFileSync(path.join(dir, 'dist.noindex', 'x.app'), '');
   fs.writeFileSync(path.join(dir, '.env'), 'SECRET=1\n');
   await assert.rejects(removeSessionWorktree(alice, 'Has env', env), /\.env/);
   assert.ok(fs.existsSync(path.join(dir, '.env')), 'nothing was deleted');

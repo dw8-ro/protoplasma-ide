@@ -175,7 +175,7 @@ npm install
 npm start
 ```
 
-`npm run dist` builds the app into `dist/Protoplasma-darwin-arm64/`, and `npm run release` publishes a new version: it bumps the version and pushes a tag, and GitHub Actions builds the app and attaches it to a release that everyone's copy picks up.
+`npm run dist` builds the app into `dist.noindex/Protoplasma-darwin-arm64/`, and `npm run release` publishes a new version: it bumps the version and pushes a tag, and GitHub Actions builds the app and attaches it to a release that everyone's copy picks up.
 
 ```bash
 npm test            # hub, lane, worktree, code view and update tests (node:test)

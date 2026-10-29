@@ -6,25 +6,30 @@ did: [docs/sessions/2026-10-26.md](docs/sessions/2026-10-26.md) (19–26 Oct) an
 
 ## Where things stand
 
-- **Latest release: v0.5.6** (28 Oct 2026, `cfef8e4`): Invite people on the People page, and Electron 44.10.0.
-  Signed, `Protoplasma-0.5.6-mac-arm64.zip`, made with `npm run release`; its Release run is green.
-- **Not released yet (29 Oct), a quieter look and a build-folder fix:**
-  - The main area is a rounded sheet inset on the canvas, so the title bar and sidebar have no dividing lines.
-  - Agent terminals are plain grey cards. The owner's name sits inside, with their colour only in a small dot; the
-    coloured outline with the name cut into it is gone.
-  - Profile pictures are flat tinted circles with no ring.
-  - Menus are translucent and fields get a soft focus ring.
-  - David tried a violet "plasma" accent first and turned it down ("looks like AI slop"): keep the brand black and
-    white, with white primary buttons.
-  - The review page with his notes is the claude.ai artifact "Protoplasma Redesign Review".
-  - `npm run dist` builds into `dist.noindex/`, which Spotlight skips. Builds in `dist/` (and in every worktree) each
-    showed up as another Protoplasma app. workspace.js `REMAKEABLE` counts `dist.noindex/` as build output.
-  - e2e and stage.js no longer delete Electron's userData folder while the app runs. e2e did this in its exit handler,
-    and a run that had passed 126/126 ended in Electron's "A JavaScript error occurred in the main process" dialog
-    (ENOTEMPTY). The folder is removed once the process is gone, and only after the script made it.
-  - The README image crops (scripts/readme-art/*.html) were re-measured for the inset layout.
-  - Checks on 29 Oct: `npm test` 97 of 97, `npm run e2e` 126 of 126 (clean exit, no temp folders left), `npm run
-    dist` builds to `dist.noindex/` and Spotlight doesn't list it.
+- **Latest release: v0.5.7** (29 Oct 2026, `d7b8050`): a quieter look, and a build-folder fix. Signed,
+  `Protoplasma-0.5.7-mac-arm64.zip`. Its Release, Package and CI runs are green. The zip was checked: version 0.5.7,
+  signed by "Protoplasma Release Signing", new styles inside.
+  - Made from a worktree, not with `npm run release` (which needs the branch to be named `main`): the notes were pushed
+    to main, HEAD was checked equal to origin/main, then `npm version patch`, `git push origin HEAD:main` and
+    `git push origin v0.5.7`.
+  - What changed:
+    - The main area is a rounded sheet inset on the canvas, so the title bar and sidebar have no dividing lines.
+    - Agent terminals are plain grey cards. The owner's name sits inside, with their colour only in a small dot; the
+      coloured outline with the name cut into it is gone.
+    - Profile pictures are flat tinted circles with no ring.
+    - Menus are translucent and fields get a soft focus ring.
+    - David tried a violet "plasma" accent first and turned it down ("looks like AI slop"): keep the brand black and
+      white, with white primary buttons.
+    - The review page with his notes is the claude.ai artifact "Protoplasma Redesign Review".
+    - `npm run dist` builds into `dist.noindex/`, which Spotlight skips. Builds in `dist/` (and in every worktree) each
+      showed up as another Protoplasma app. workspace.js `REMAKEABLE` counts `dist.noindex/` as build output.
+    - e2e and stage.js no longer delete Electron's userData folder while the app runs. e2e did this in its exit handler,
+      and a run that had passed 126/126 ended in Electron's "A JavaScript error occurred in the main process" dialog
+      (ENOTEMPTY). The folder is removed once the process is gone, and only after the script made it.
+    - The README image crops (scripts/readme-art/*.html) were re-measured for the inset layout.
+    - Checks on 29 Oct: `npm test` 97 of 97, `npm run e2e` 126 of 126 (clean exit, no temp folders left), `npm run
+      dist` builds to `dist.noindex/` and Spotlight doesn't list it.
+- **v0.5.6** (28 Oct 2026, `cfef8e4`): Invite people on the People page, and Electron 44.10.0.
 - **v0.5.5** (26 Oct 2026, `5c9632c`), a security follow-up:
   - the hub caps more DoS vectors (path length, per-socket look/replay budget, HTTP timeouts);
   - the push guard catches git run through an inline alias, and the pre-push hook refuses deleting a shared tag;
@@ -68,7 +73,7 @@ did: [docs/sessions/2026-10-26.md](docs/sessions/2026-10-26.md) (19–26 Oct) an
   answer. `scripts/customer/act.js` and `observe.js` drive and watch it from a shell.
 - **Hub:** the hosted hub on Railway (`https://hub-production-fba9.up.railway.app`) redeploys on pushes to `main` that
   touch `src/hub.js`. The last one is `8df2f17` (0.5.5). It still accepts apps before 0.5.3.
-- **Repo and GitHub:** `dw8-ro/protoplasma-ide`, public since 17 Oct. On 29 Oct, `main` = `origin/main` = `f15ec8d`.
+- **Repo and GitHub:** `dw8-ro/protoplasma-ide`, public since 17 Oct. On 29 Oct, `main` = `origin/main` (after 0.5.7 and this note).
   Secret scanning, push protection, Dependabot alerts and private vulnerability reporting are on. Since 27 Oct, a
   ruleset ("Protect main") blocks force pushes to and deletion of the default branch, and workflows from every outside
   contributor need approval. Default workflow permissions are read-only.

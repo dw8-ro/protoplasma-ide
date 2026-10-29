@@ -3,7 +3,7 @@
 // script playing its CLI, so the pictures don't depend on whose Mac takes them, and Claude Code never has to be asked
 // to trust a folder. Used by screenshot.js and demo.js. Needs no GitHub account.
 const { app, safeStorage, ipcMain } = require('electron');
-const { execFileSync } = require('child_process');
+const { execFileSync, spawn } = require('child_process');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
@@ -28,7 +28,12 @@ async function boot(run) {
   laneModule.startLane = o => startLane({ ...o, cmd: own ? path.join(own, o.cmd) : o.cmd });
   const hub = `http://127.0.0.1:${(await hubModule.startHub({ port: 0, host: '127.0.0.1', verifyUser })).port}`;
   process.env.PROTO_ONLINE_HUB = hub;
-  app.setPath('userData', tempDir('protoplasma-stage-'));
+  // Electron writes its own folder until after the last exit handler, so it isn't in `temp` (removing it while the app
+  // runs fails or leaves files behind): it's removed once this process is gone.
+  const userData = fs.mkdtempSync(path.join(os.tmpdir(), 'protoplasma-stage-'));
+  app.setPath('userData', userData);
+  process.on('exit', () => spawn('sh', ['-c', 'while kill -0 "$1" 2>/dev/null; do sleep 0.2; done; rm -rf "$2"', 'sh',
+    String(process.pid), userData], { detached: true, stdio: 'ignore' }).unref());
   await app.whenReady();
   fs.writeFileSync(path.join(app.getPath('userData'), 'github-token'),
     safeStorage.encryptString(JSON.stringify({ token: 'tok-david', user: people['tok-david'] })));
@@ -47,7 +52,7 @@ const tempDir = prefix => { const dir = fs.mkdtempSync(path.join(os.tmpdir(), pr
 
 function cleanUp() {
   for (const lane of running) try { lane.term.kill(); } catch {}
-  for (const dir of temp) fs.rmSync(dir, { recursive: true, force: true });
+  for (const dir of temp) try { fs.rmSync(dir, { recursive: true, force: true }); } catch {} // a leftover folder is harmless
 }
 
 // ---- The repo ----

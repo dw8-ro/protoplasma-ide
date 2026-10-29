@@ -15,13 +15,18 @@ const people = { 'tok-david': { login: 'david', name: 'David', avatar: '' }, 'to
 const verifyUser = async token => people[token] || null;
 const results = [];
 const check = (name, ok, detail = '') => { results.push(!!ok); console.log(`${ok ? 'PASS' : 'FAIL'}  ${name}${detail ? `  (${detail})` : ''}`); };
-// Temporary folders made for the run, removed at the end.
+// Temporary folders made for the run, removed at the end. A folder left behind is harmless, so removing one never
+// throws: an error in the exit handler stops the run with Electron's "JavaScript error in the main process" dialog.
 const temps = [];
 const tempDir = prefix => { const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix)); temps.push(dir); return dir; };
-// Electron writes its own folder until after the last exit handler, so that one is removed once this process is gone.
+const removeTemps = () => { for (const dir of temps) try { fs.rmSync(dir, { recursive: true, force: true }); } catch {} };
+// Electron writes its own folder (userData) until after the last exit handler, so that one isn't in `temps`: removing it
+// while the app runs fails (ENOTEMPTY) or leaves files behind. It's removed once this process is gone, and only once
+// it's been made: before that, app.getPath('userData') is the real Protoplasma data folder.
+let userData = null;
 process.on('exit', () => {
-  for (const dir of temps) fs.rmSync(dir, { recursive: true, force: true });
-  spawn('sh', ['-c', 'while kill -0 "$1" 2>/dev/null; do sleep 0.2; done; rm -rf "$2"', 'sh', String(process.pid), app.getPath('userData')], { detached: true, stdio: 'ignore' }).unref();
+  removeTemps();
+  if (userData) spawn('sh', ['-c', 'while kill -0 "$1" 2>/dev/null; do sleep 0.2; done; rm -rf "$2"', 'sh', String(process.pid), userData], { detached: true, stdio: 'ignore' }).unref();
 });
 // A run that hangs (a page stuck, a step waiting forever) ends with a failure instead of running on.
 setTimeout(() => { console.log('FAIL  the run took longer than 15 minutes'); process.exitCode = 1; app.exit(1); }, 15 * 60_000).unref();
@@ -51,7 +56,8 @@ function makeDemoRepo() {
   hubModule.githubUser = verifyUser;
   const hub = `http://127.0.0.1:${(await hubModule.startHub({ port: 0, host: '127.0.0.1', verifyUser })).port}`;
   process.env.PROTO_ONLINE_HUB = hub;
-  app.setPath('userData', tempDir('protoplasma-e2e-'));
+  userData = fs.mkdtempSync(path.join(os.tmpdir(), 'protoplasma-e2e-'));
+  app.setPath('userData', userData);
   await app.whenReady();
   fs.writeFileSync(path.join(app.getPath('userData'), 'github-token'), safeStorage.encryptString(JSON.stringify({ token: 'tok-david', user: people['tok-david'] })));
   app.on('browser-window-created', (_, win) => win.webContents.once('did-finish-load', () => run(win, hub)));
@@ -444,7 +450,7 @@ async function run(win, hub) {
     fs.rmSync(secretFile, { force: true });
     fs.rmSync(demoOwner, { recursive: true, force: true });
     if (!hadProtoplasmaDir) try { fs.rmdirSync(path.join(os.homedir(), 'Protoplasma')); } catch {}
-    for (const dir of temps) fs.rmSync(dir, { recursive: true, force: true });
+    removeTemps();
     // Quits the way logging out does (SIGTERM: no "agents are still running" question), through the real quit path, and
     // must really exit: a quit that's ignored leaves the app running with no window (F1 in docs/usage-test).
     // If it doesn't, it says how far the quit got.

@@ -1070,8 +1070,7 @@ function renderSessions(lanes) {
     <div class="card" data-session="${esc(s.name)}" role="button" tabindex="0">
       <div class="card-top"><span class="card-title">${esc(s.name)}</span>${canManage(s.rec) ? `<button class="icon-btn" data-menu="${esc(s.name)}" aria-label="Session menu">⋯</button>` : ''}</div>
       ${s.rec?.task ? `<div class="card-task">${esc(s.rec.task)}</div>` : ''}
-      <div class="card-status">${pill(s.status)}<span>${n ? `${s.rec?.done ? 'Marked done, ' : ''}${n} agent${n === 1 ? '' : 's'} ${s.rec?.done ? 'still ' : ''}running` : 'No agents running'}</span>${stepsDone(s.rec)}</div>
-      ${n ? `<div class="card-agents">${esc([...new Set(s.lanes.map(l => agentName(l.cmd)))].join(', '))}</div>` : ''}
+      <div class="card-status">${pill(s.status)}<span>${n ? `${s.rec?.done ? 'Marked done, ' : ''}${n} agent${n === 1 ? '' : 's'} ${s.rec?.done ? 'still ' : ''}running` : 'No agents running'}</span>${n ? `<span class="card-agents">${esc([...new Set(s.lanes.map(l => agentName(l.cmd)))].join(', '))}</span>` : ''}${stepsDone(s.rec)}</div>
       ${branchLine(s.lanes)}
       ${fileList(s.lanes)}
       <div class="card-people">${n ? people(s.lanes) : `<span>${esc(s.repo)}</span>`}${s.at ? `<span class="ago">${ago(s.at)}</span>` : ''}</div>
@@ -1317,7 +1316,7 @@ function agentCard(l, name) {
     : mine ? (l.open ? 'Teammates can type' : 'Only you can type') : (l.open ? 'You can type' : 'View only');
   const file = !mine && own.at(-1); // a teammate's latest file: open their version of it
   return `
-  <div class="agent-card ${[focus, split].includes(l.id) ? 'on' : ''}" data-focus="${esc(l.id)}" style="--c:${colorFor(l.login)}" role="button" tabindex="0">
+  <div class="agent-card ${[focus, split].includes(l.id) ? 'on' : ''}" data-focus="${esc(l.id)}" role="button" tabindex="0">
     <b>${esc(name)}</b>
     <span class="sub ${cls}">${esc(label)}</span>
     ${overlap ? `<span class="sub overlap" title="${esc(overlap)}">${esc(overlap)}</span>` : ''}

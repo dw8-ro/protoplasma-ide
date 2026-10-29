@@ -25,6 +25,8 @@
     --primary-text: #0b0b0c;
     --ui: -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif;
     --mono: ui-monospace, "SF Mono", Menlo, monospace;
+    /* One arrow for every dropdown, mid grey so it reads on both themes. */
+    --chevron: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12'%3E%3Cpath d='M3 4.5 6 7.5 9 4.5' fill='none' stroke='%238e8e96' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
   }
   :root[data-theme=light] {
     color-scheme: light;
@@ -88,6 +90,13 @@
     outline: none; border-color: var(--muted); box-shadow: 0 0 0 3px color-mix(in srgb, var(--text) 8%, transparent);
   }
   input[readonly] { color: var(--muted); font-family: var(--mono); font-size: 12px; }
+  select {
+    appearance: none; height: 34px; padding: 0 28px 0 10px; border-radius: 8px; border: 1px solid var(--line-strong);
+    background: var(--canvas) var(--chevron) no-repeat right 9px center / 12px; color: var(--text); font: inherit; cursor: pointer;
+  }
+  /* A field with suggestions gets the same arrow; the browser's own stays on top, invisible, so clicking it still opens the list. */
+  input[list] { padding-right: 30px; background-image: var(--chevron); background-repeat: no-repeat; background-position: right 11px center; background-size: 12px; }
+  input[list]::-webkit-calendar-picker-indicator { opacity: 0; cursor: pointer; }
   .row { display: flex; gap: 8px; }
   .fine { color: var(--faint); font-size: 12px; line-height: 1.5; }
   .nearby { display: flex; align-items: center; gap: 8px; margin: 2px 0 0; cursor: pointer; }
@@ -180,14 +189,18 @@
   .page-head { display: flex; align-items: center; gap: 10px; margin-bottom: 18px; }
   .page-head h1 { font-size: 18px; font-weight: 600; letter-spacing: -0.015em; }
   .page-head .spacer { margin-left: auto; }
-  .page-head select, .page-head input { height: 30px; border-radius: 8px; border: 1px solid var(--line); background: var(--surface); color: var(--muted); padding: 0 10px; font: inherit; }
+  .page-head input { height: 30px; border-radius: 8px; border: 1px solid var(--line); background: var(--surface); color: var(--muted); padding: 0 10px; font: inherit; }
+  .page-head select { height: 30px; border-color: var(--line); background-color: var(--surface); color: var(--muted); }
   .page-head input { width: 190px; }
   .chip { display: inline-flex; align-items: center; gap: 8px; height: 26px; max-width: 100%; padding: 0 6px 0 10px; border-radius: 7px; background: var(--surface); border: 1px solid var(--line); color: var(--muted); font: 12px var(--mono); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .chip button { border: 0; background: none; color: var(--faint); cursor: pointer; padding: 0 4px; font: inherit; }
-  .session-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 14px; align-items: start; }
+  /* Every tile is as tall as the tallest one, so a busy session doesn't push its neighbours or the next row around. */
+  .session-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); grid-auto-rows: 1fr; gap: 14px; }
   .session-grid .hint { grid-column: 1 / -1; }
-  .card-agents { color: var(--muted); font-size: 12px; }
-  .card-status { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-radius: 8px; border: 1px solid var(--line); color: var(--faint); font-size: 12px; }
+  /* Status, how many agents and which: one quiet line, no box of its own inside the card. */
+  .card-status { display: flex; align-items: center; gap: 8px; min-width: 0; color: var(--faint); font-size: 12px; white-space: nowrap; }
+  .card-agents { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+  .card-agents::before { content: '·'; margin-right: 8px; }
   .card-status .pill { border: 0; background: none; padding: 0; height: auto; color: var(--text); font-weight: 600; }
   .card-status .pill.working { color: var(--live); }
   .card-status .pill.needs { color: var(--needs); }
@@ -208,16 +221,16 @@
   .menu .menu-label { padding: 5px 10px 3px; color: var(--faint); font-size: 11.5px; }
 
   .card {
-    display: grid; gap: 10px; padding: 14px 16px; border-radius: 12px; cursor: pointer;
+    display: flex; flex-direction: column; gap: 10px; padding: 14px 16px; border-radius: 12px; cursor: pointer;
     background: var(--surface); border: 1px solid var(--line); transition: border-color .15s;
   }
   .card:hover { border-color: var(--line-strong); }
   .card-top { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
   .card-title { flex: 1; min-width: 0; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .card { min-width: 0; grid-template-columns: minmax(0, 1fr); } /* a long name or goal stays inside its card */
+  .card { min-width: 0; } /* a long name or goal stays inside its card */
   .card-task { overflow-wrap: anywhere; }
   .card-top .icon-btn { flex: none; }
-  .card-people { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 12px; }
+  .card-people { display: flex; align-items: center; gap: 8px; min-height: 22px; margin-top: auto; color: var(--muted); font-size: 12px; } /* who and when line up along the bottom of each row */
   .files { list-style: none; margin: 0; padding: 8px 0 0; border-top: 1px solid var(--line); display: grid; gap: 4px; }
   .files li { display: flex; justify-content: space-between; gap: 8px; font-size: 11.5px; color: var(--muted); }
   .files .path { font-family: var(--mono); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; direction: rtl; text-align: left; }
@@ -273,11 +286,13 @@
   .person-head b span { color: var(--faint); font-weight: 400; }
   .person-meta { display: flex; justify-content: space-between; margin: 3px 0 8px 31px; color: var(--faint); font-size: 11.5px; }
   .add-agent { width: 22px; height: 22px; border-radius: 6px; border: 0; background: var(--primary); color: var(--primary-text); cursor: pointer; font-size: 15px; line-height: 1; }
+  /* A person's agents hang under their name on a grey guide line; the one on screen gets a white one. Colour stays in the avatar. */
   .agent-card {
-    --c: var(--muted); position: relative; display: grid; gap: 3px; width: calc(100% - 31px); margin: 0 0 6px 31px; padding: 7px 26px 7px 10px;
-    border: 0; border-left: 2px solid color-mix(in srgb, var(--c) 80%, transparent); border-radius: 0 7px 7px 0; background: none; text-align: left; cursor: pointer;
+    position: relative; display: grid; gap: 3px; width: calc(100% - 31px); margin: 0 0 6px 31px; padding: 7px 26px 7px 10px;
+    border: 0; border-left: 2px solid var(--line-strong); border-radius: 0 7px 7px 0; background: none; text-align: left; cursor: pointer;
   }
   .agent-card:hover, .agent-card.on { background: var(--raised); }
+  .agent-card.on { border-left-color: var(--text); }
   .agent-card b { font-size: 12px; font-weight: 600; color: var(--muted); }
   .agent-card.on b { color: var(--text); }
   .agent-card .sub { color: var(--faint); font-size: 11.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -626,6 +641,7 @@
   .group { border: 1px solid var(--line); border-radius: 12px; background: var(--surface); }
   .setting { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px 20px; padding: 13px 16px; border-top: 1px solid var(--line); }
   .setting:first-child { border-top: 0; }
+  .setting > div:first-child { flex: 1 1 280px; min-width: 0; } /* a long description wraps beside its control, not above it */
   .setting b { font-weight: 500; }
   .setting p { color: var(--muted); font-size: 12px; margin-top: 2px; line-height: 1.45; }
   .setting .segmented { min-width: 240px; background: var(--canvas); }
@@ -641,12 +657,12 @@
   .theme-tiles input:checked + .tile { outline: 2px solid var(--text); outline-offset: 2px; }
   .theme-tiles input:checked ~ span:last-child { color: var(--text); }
   .theme-tiles input:focus-visible + .tile { outline: 2px solid color-mix(in srgb, var(--text) 55%, transparent); outline-offset: 2px; }
-  .setting select { height: 30px; border-radius: 8px; border: 1px solid var(--line-strong); background: var(--canvas); color: var(--text); padding: 0 8px; font: inherit; }
+  .setting select { height: 30px; }
   .setting .btn { flex: none; }
   .switch { appearance: none; flex: none; width: 36px; height: 22px; margin: 0; border-radius: 999px; background: var(--line-strong); position: relative; cursor: pointer; transition: background .15s; }
   .switch::after { content: ''; position: absolute; top: 2px; left: 2px; width: 18px; height: 18px; border-radius: 50%; background: #fff; box-shadow: 0 1px 2px rgba(0, 0, 0, .3); transition: transform .15s; }
-  .switch:checked { background: var(--live); }
-  .switch:checked::after { transform: translateX(14px); }
+  .switch:checked { background: var(--primary); } /* on is white (black in light), like the primary buttons */
+  .switch:checked::after { transform: translateX(14px); background: var(--primary-text); box-shadow: none; }
   .stepper { display: flex; align-items: center; gap: 4px; }
   .stepper button { width: 28px; height: 28px; padding: 0; border-radius: 7px; }
   .stepper output { min-width: 44px; text-align: center; font: 12px var(--mono); }

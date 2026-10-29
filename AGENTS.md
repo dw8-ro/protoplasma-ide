@@ -29,6 +29,7 @@ Function names below are stable. Line numbers drift, so search by name.
 | `npm run readme-art` | Builds the README images in `docs/readme/` (dark and light) from `docs/*.png`: the pages in `scripts/readme-art/`, rendered offscreen, and the how-it-works SVG | Run after `npm run screenshot` |
 | `npm run icon` | Renders `app/icon.svg` to `build/icon.png` and `build/icon.icns` | |
 | `npm run release` | Bumps the patch version, tags `v<version>` and pushes. GitHub Actions builds, signs and publishes. | On `main`, with `main` equal to `origin/main` |
+| `node scripts/update-check.js [older version]` | After a release: a downloaded copy of an older release updates itself to the latest one with `app/updates.js` (real download, signer and version checks, swap; `open` stubbed), and a tampered or ad hoc copy is refused. `UPDATER=<file>` tests an older updater. About a minute. | Online |
 
 **Verifying a change:** run `npm test`, then `npm run e2e`. For packaging changes, also run `npm run dist`, then
 `npx asar list dist.noindex/Protoplasma-darwin-arm64/Protoplasma.app/Contents/Resources/app.asar`. To try it as an installed

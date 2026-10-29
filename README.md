@@ -175,6 +175,7 @@ Work reaches `main` the usual way, through a pull request. These layers make col
 - **Your code** is read and written on your Mac only, and the hub never stores it. Teammates see which files changed; what your agent prints in its terminal is visible to the whole team. With **Share the files your agents change** on (Settings → Agents, off by default), a teammate can open those files read-only; each one passes through the hub and isn't kept.
 - **Teams** are invite-only, and removing someone disconnects them at once. People are recognised by their GitHub account's id, so renaming your account keeps your place, and whoever later takes your old username doesn't get it.
 - **Typing into your agent** lets a teammate run commands on your Mac, so it's off unless you turn it on, and your agent shows who last typed into it.
+- **The hub's answers to Claude Code** pass through the app on your Mac, which lets through only the team's context and a request to ask you first. A hub can't approve, block or change anything your agent does.
 - **Teams on a Mac:** signing in to a teammate's Mac goes through the online hub, so that hub must be reachable. Everything else (terminals, typing, files) goes directly between the two Macs.
 
 ## Development

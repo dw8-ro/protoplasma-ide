@@ -189,11 +189,10 @@ ipcMain.handle('startLane', signedIn(async o => {
   const shared = o.cmd !== 'claude' && team.members?.length > 0;
   const why = o.repo ? 'This repo has its own Git hooks, so Protoplasma\'s push guard isn\'t installed' : 'Protoplasma only installs its push guard in folders it makes, not in one you pick';
   const notice = shared && !folder.guarded ? `${why}: this agent can push to main or force-push without being stopped.` : '';
-  // Claude Code can't check a Mac hub's self-signed certificate, so its hooks go to such a hub through a relay on this
-  // Mac that is pinned to it (teams.hookRelay). The online hub has a real certificate and gets them directly.
+  // Claude Code's hooks go through a relay on this Mac (teams.hookRelay), which pins a Mac hub's self-signed certificate
+  // and lets only context and "ask first" back from any hub, never an approval or a changed command.
   const credentials = () => teams.access(signedInAs, team.hub, team.owner);
-  const relayed = o.cmd === 'claude' && team.hub !== teams.onlineHub && team.hub.startsWith('https:');
-  const hookBase = relayed ? await teams.hookRelay(hookTarget) : undefined;
+  const hookBase = o.cmd === 'claude' ? await teams.hookRelay(hookTarget) : undefined;
   const lane = startLane({ hub: team.hub, hookBase, team: team.id, credentials, session: String(o.session), cmd: o.cmd, cwd, args: o.resume ? RESUME[o.cmd] : [],
     open: !!o.open, env: shared ? { ...env, PROTO_SHARED_TEAM: '1' } : env, onRefused: reason => toWindow('lane:refused', lane.id, reason), picked: !o.repo });
   lane.hub = { url: team.hub, credentials };

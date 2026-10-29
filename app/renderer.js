@@ -9,7 +9,7 @@ const store = {
 };
 const setHTML = (el, html) => { if (el._html !== html) { el._html = html; el.innerHTML = html; } };
 const GITHUB_LOGIN = /^(?=.{1,39}$)[a-z\d](?:-?[a-z\d])*$/i; // letters, digits and single hyphens inside
-const REPO = /^[a-z\d-]+\/(?!\.\.?$)[\w.-]+$/i; // owner/name, never . or ..
+const REPO = /^[a-z\d][a-z\d-]*\/(?!\.\.?$)[\w.-]+$/i; // owner/name (an owner never starts with -, so it can't pass for an option), never . or ..
 
 // ---- Preferences (Settings) ----
 
@@ -51,8 +51,9 @@ document.addEventListener('error', e => {
   e.target.replaceWith(e.target.parentElement.dataset.initial);
 }, true);
 const agentName = cmd => ({ claude: 'Claude Code', codex: 'Codex', opencode: 'OpenCode' })[cmd] || cmd;
-const STATUS = { working: ['working', 'Working'], 'needs you': ['needs', 'Needs you'], idle: ['idle', 'Idle'], 'not synced': ['idle', 'Not synced'],
-  overlap: ['overlap', 'Overlap'], done: ['done', 'Done'], running: ['idle', 'Running'], stopping: ['idle', 'Stopping'] };
+// No prototype: a status a hub on a Mac sends ("constructor") must miss, not find a function render() then throws on.
+const STATUS = Object.assign(Object.create(null), { working: ['working', 'Working'], 'needs you': ['needs', 'Needs you'], idle: ['idle', 'Idle'],
+  'not synced': ['idle', 'Not synced'], overlap: ['overlap', 'Overlap'], done: ['done', 'Done'], running: ['idle', 'Running'], stopping: ['idle', 'Stopping'] });
 const pill = status => {
   const [cls, label] = STATUS[status] || ['idle', status];
   return `<span class="pill ${cls}"><span class="dot"></span>${esc(label)}</span>`;

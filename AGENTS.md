@@ -19,7 +19,7 @@ Function names below are stable. Line numbers drift, so search by name.
 |---|---|---|
 | `npm install` | Installs dependencies (postinstall makes node-pty's `spawn-helper` executable) | Node 24 |
 | `npm start` | Runs the app from source. Updates are off in source runs. | |
-| `npm test` | 97 integration tests in `test/*.test.js`: real hub, real lanes, real git. About a minute. | git ≥ 2.28, macOS. No network or Electron needed. |
+| `npm test` | 98 integration tests in `test/*.test.js`: real hub, real lanes, real git. About a minute. | git ≥ 2.28, macOS. No network or Electron needed. |
 | `npm run e2e` | Drives the real Electron app through every main flow and prints `PASS`/`FAIL` per step, ending with `N/M passed`. 15-minute cap. | The `claude` CLI on the login-shell PATH and a GUI session. One step needs `gh auth status` to succeed (online). |
 | `npm run dist` | Packages `dist.noindex/Protoplasma-darwin-arm64/Protoplasma.app`, unsigned. | |
 | `npm run playground` | Two app copies (David on port 7801, Max on 7802) on a local hub and repo, each with an HTTP control API | |
@@ -63,7 +63,7 @@ app/index.html    CSP, all CSS (tokens and themes), icon sprite, all markup and 
 app/config.json   githubClientId (OAuth app, device flow), onlineHub (the Railway URL)
 scripts/          e2e.js, playground.js + playground-app.js, stage.js, screenshot.js, demo.js + gif.js, readme-art.js +
                   readme-art/ (the README image pages and diagram), sign.sh, icon.js
-test/             hub.test.js (40), hub-live.test.js (13), workspace.test.js (13), files.test.js (12), lan.test.js (9),
+test/             hub.test.js (40), hub-live.test.js (13), workspace.test.js (13), files.test.js (12), lan.test.js (10),
                   identity.test.js (4), updates.test.js (6)
 .github/workflows ci.yml (npm test on every push to main and PR), package.yml (dist check), release.yml (tag → release)
 Dockerfile        the hosted hub image (only src/hub.js + src/shared.js + ws)
@@ -222,9 +222,11 @@ docs/             screenshots (sources), readme/ (the README's images, dark and 
   - For `claude`, adds `--settings` with HTTP hooks (`claudeHookSettings`: UserPromptSubmit, PreToolUse
     `Read|Bash|EDIT_TOOLS`, PermissionRequest and Stop, with a 3 s timeout; never PostToolUse). They go to `hookBase` when
     given, else to the hub.
-  - A hub on a Mac has a self-signed certificate that Claude Code can't check, so its hooks would all fail (and fail
-    open). main.js passes `hookBase` = teams.js `hookRelay`, a loopback http server that forwards `POST /hooks/:id` to
-    the agent's hub pinned to its certificate. It adds no credentials. The online hub gets hooks directly.
+  - main.js always passes `hookBase` = teams.js `hookRelay`, a loopback http server that forwards `POST /hooks/:id` to
+    the agent's hub and passes back only `safeHookReply`'s part of the answer. Claude Code would also take an allow, a
+    deny, a block or a rewritten tool input from a hook, so a hub's operator (a team owner's Mac, or whoever took over
+    the online hub) could run commands through it. A hub on a Mac is pinned to its certificate, which Claude Code
+    couldn't check itself; the online hub's certificate is checked as usual. It adds no credentials.
   - Sets `PROTO_HOOK_SECRET` in the agent's env, except for `NO_HOOKS` CLIs (codex, opencode).
   - Signs in with `token`, or with `credentials()`, asked before each connection: `{token, ca}`, where `ca` pins a hub on a
     Mac to its certificate. The app passes `teams.access`, so a pass is renewed in time. If `credentials` fails, the
@@ -333,8 +335,10 @@ docs/             screenshots (sources), readme/ (the README's images, dark and 
     certificate is read again.
   - `listTeams` asks every hub at once. A nearby hub goes through `teamsAt`, which keeps only teams owned by its
     `owners`, labelled `<owner>'s Mac`.
-  - `hookRelay(hubFor)` starts (once) the loopback relay for Claude Code's hooks to hubs on a Mac. `hubFor(laneId)` is
-    main.js `hookTarget`: the lane's hub and its pinned `ca`, only for this Mac's own lanes.
+  - `hookRelay(hubFor)` starts (once) the loopback relay for every Claude Code agent's hooks. `hubFor(laneId)` is
+    main.js `hookTarget`: the lane's hub and, for a hub on a Mac, its pinned `ca`, only for this Mac's own lanes.
+    `safeHookReply` lets back only `hookSpecificOutput` for PreToolUse or UserPromptSubmit, with `additionalContext`
+    and a `permissionDecision` of `ask`.
   - `isPinned(hostname, pem)` backs main.js's `setCertificateVerifyProc`: Chromium accepts a self-signed certificate
     only when it's this Mac's hub's, or a pin that passed a team owner check (`vouched`). Chromium names the host but
     not the port, so a pin left by listing a look-alike nearby hub on the same address mustn't count.
@@ -461,7 +465,9 @@ docs/             screenshots (sources), readme/ (the README's images, dark and 
 ## Security boundaries
 - **Hooks:** a hook is authenticated only by the per-lane secret, never a GitHub token. `hookSecret`, `root`, `roots`
   and `history` must never appear in `state`. The hook relay (teams.js `hookRelay`) listens on 127.0.0.1 only and
-  passes the hook's own Authorization header through; it must never add a token or pass.
+  passes the hook's own Authorization header through; it must never add a token or pass. Every Claude agent's hooks go
+  through it, and a hub's answer may only add context or ask the person (`safeHookReply`): never allow, deny, block,
+  stop or change a tool call. A new hook answer in the hub needs adding there too.
 - **Typing in:** remote input only goes to lanes started with `open`, on the watcher's own team. lane.js also drops
   `in` itself unless it was started open, whatever a hub sends.
 - **Lane ids:** an id held by one login, live or stopped, can't be claimed by another. An `h-` id is made from its

@@ -13,6 +13,8 @@ jobs:
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v5
+        with:
+          persist-credentials: false # npm ci runs dependencies' install scripts: leave no GitHub token in .git for them
       - uses: actions/setup-node@v5
         with:
           node-version: 24

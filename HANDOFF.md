@@ -1,10 +1,17 @@
 # Handoff: Protoplasma IDE, 27 October 2026
 
 Read this first in a new session, then [AGENTS.md](AGENTS.md) for how the code fits together. What the last sessions
-did: [docs/sessions/2026-10-26.md](docs/sessions/2026-10-26.md) (19–26 Oct) and
-[docs/sessions/2026-10-18.md](docs/sessions/2026-10-18.md) (the security audit).
+did: [docs/sessions/2026-10-29.md](docs/sessions/2026-10-29.md) (the second security audit),
+[docs/sessions/2026-10-26.md](docs/sessions/2026-10-26.md) (19–26 Oct) and
+[docs/sessions/2026-10-18.md](docs/sessions/2026-10-18.md) (the first security audit).
 
 ## Where things stand
+
+- **Second security audit (29 Oct, not released yet):** no secrets in any public ref. One high fix: a hub's answers
+  to Claude Code's hooks could approve or rewrite tool calls, so every Claude agent's hooks now go through the app's
+  relay, which lets back only context and an `ask` (teams.js `safeHookReply`). Also CI checkouts keep no token, and two
+  small renderer/repo-string hardenings. `npm test` 98 of 98. Ship it as 0.5.8, and the GitHub settings in the session
+  note (who has write access, the signing secrets in an approved environment, a tag ruleset) are David's to change.
 
 - **Latest release: v0.5.7** (29 Oct 2026, `d7b8050`): a quieter look, and a build-folder fix. Signed,
   `Protoplasma-0.5.7-mac-arm64.zip`. Its Release, Package and CI runs are green. The zip was checked: version 0.5.7,

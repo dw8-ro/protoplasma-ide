@@ -154,10 +154,28 @@ async function access(s, url, owner) {
 }
 
 /**
- * Where Claude Code sends its hooks when its hub is on a Mac: an http address on 127.0.0.1 that passes each hook on to
- * the hub, pinned to the certificate that hub presented. Claude Code can't pin a self-signed certificate itself, so
- * without this every hook to such a hub fails (and fails open). `hubFor(laneId)` resolves to { url, ca } for one of this
- * Mac's agents, or to nothing. The relay adds no credentials: a hook still carries only its own agent's secret.
+ * What a hub may tell Claude Code: context for the agent, and "ask the person first". Claude Code would also take an
+ * allow, a deny, a block, a stop or a rewritten tool input from a hook, which would let whoever runs the hub (a
+ * teammate's Mac, or anyone who took over the online one) run commands here; all of that is dropped.
+ */
+function safeHookReply(text) {
+  let out;
+  try { out = JSON.parse(text)?.hookSpecificOutput; } catch {}
+  const event = out?.hookEventName;
+  if (event !== 'PreToolUse' && event !== 'UserPromptSubmit') return '';
+  const safe = { hookEventName: event };
+  if (typeof out.additionalContext === 'string') safe.additionalContext = out.additionalContext;
+  if (event === 'PreToolUse' && out.permissionDecision === 'ask') {
+    Object.assign(safe, { permissionDecision: 'ask', permissionDecisionReason: String(out.permissionDecisionReason ?? '').slice(0, 1000) });
+  }
+  return Object.keys(safe).length > 1 ? JSON.stringify({ hookSpecificOutput: safe }) : '';
+}
+
+/**
+ * Where Claude Code sends its hooks: an http address on 127.0.0.1 that passes each hook on to the agent's hub and only
+ * a safe part of the answer back (safeHookReply). A hub on a Mac is pinned to the certificate it presented, which Claude
+ * Code couldn't check itself; the online hub's is checked as usual. `hubFor(laneId)` resolves to { url, ca? } for one
+ * of this Mac's agents, or to nothing. The relay adds no credentials: a hook still carries only its own agent's secret.
  */
 let relaying = null, relayTo = () => null;
 function hookRelay(hubFor) {
@@ -167,13 +185,18 @@ function hookRelay(hubFor) {
       const id = /^\/hooks\/([\w-]{1,64})$/.exec(req.url)?.[1];
       const to = id && req.method === 'POST' ? await Promise.resolve(relayTo(id)).catch(() => null) : null;
       if (!to) return res.writeHead(404).end();
+      const fail = () => (res.headersSent ? res.destroy() : res.writeHead(502).end());
+      const target = new URL(`${to.url}/hooks/${id}`);
       // Claude Code waits 3 s for a hook, so the hub gets a little less.
-      const out = https.request(`${to.url}/hooks/${id}`, { method: 'POST', ca: to.ca, checkServerIdentity: () => undefined,
-        signal: AbortSignal.timeout(2500), headers: { authorization: String(req.headers.authorization || ''), 'content-type': 'application/json' } }, r => {
-        res.writeHead(r.statusCode, { 'content-type': r.headers['content-type'] || 'application/json' });
-        r.pipe(res);
+      const out = (target.protocol === 'https:' ? https : http).request(target, { method: 'POST', signal: AbortSignal.timeout(2500),
+        ...(to.ca && { ca: to.ca, checkServerIdentity: () => undefined }),
+        headers: { authorization: String(req.headers.authorization || ''), 'content-type': 'application/json' } }, r => {
+        let text = '';
+        r.setEncoding('utf8').on('error', fail)
+          .on('data', d => { if ((text += d).length > 5e6) out.destroy(new Error('too long')); })
+          .on('end', () => (r.statusCode === 200 ? res.writeHead(200, { 'content-type': 'application/json' }).end(safeHookReply(text)) : res.writeHead(r.statusCode).end()));
       });
-      out.on('error', () => (res.headersSent ? res.destroy() : res.writeHead(502).end()));
+      out.on('error', fail);
       req.pipe(out);
     });
     server.on('error', reject).listen(0, '127.0.0.1', () => resolve(`http://127.0.0.1:${server.address().port}`));

@@ -9,7 +9,7 @@ const { app, safeStorage } = require('electron');
 const { githubUser } = require('../src/hub');
 const { sessionWorktree, removeSessionWorktree, installPushGuard, slug } = require('../src/workspace');
 
-const REPO = /^[a-z\d-]+\/(?!\.\.?$)[\w.-]+$/i; // owner/name, never . or ..
+const REPO = /^[a-z\d][a-z\d-]*\/(?!\.\.?$)[\w.-]+$/i; // owner/name (an owner never starts with -, so it can't pass for an option), never . or ..
 const tokenFile = () => path.join(app.getPath('userData'), 'github-token');
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 const postForm = (url, body) => fetch(url, { method: 'POST', headers: { accept: 'application/json', 'content-type': 'application/json' },

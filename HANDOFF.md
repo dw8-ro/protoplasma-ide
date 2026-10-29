@@ -1,4 +1,4 @@
-# Handoff: Protoplasma IDE, 27 October 2026
+# Handoff: Protoplasma IDE, 29 October 2026
 
 Read this first in a new session, then [AGENTS.md](AGENTS.md) for how the code fits together. What the last sessions
 did: [docs/sessions/2026-10-29.md](docs/sessions/2026-10-29.md) (the second security audit),
@@ -7,13 +7,18 @@ did: [docs/sessions/2026-10-29.md](docs/sessions/2026-10-29.md) (the second secu
 
 ## Where things stand
 
-- **Second security audit (29 Oct, not released yet):** no secrets in any public ref. One high fix: a hub's answers
-  to Claude Code's hooks could approve or rewrite tool calls, so every Claude agent's hooks now go through the app's
-  relay, which lets back only context and an `ask` (teams.js `safeHookReply`). Also CI checkouts keep no token, and two
-  small renderer/repo-string hardenings. `npm test` 98 of 98. Ship it as 0.5.8, and the GitHub settings in the session
-  note (who has write access, the signing secrets in an approved environment, a tag ruleset) are David's to change.
-
-- **Latest release: v0.5.7** (29 Oct 2026, `d7b8050`): a quieter look, and a build-folder fix. Signed,
+- **Latest release: v0.5.8** (29 Oct 2026, `56f8901`), from the second security audit
+  ([docs/sessions/2026-10-29.md](docs/sessions/2026-10-29.md)): no secrets in any public ref. One high fix: a hub's
+  answers to Claude Code's hooks could approve or rewrite tool calls, so every Claude agent's hooks now go through the
+  app's relay, which lets back only context and an `ask` (teams.js `safeHookReply`). Also CI checkouts keep no token,
+  and two small renderer/repo-string hardenings.
+  - Checks: `npm test` 98 of 98 and `npm run e2e` 126 of 126 on Electron 44.10.0 (the first e2e run failed only
+    "Comment on this points the next comment at those lines", a focus check; the rerun passed). Release, Package and CI
+    are green. The zip was checked: version 0.5.8, signed by "Protoplasma Release Signing" (the same requirement as
+    installed copies), `safeHookReply` inside. Made from a worktree, the same way as 0.5.7. No hub change, so no redeploy.
+  - Still David's to change on GitHub (see the session note): who has write access, the signing secrets in an
+    environment that needs his approval, a ruleset for `v*` tags, and the leftover branch `main-lsx6e3`.
+- **v0.5.7** (29 Oct 2026, `d7b8050`): a quieter look, and a build-folder fix. Signed,
   `Protoplasma-0.5.7-mac-arm64.zip`. Its Release, Package and CI runs are green. The zip was checked: version 0.5.7,
   signed by "Protoplasma Release Signing", new styles inside.
   - Made from a worktree, not with `npm run release` (which needs the branch to be named `main`): the notes were pushed
@@ -38,7 +43,7 @@ did: [docs/sessions/2026-10-29.md](docs/sessions/2026-10-29.md) (the second secu
       dist` builds to `dist.noindex/` and Spotlight doesn't list it. Those e2e runs used a stale Electron 44.5.1 left
       in the worktree's node_modules; after `npm ci`, e2e on 44.10.0 (what 0.5.7 ships) passed 126 of 126 too.
       In a new worktree, run `npm ci` before trusting e2e.
-- **README redesign (29 Oct, not pushed yet):** a tighter README, monochrome README images (no coloured glows) and
+- **README redesign (29 Oct, `53ddf52`, pushed and in 0.5.8):** a tighter README, monochrome README images (no coloured glows) and
   diagram, and the staged demo team (stage.js, screenshot.js, demo.js) renamed from David, Max and Sara to User 1,
   User 2 and User 3 (logins user1 to user3), so no real names appear in the pictures, at David's request. Their
   colours come from the logins: orange, lime and blue. The playground still uses David and Max (the customer
@@ -87,7 +92,7 @@ did: [docs/sessions/2026-10-29.md](docs/sessions/2026-10-29.md) (the second secu
   answer. `scripts/customer/act.js` and `observe.js` drive and watch it from a shell.
 - **Hub:** the hosted hub on Railway (`https://hub-production-fba9.up.railway.app`) redeploys on pushes to `main` that
   touch `src/hub.js`. The last one is `8df2f17` (0.5.5). It still accepts apps before 0.5.3.
-- **Repo and GitHub:** `dw8-ro/protoplasma-ide`, public since 17 Oct. On 29 Oct, `main` = `origin/main` (after 0.5.7 and this note).
+- **Repo and GitHub:** `dw8-ro/protoplasma-ide`, public since 17 Oct. On 29 Oct, `main` = `origin/main` (after 0.5.8 and this note).
   Secret scanning, push protection, Dependabot alerts and private vulnerability reporting are on. Since 27 Oct, a
   ruleset ("Protect main") blocks force pushes to and deletion of the default branch, and workflows from every outside
   contributor need approval. Default workflow permissions are read-only.

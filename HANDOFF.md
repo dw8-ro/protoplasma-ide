@@ -28,7 +28,14 @@ did: [docs/sessions/2026-10-26.md](docs/sessions/2026-10-26.md) (19–26 Oct) an
       (ENOTEMPTY). The folder is removed once the process is gone, and only after the script made it.
     - The README image crops (scripts/readme-art/*.html) were re-measured for the inset layout.
     - Checks on 29 Oct: `npm test` 97 of 97, `npm run e2e` 126 of 126 (clean exit, no temp folders left), `npm run
-      dist` builds to `dist.noindex/` and Spotlight doesn't list it.
+      dist` builds to `dist.noindex/` and Spotlight doesn't list it. Those e2e runs used a stale Electron 44.5.1 left
+      in the worktree's node_modules; after `npm ci`, e2e on 44.10.0 (what 0.5.7 ships) passed 126 of 126 too.
+      In a new worktree, run `npm ci` before trusting e2e.
+- **README redesign (29 Oct, not pushed yet):** a tighter README, monochrome README images (no coloured glows) and
+  diagram, and the staged demo team (stage.js, screenshot.js, demo.js) renamed from David, Max and Sara to User 1,
+  User 2 and User 3 (logins user1 to user3), so no real names appear in the pictures, at David's request. Their
+  colours come from the logins: orange, lime and blue. The playground still uses David and Max (the customer
+  simulation depends on them).
 - **v0.5.6** (28 Oct 2026, `cfef8e4`): Invite people on the People page, and Electron 44.10.0.
 - **v0.5.5** (26 Oct 2026, `5c9632c`), a security follow-up:
   - the hub caps more DoS vectors (path length, per-socket look/replay budget, HTTP timeouts);

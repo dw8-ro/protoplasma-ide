@@ -1,4 +1,4 @@
-// The made-up team the README pictures are taken with: David, Max and Sara working on david/lobby-server. Each session
+// The made-up team the README pictures are taken with: User 1, User 2 and User 3 working on user1/lobby-server. Each session
 // has its own checkout, and the "GitHub repo" never touches the network (fetches fail at once). Every agent is a
 // script playing its CLI, so the pictures don't depend on whose Mac takes them, and Claude Code never has to be asked
 // to trust a folder. Used by screenshot.js and demo.js. Needs no GitHub account.
@@ -12,9 +12,9 @@ const laneModule = require('../src/lane');
 
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 const people = {
-  'tok-david': { login: 'david', name: 'David', avatar: '' },
-  'tok-max': { login: 'max', name: 'Max', avatar: '' },
-  'tok-sara': { login: 'sara', name: 'Sara', avatar: '' },
+  'tok-user1': { login: 'user1', name: 'User 1', avatar: '' },
+  'tok-user2': { login: 'user2', name: 'User 2', avatar: '' },
+  'tok-user3': { login: 'user3', name: 'User 3', avatar: '' },
 };
 const verifyUser = async token => people[token] || null;
 const { startLane } = laneModule;
@@ -22,7 +22,7 @@ const temp = [];
 const running = [];
 let own = null; // the script the next agent started from the app runs, in place of the real CLI
 
-/** Starts a local hub standing in for the online one, signs David in, and calls run(win, hub) once the window loads. */
+/** Starts a local hub standing in for the online one, signs User 1 in, and calls run(win, hub) once the window loads. */
 async function boot(run) {
   hubModule.githubUser = verifyUser;
   laneModule.startLane = o => startLane({ ...o, cmd: own ? path.join(own, o.cmd) : o.cmd });
@@ -36,7 +36,7 @@ async function boot(run) {
     String(process.pid), userData], { detached: true, stdio: 'ignore' }).unref());
   await app.whenReady();
   fs.writeFileSync(path.join(app.getPath('userData'), 'github-token'),
-    safeStorage.encryptString(JSON.stringify({ token: 'tok-david', user: people['tok-david'] })));
+    safeStorage.encryptString(JSON.stringify({ token: 'tok-user1', user: people['tok-user1'] })));
   app.on('browser-window-created', (_, win) => win.webContents.once('did-finish-load', async () => {
     win.webContents.setBackgroundThrottling(false); // keep painting while the window is behind others
     win.webContents.on('console-message', e => { if (['warning', 'error'].includes(e.level)) console.log(`[page] ${e.message} (${String(e.sourceId).split("/").pop()}:${e.lineNumber})`); });
@@ -108,7 +108,7 @@ export const top = (n: number) => [...scores].sort((a, b) => b[1] - a[1]).slice(
 
 // Uncommitted work in each session's checkout: [file, line index, new lines, how many old lines they replace].
 const edits = {
-  'david/lobby-fix': [
+  'user1/lobby-fix': [
     ['src/lobby/join.ts', 8, `  for (let n = 0; n < 4; n++) {
     try { return await joinLobby(id, player); }
     catch (e) { if (!isSeatTaken(e)) throw e; }
@@ -116,14 +116,14 @@ const edits = {
   }`],
     ['src/net/session_store.ts', 7, '  if (!(await db.claim(id, seat, player))) throw new Error(\'seat_taken\');', 1],
   ],
-  'max/lobby-fix': [['src/net/session_store.ts', 7, '  const ok = await db.putIf(id, lobby.rev, seated(lobby, seat, player));\n  if (!ok) throw new Error(\'seat_taken\');', 1]],
-  'max/matchmaking-queue': [['src/match/queue.ts', 10, `
+  'user2/lobby-fix': [['src/net/session_store.ts', 7, '  const ok = await db.putIf(id, lobby.rev, seated(lobby, seat, player));\n  if (!ok) throw new Error(\'seat_taken\');', 1]],
+  'user2/matchmaking-queue': [['src/match/queue.ts', 10, `
   // Keep a player's place for 30 seconds after they disconnect.
   park(playerId: string) {
     setTimeout(() => this.drop(playerId), 30_000);
   }`]],
-  'sara/ws-reconnect': [['src/net/socket.ts', 2, '  ws.onclose = () => setTimeout(() => connect(url), backoff.next());', 1]],
-  'sara/leaderboard-cache': [['src/leaderboard/cache.ts', 2, 'let sorted: [string, number][] | null = null;\nexport const record = (id: string, score: number) => { scores.set(id, score); sorted = null; };']],
+  'user3/ws-reconnect': [['src/net/socket.ts', 2, '  ws.onclose = () => setTimeout(() => connect(url), backoff.next());', 1]],
+  'user3/leaderboard-cache': [['src/leaderboard/cache.ts', 2, 'let sorted: [string, number][] | null = null;\nexport const record = (id: string, score: number) => { scores.set(id, score); sorted = null; };']],
 };
 
 const git = (cwd, ...args) => execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
@@ -138,14 +138,14 @@ function stageRepo({ later = [] } = {}) {
   }
   git(origin, 'init', '-q', '-b', 'main');
   git(origin, 'add', '.');
-  git(origin, '-c', 'user.name=David', '-c', 'user.email=david@example.com', 'commit', '-q', '-m', 'Lobby server');
+  git(origin, '-c', 'user.name=User 1', '-c', 'user.email=user1@example.com', 'commit', '-q', '-m', 'Lobby server');
   const folders = {};
   for (const key of Object.keys(edits)) {
     const [who, session] = key.split('/');
     const dir = folders[key] = path.join(stage, who, `lobby-server@${session}`);
     git(stage, 'clone', '-q', origin, dir);
     git(dir, 'checkout', '-q', '-b', `session/${session}`);
-    git(dir, 'remote', 'set-url', 'origin', 'git@github.com:david/lobby-server.git');
+    git(dir, 'remote', 'set-url', 'origin', 'git@github.com:user1/lobby-server.git');
     git(dir, 'config', 'core.sshCommand', 'false'); // a made-up repo: fetches fail at once, without going online
     if (!later.includes(key)) applyEdits(folders, key);
   }

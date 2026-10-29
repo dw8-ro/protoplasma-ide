@@ -6,10 +6,10 @@ const { boot, stageRepo, ownAgent, teammate, hook, sleep, c, light, claudeBanner
 
 const docs = path.join(__dirname, '..', 'docs');
 const demoRepos = [
-  { name: 'david/lobby-server', description: 'Matchmaking and lobbies for the game', private: true, mine: true },
-  { name: 'david/game-client', description: 'The game itself', private: true, mine: true },
-  { name: 'david/website', description: 'Landing page and docs', private: false, mine: true },
-  { name: 'max/anticheat', description: 'Server-side cheat detection', private: true, mine: false },
+  { name: 'user1/lobby-server', description: 'Matchmaking and lobbies for the game', private: true, mine: true },
+  { name: 'user1/game-client', description: 'The game itself', private: true, mine: true },
+  { name: 'user1/website', description: 'Landing page and docs', private: false, mine: true },
+  { name: 'user2/anticheat', description: 'Server-side cheat detection', private: true, mine: false },
   { name: 'studio/design-system', description: 'Shared UI components', private: true, mine: false },
 ];
 const sessions = [
@@ -20,7 +20,7 @@ const sessions = [
   ['season-rollover', 'Archive last season\'s ranks when a new one starts'],
 ];
 
-// David's Claude Code: a fix done, and its own / menu open. Lines fit the ~55 columns of a pane beside another.
+// User 1's Claude Code: a fix done, and its own / menu open. Lines fit the ~55 columns of a pane beside another.
 const fit = (text, width) => (text.length > width ? `${text.slice(0, width - 1)}…` : text);
 const slashMenu = [
   ['/add-dir', 'Add a new working directory'], ['/agents', 'Manage agent configurations'],
@@ -28,7 +28,7 @@ const slashMenu = [
   ['/config', 'Open config panel'], ['/context', 'Visualize current context usage as a colored grid'],
   ['/cost', 'Show the total cost and duration of the current session'], ['/doctor', 'Diagnose and verify your Claude Code installation'],
 ].map(([cmd, about], i) => (i ? `  ${cmd.padEnd(11)}${c.dim(fit(about, 40))}` : c.pick(`  ${cmd.padEnd(11)}${fit(about, 40)}`)));
-const davidSaid = t => [...claudeBanner('~/Protoplasma/lobby-server@lobby-fix'), '',
+const user1Said = t => [...claudeBanner('~/Protoplasma/lobby-server@lobby-fix'), '',
   t.dim('> retryJoin gives up after one try, retry with backoff'), '',
   t.tool('Read', 'src/lobby/join.ts'), '  ⎿  Read 10 lines', '',
   t.tool('Update', 'src/lobby/join.ts'), '  ⎿  Updated src/lobby/join.ts with 5 additions',
@@ -41,17 +41,17 @@ const davidSaid = t => [...claudeBanner('~/Protoplasma/lobby-server@lobby-fix'),
   t.dim('    14     return joinLobby(id, player);'), '',
   `${t.said} retryJoin tries again when someone takes the seat`,
   '  first, waiting 50, 100, 200 and 400 ms. Any other', '  error still fails straight away.'];
-const david = [
-  ['say', ...davidSaid(c)],
+const user1 = [
+  ['say', ...user1Said(c)],
   ['box', '/', ...slashMenu],
   ['wait', 'light'], // the light-theme shot: Claude Code in its light theme, with a prompt half written
   ['clear'],
-  ['say', ...davidSaid(light)],
+  ['say', ...user1Said(light)],
   ['box', 'add a test where two joins race for the last seat', accepting],
 ];
 
-// Max's Claude Code, part way through the same session.
-const maxClaude = [
+// User 2's Claude Code, part way through the same session.
+const user2Claude = [
   ['say', c.dim('> the lobby double-books seats under load, fix reserveSlot'), '',
     `${c.said} I'll start with how a seat gets claimed.`, '',
     c.tool('Read', 'src/net/session_store.ts'), '  ⎿  Read 10 lines', '',
@@ -69,7 +69,7 @@ const maxClaude = [
   ['spin', c.orange('%s Running the lobby tests…') + c.dim(' (%ds · esc to interrupt)'), 0, 31],
 ];
 
-const maxCodex = [
+const user2Codex = [
   ['say', '› players who drop mid-search lose their place in the queue', '',
     '• I\'ll hold a disconnected player\'s place for 30 seconds instead of', '  dropping them straight away.', '',
     '• Explored', c.dim('  └ Read queue.ts, matchmaker.ts'), '',
@@ -77,7 +77,7 @@ const maxCodex = [
   ['spin', '%s Working' + c.dim(' (%ds • esc to interrupt)'), 0, 48],
 ];
 
-const saraClaude = [
+const user3Claude = [
   ['say', c.dim('> the lobby socket never comes back after a server restart'), '',
     c.tool('Read', 'src/net/socket.ts'), '  ⎿  Read 5 lines', '',
     `${c.said} It only logs when the socket closes. I'll reconnect with backoff.`, '',
@@ -88,7 +88,7 @@ const saraClaude = [
     '   3. No, and tell Claude what to do differently (esc)'],
 ];
 
-const saraOpenCode = [
+const user3OpenCode = [
   ['say', '┃ the leaderboard sorts every score on every request', '',
     `  ${c.dim('Read')}  src/leaderboard/cache.ts`, `  ${c.dim('Edit')}  src/leaderboard/cache.ts`, '',
     '  top() now keeps a sorted copy and record() throws it away, so scores', '  are only sorted again after one changes.'],
@@ -107,24 +107,24 @@ boot(async (win, hub) => {
   await js(`showTeams(me); $('#teamName').value = 'Lobby'; $('#createTeam').requestSubmit()`);
   while (!await js('!!currentTeam')) await sleep(100);
   const team = await js('currentTeam.id');
-  await js(`proto.invite(currentTeam.key, 'max').then(() => proto.invite(currentTeam.key, 'sara')).then(t => { currentTeam = t; return 0; })`);
+  await js(`proto.invite(currentTeam.key, 'user2').then(() => proto.invite(currentTeam.key, 'user3')).then(t => { currentTeam = t; return 0; })`);
   for (const [name, task] of sessions) await js(`proto.saveSession(currentTeam.key, ${JSON.stringify({ name, task })}).then(() => 0)`);
   await js(`proto.setSessionDone(currentTeam.key, 'season-rollover', true).then(() => 0)`);
 
   const lane = (token, key, cmd, steps, size) => teammate({ hub, team, token, session: key.split('/')[1], cwd: folders[key], cmd, steps, ...size });
-  const max = await lane('tok-max', 'max/lobby-fix', 'claude', maxClaude, { cols: 82, rows: 40 });
-  await lane('tok-max', 'max/matchmaking-queue', 'codex', maxCodex);
-  const sara = await lane('tok-sara', 'sara/ws-reconnect', 'claude', saraClaude);
-  await lane('tok-sara', 'sara/leaderboard-cache', 'opencode', saraOpenCode);
-  await hook(hub, max, { hook_event_name: 'UserPromptSubmit', prompt: 'the lobby double-books seats under load, fix reserveSlot' });
-  await hook(hub, sara, { hook_event_name: 'UserPromptSubmit', prompt: 'the lobby socket never comes back after a server restart' });
-  await hook(hub, sara, { hook_event_name: 'PermissionRequest', tool_name: 'Edit' });
+  const user2 = await lane('tok-user2', 'user2/lobby-fix', 'claude', user2Claude, { cols: 82, rows: 40 });
+  await lane('tok-user2', 'user2/matchmaking-queue', 'codex', user2Codex);
+  const user3 = await lane('tok-user3', 'user3/ws-reconnect', 'claude', user3Claude);
+  await lane('tok-user3', 'user3/leaderboard-cache', 'opencode', user3OpenCode);
+  await hook(hub, user2, { hook_event_name: 'UserPromptSubmit', prompt: 'the lobby double-books seats under load, fix reserveSlot' });
+  await hook(hub, user3, { hook_event_name: 'UserPromptSubmit', prompt: 'the lobby socket never comes back after a server restart' });
+  await hook(hub, user3, { hook_event_name: 'PermissionRequest', tool_name: 'Edit' });
 
-  // David's agent, started the way anyone starts one: from the New agent form, in the session's checkout.
-  const secret = ownAgent('claude', david);
+  // User 1's agent, started the way anyone starts one: from the New agent form, in the session's checkout.
+  const secret = ownAgent('claude', user1);
   await js(`openNewAgent('lobby-fix')`);
   await sleep(1200);
-  await js(`$('input[name=source][value=folder]').checked = true; syncSource(); $('#cwd').value = ${JSON.stringify(folders['david/lobby-fix'])}; $('#agentForm').requestSubmit()`);
+  await js(`$('input[name=source][value=folder]').checked = true; syncSource(); $('#cwd').value = ${JSON.stringify(folders['user1/lobby-fix'])}; $('#agentForm').requestSubmit()`);
   while (!await js('local.size')) await sleep(100);
   const mine = { id: await js('[...local.keys()][0]'), secret: await secret };
   await hook(hub, mine, { hook_event_name: 'UserPromptSubmit', prompt: 'retryJoin gives up after one try, retry with backoff' });
@@ -132,15 +132,15 @@ boot(async (win, hub) => {
 
   const say = (token, text) => fetch(`${hub}/teams/${team}/sessions/lobby-fix/comments`, { method: 'POST',
     headers: { authorization: `Bearer ${token}` }, body: JSON.stringify({ text }) });
-  await say('tok-max', 'I\'ve got reserveSlot, it\'s a compare-and-swap now.');
+  await say('tok-user2', 'I\'ve got reserveSlot, it\'s a compare-and-swap now.');
   await sleep(50);
-  await say('tok-david', 'Great, I\'ll put the retry on top of yours and add the race test.');
+  await say('tok-user1', 'Great, I\'ll put the retry on top of yours and add the race test.');
   await js(`proto.addMemory(currentTeam.key, { text: 'Use pnpm, not npm. The lockfile is pnpm-lock.yaml.' }).then(() => 0)`);
   await js(`proto.addMemory(currentTeam.key, { text: 'Seats go pickOpenSlot, then reserveSlot, then retryJoin.', file: 'src/lobby/join.ts' }).then(() => 0)`);
   await sleep(3000); // every checkout reports its changes
 
-  // Your agent beside Max's, with the session panel. The sidebar folds away (⌘B) to give them room.
-  await js(`toggleSidebar(true); openSession('lobby-fix'); focus = ${JSON.stringify(mine.id)}; split = ${JSON.stringify(max.id)}; render()`);
+  // Your agent beside User 2's, with the session panel. The sidebar folds away (⌘B) to give them room.
+  await js(`toggleSidebar(true); openSession('lobby-fix'); focus = ${JSON.stringify(mine.id)}; split = ${JSON.stringify(user2.id)}; render()`);
   await sleep(2000);
   await shot('session.png');
 
@@ -154,7 +154,7 @@ boot(async (win, hub) => {
 
   await js(`reposError = ''; repos = ${JSON.stringify(demoRepos)}; openNewAgent();
     $('#session').value = 'anticheat-alerts'; $('#task').value = 'Page the on-call when a ban wave starts';
-    $('input[name=source][value=repo]').checked = true; syncSource(); $('#repo').value = 'david/lobby-server'; renderRepoPicker()`);
+    $('input[name=source][value=repo]').checked = true; syncSource(); $('#repo').value = 'user1/lobby-server'; renderRepoPicker()`);
   await sleep(600);
   await shot('new-session.png');
 

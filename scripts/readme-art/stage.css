@@ -1,28 +1,26 @@
-/* The README images: real windows and crops of docs/*.png floating over a soft glow of the two people's colours
-   (purple: you, teal: a teammate). Each image fades to GitHub's default page colour at its edges, so it has no visible
-   box in the default light and dark themes. Pages are laid out 1280 wide; readme-art.js renders them larger. */
+/* The README images: real windows and crops of docs/*.png floating over a soft neutral light, in the app's own black
+   and white (red only rings an overlap). Each image fades to GitHub's default page colour at its edges, so it has no
+   visible box in the default light and dark themes. Pages are laid out 1280 wide; readme-art.js renders them larger. */
 :root {
-  --me: #a78bfa;
-  --mate: #5eead4;
-  --overlap: #f87171;
-  --needs: #fbbf24;
+  --light: rgba(255, 255, 255, .16);
   --page: #0d1117;
   --core: #09090c;
   --grid: rgba(255, 255, 255, .045);
   --ring: rgba(255, 255, 255, .12);
   --hi: rgba(255, 255, 255, .32);
   --shadow: 0 50px 100px -30px rgba(0, 0, 0, .85), 0 22px 44px -18px rgba(0, 0, 0, .7);
-  --glow: .6;
+  --glow: .5;
   --red-ring: rgba(248, 113, 113, .85);
 }
 :root[data-theme="light"] {
   --page: #ffffff;
   --core: #f5f5f8;
-  --grid: rgba(20, 20, 40, .055);
+  --grid: rgba(0, 0, 0, .05);
   --ring: rgba(0, 0, 0, .14);
   --hi: rgba(255, 255, 255, 0);
-  --shadow: 0 44px 80px -30px rgba(40, 30, 80, .38), 0 16px 32px -14px rgba(20, 20, 40, .26);
-  --glow: .55;
+  --light: rgba(20, 20, 30, .07);
+  --shadow: 0 44px 80px -30px rgba(0, 0, 0, .34), 0 16px 32px -14px rgba(0, 0, 0, .22);
+  --glow: .5;
   --red-ring: rgba(220, 60, 60, .8);
 }
 * { box-sizing: border-box; margin: 0; }
@@ -41,12 +39,9 @@ body { position: relative; font-family: Inter, -apple-system, system-ui, sans-se
                     linear-gradient(to bottom, var(--grid) 1px, transparent 1px);
   background-size: 40px 40px; background-position: -1px -1px; }
 
-/* A glow: a soft round light, placed with left/top/width/height. */
-.glow { position: absolute; border-radius: 50%; opacity: var(--glow); filter: blur(80px); }
-.glow.me { background: radial-gradient(closest-side, var(--me), transparent); }
-.glow.mate { background: radial-gradient(closest-side, var(--mate), transparent); }
-.glow.red { background: radial-gradient(closest-side, var(--overlap), transparent); }
-.glow.amber { background: radial-gradient(closest-side, var(--needs), transparent); }
+/* A glow: a soft round neutral light, placed with left/top/width/height. */
+.glow { position: absolute; border-radius: 50%; opacity: var(--glow); filter: blur(80px);
+  background: radial-gradient(closest-side, var(--light), transparent); }
 
 /* Shadows melt into the page colour along the edges too. */
 .stage::after { content: ""; position: absolute; inset: 0; pointer-events: none;

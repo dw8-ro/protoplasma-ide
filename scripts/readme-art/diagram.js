@@ -1,8 +1,8 @@
 // The "How it works" diagram for the README, as SVG in GitHub's dark or light colours: two Macs, each running the app and
 // an agent CLI in a terminal, and the hub between them. Text is live SVG text, so it stays sharp at any size.
 const COLORS = {
-  dark: { text: '#e6edf3', muted: '#8b949e', card: '#161b22', box: '#0d1117', line: '#30363d', arrow: '#6e7681', me: '#a78bfa', mate: '#5eead4', hub: '#e6edf3' },
-  light: { text: '#1f2328', muted: '#59636e', card: '#f6f8fa', box: '#ffffff', line: '#d1d9e0', arrow: '#818b98', me: '#7c3aed', mate: '#0d9488', hub: '#1f2328' },
+  dark: { text: '#e6edf3', muted: '#8b949e', card: '#161b22', box: '#0d1117', line: '#30363d', arrow: '#6e7681', mac: '#8b949e', hub: '#e6edf3' },
+  light: { text: '#1f2328', muted: '#59636e', card: '#f6f8fa', box: '#ffffff', line: '#d1d9e0', arrow: '#818b98', mac: '#59636e', hub: '#1f2328' },
 };
 
 const esc = s => s.replace(/&/g, '&amp;').replace(/</g, '&lt;');
@@ -41,8 +41,8 @@ module.exports = function diagram(theme) {
       <path d="M0 0 10 5 0 10z" fill="${c.arrow}"/>
     </marker>
   </defs>
-  ${mac(40, 'YOUR MAC', c.me, 'claude', 'you')}
-  ${mac(950, "TEAMMATE'S MAC", c.mate, 'codex', 'a teammate')}
+  ${mac(40, 'YOUR MAC', c.mac, 'claude', 'you')}
+  ${mac(950, "TEAMMATE'S MAC", c.mac, 'codex', 'a teammate')}
 
   <rect x="500" y="118" width="280" height="264" rx="22" fill="${c.card}" stroke="${c.hub}" stroke-opacity=".35" stroke-width="1.5"/>
   ${text(640, 170, 'Hub', { size: 26, weight: 700, anchor: 'middle' })}

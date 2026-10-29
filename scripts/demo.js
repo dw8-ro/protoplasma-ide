@@ -1,6 +1,6 @@
-// Records docs/demo.gif, and its framed copies for the README in docs/readme/, with the made-up team from stage.js: David
-// asks his agent for a test, opens the code and watches it being written, Max's change to the same file is flagged, and
-// Max leaves a comment.
+// Records docs/demo.gif, and its framed copies for the README in docs/readme/, with the made-up team from stage.js: User 1
+// asks their agent for a test, opens the code and watches it being written, User 2's change to the same file is flagged, and
+// User 2 leaves a comment.
 // Usage: npm run demo
 const fs = require('fs');
 const path = require('path');
@@ -25,7 +25,7 @@ test('two joins racing for the last seat get one seat each way', async () => {
 });
 `;
 
-const david = [
+const user1 = [
   ['say', ...claudeBanner('~/Protoplasma/lobby-server@lobby-fix')],
   ['box', '', accepting],
   ['wait', PROMPT],
@@ -38,7 +38,7 @@ const david = [
   ['say', c.tool('Bash', 'pnpm vitest run test/lobby'), '  ⎿  1 passed', ''],
   ['say', `${c.said} Two joins racing for the last seat now get one seat and one`, '  lobby_full, and the test covers it.'],
 ];
-const max = [
+const user2 = [
   ['say', c.dim('> the lobby double-books seats under load, fix reserveSlot'), '',
     `${c.said} I'll start with how a seat gets claimed.`, '', c.tool('Read', 'src/net/session_store.ts'), '  ⎿  Read 10 lines', ''],
   ['wait', 'go'],
@@ -49,20 +49,20 @@ const max = [
 
 boot(async (win, hub) => {
   const js = s => win.webContents.executeJavaScript(s);
-  const folders = stageRepo({ later: ['max/lobby-fix'] });
+  const folders = stageRepo({ later: ['user2/lobby-fix'] });
   while (!await js('!!me')) await sleep(100);
   await js(`showTeams(me); $('#teamName').value = 'Lobby'; $('#createTeam').requestSubmit()`);
   while (!await js('!!currentTeam')) await sleep(100);
   const team = await js('currentTeam.id');
-  await js(`proto.invite(currentTeam.key, 'max').then(t => { currentTeam = t; return 0; })`);
+  await js(`proto.invite(currentTeam.key, 'user2').then(t => { currentTeam = t; return 0; })`);
   await js(`proto.saveSession(currentTeam.key, { name: 'lobby-fix', task: 'Stop the lobby double-booking seats under load' }).then(() => 0)`);
 
-  const theirs = await teammate({ hub, team, token: 'tok-max', session: 'lobby-fix', cwd: folders['max/lobby-fix'], cmd: 'claude', steps: max, cols: 80, rows: 30 });
+  const theirs = await teammate({ hub, team, token: 'tok-user2', session: 'lobby-fix', cwd: folders['user2/lobby-fix'], cmd: 'claude', steps: user2, cols: 80, rows: 30 });
   await hook(hub, theirs, { hook_event_name: 'UserPromptSubmit', prompt: 'the lobby double-books seats under load, fix reserveSlot' });
-  const secret = ownAgent('claude', david);
+  const secret = ownAgent('claude', user1);
   await js(`openNewAgent('lobby-fix')`);
   await sleep(1000);
-  await js(`$('input[name=source][value=folder]').checked = true; syncSource(); $('#cwd').value = ${JSON.stringify(folders['david/lobby-fix'])}; $('#agentForm').requestSubmit()`);
+  await js(`$('input[name=source][value=folder]').checked = true; syncSource(); $('#cwd').value = ${JSON.stringify(folders['user1/lobby-fix'])}; $('#agentForm').requestSubmit()`);
   while (!await js('local.size')) await sleep(100);
   const mine = { id: await js('[...local.keys()][0]'), secret: await secret };
   await js(`go('sessions')`);
@@ -83,12 +83,12 @@ boot(async (win, hub) => {
   await sleep(1600);                                       // the board
   await js(`openSession('lobby-fix', ${JSON.stringify(mine.id)})`);
   await sleep(1400);
-  await type(PROMPT);                                      // David asks his agent
+  await type(PROMPT);                                      // User 1 asks their agent
   await js(`proto.write(${JSON.stringify(mine.id)}, '\\r'); 0`);
   await hook(hub, mine, { hook_event_name: 'UserPromptSubmit', prompt: PROMPT });
   await sleep(1600);
-  // The agent writes the test; David opens it and watches it arrive.
-  const test = path.join(folders['david/lobby-fix'], 'test/lobby.test.ts');
+  // The agent writes the test; User 1 opens it and watches it arrive.
+  const test = path.join(folders['user1/lobby-fix'], 'test/lobby.test.ts');
   fs.mkdirSync(path.dirname(test), { recursive: true });
   const lines = TEST.split('\n');
   fs.writeFileSync(test, lines.slice(0, 3).join('\n') + '\n');
@@ -96,8 +96,8 @@ boot(async (win, hub) => {
   await js(`openFile('test/lobby.test.ts'); 0`);
   for (let n = 6; n <= lines.length; n += 3) { await sleep(450); fs.writeFileSync(test, lines.slice(0, n).join('\n') + '\n'); }
   await sleep(1200);
-  theirs.write('go\r');                                    // Max's agent changes the same file as David's
-  applyEdits(folders, 'max/lobby-fix');
+  theirs.write('go\r');                                    // User 2's agent changes the same file as User 1's
+  applyEdits(folders, 'user2/lobby-fix');
   await sleep(2600);
   await js(`proto.addComment(currentTeam.key, 'lobby-fix', 'Nice. I\\'ll rebase reserveSlot on your test.'); 0`);
   await hook(hub, mine, { hook_event_name: 'Stop' });

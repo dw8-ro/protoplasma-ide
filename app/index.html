@@ -67,7 +67,7 @@
   .btn {
     display: inline-flex; align-items: center; justify-content: center; gap: 8px;
     height: 32px; padding: 0 14px; border-radius: 8px; border: 1px solid var(--line-strong);
-    background: var(--raised); font-weight: 500; cursor: pointer; white-space: nowrap;
+    background: var(--raised); font-weight: 500; cursor: pointer; white-space: nowrap; transition: border-color .15s, background-color .15s;
   }
   .btn:hover { border-color: var(--faint); }
   .btn:disabled { opacity: .5; cursor: default; }
@@ -84,7 +84,9 @@
     background: var(--canvas); user-select: text;
   }
   input::placeholder { color: var(--faint); }
-  input:not([type=checkbox], [type=radio]):focus { outline: none; border-color: var(--muted); }
+  input:not([type=checkbox], [type=radio]):focus, textarea.code-input:focus {
+    outline: none; border-color: var(--muted); box-shadow: 0 0 0 3px color-mix(in srgb, var(--text) 8%, transparent);
+  }
   input[readonly] { color: var(--muted); font-family: var(--mono); font-size: 12px; }
   .row { display: flex; gap: 8px; }
   .fine { color: var(--faint); font-size: 12px; line-height: 1.5; }
@@ -94,13 +96,12 @@
   /* Identity: every teammate has a colour (set as --c) */
   .avatar {
     --c: var(--muted); flex: none; width: 22px; height: 22px; border-radius: 50%; display: grid; place-items: center; overflow: hidden;
-    font-size: 10px; font-weight: 650; color: var(--c);
-    background: color-mix(in srgb, var(--c) 16%, var(--surface));
-    box-shadow: 0 0 0 2px var(--surface), 0 0 0 3.5px color-mix(in srgb, var(--c) 70%, transparent);
+    font-size: 10px; font-weight: 600; color: var(--c);
+    background: color-mix(in srgb, var(--c) 20%, var(--surface)); /* a flat tinted circle: the colour says who, no ring */
   }
   .avatar img { width: 100%; height: 100%; }
   .stack { display: flex; }
-  .stack .avatar + .avatar { margin-left: -4px; }
+  .stack .avatar + .avatar { margin-left: -5px; box-shadow: 0 0 0 2px var(--stack-bg, var(--surface)); } /* overlapping faces stay apart, cut in the colour behind them */
   .pill {
     display: inline-flex; align-items: center; gap: 6px; height: 22px; padding: 0 9px; border-radius: 999px;
     font-size: 11.5px; font-weight: 500; color: var(--muted); background: var(--raised); border: 1px solid var(--line); white-space: nowrap;
@@ -117,7 +118,7 @@
   /* Title bar */
   .titlebar {
     grid-row: 1; grid-column: 1 / -1; display: flex; align-items: center; gap: 14px; padding: 0 16px 0 82px;
-    border-bottom: 1px solid var(--line); -webkit-app-region: drag;
+    -webkit-app-region: drag;
   }
   .titlebar button { -webkit-app-region: no-drag; }
   .brand { display: flex; align-items: center; gap: 8px; font-weight: 600; letter-spacing: -0.01em; }
@@ -134,9 +135,9 @@
   .conn.retrying .dot { background: var(--needs); }
 
   /* Sidebar: where you are, the team's workspaces (repos) with their sessions, and your account */
-  .sidebar { grid-row: 3; grid-column: 1; display: flex; flex-direction: column; min-height: 0; border-right: 1px solid var(--line); padding: 12px 8px 0; }
+  .sidebar { grid-row: 3; grid-column: 1; display: flex; flex-direction: column; min-height: 0; padding: 4px 8px 0; }
   /* Like Amoeba's: a bar under the title bar when an update is ready */
-  .update-bar { grid-row: 2; grid-column: 1 / -1; display: flex; align-items: center; gap: 8px; padding: 7px 12px 7px 16px; border-bottom: 1px solid var(--line); background: var(--canvas); font-size: 12.5px; }
+  .update-bar { grid-row: 2; grid-column: 1 / -1; display: flex; align-items: center; gap: 8px; margin: 0 8px 8px; padding: 6px 8px 6px 14px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); font-size: 12.5px; }
   .update-bar span { flex: 1; color: var(--muted); }
   .side-link, .ws, .ws-session {
     display: flex; align-items: center; gap: 9px; width: 100%; height: 30px; padding: 0 9px; border: 0; border-radius: 7px;
@@ -162,14 +163,19 @@
   .ws-session .dot.working { background: var(--live); }
   .ws-session .dot.needs { background: var(--needs); }
   .ws-session .dot.overlap { background: var(--overlap); }
-  .side-foot { display: flex; align-items: center; gap: 10px; margin: 8px 0 0; padding: 12px 6px; border-top: 1px solid var(--line); }
+  .side-foot { display: flex; align-items: center; gap: 10px; margin: 8px 0 0; padding: 12px 6px; }
   .side-foot .avatar { width: 26px; height: 26px; font-size: 11px; }
   .me-name { flex: 1; min-width: 0; display: grid; line-height: 1.25; }
   .me-name b { font-weight: 500; overflow: hidden; text-overflow: ellipsis; }
   .me-name span { color: var(--faint); font-size: 11.5px; }
 
   /* Pages: Sessions and People */
-  .main { grid-row: 3; grid-column: 2; display: flex; flex-direction: column; min-width: 0; min-height: 0; background: var(--main); }
+  /* The main area is an inset sheet on the canvas, so the title bar and sidebar need no dividing lines. */
+  .main {
+    grid-row: 3; grid-column: 2; display: flex; flex-direction: column; min-width: 0; min-height: 0; overflow: hidden;
+    margin: 0 8px 8px 0; border: 1px solid var(--line); border-radius: 12px; background: var(--main);
+  }
+  body.sidebar-hidden .main { margin-left: 8px; }
   .page { flex: 1; min-height: 0; overflow: auto; padding: 22px 28px 28px; }
   .page-head { display: flex; align-items: center; gap: 10px; margin-bottom: 18px; }
   .page-head h1 { font-size: 18px; font-weight: 600; letter-spacing: -0.015em; }
@@ -194,7 +200,7 @@
   .people-list .role { color: var(--muted); font-size: 12px; }
 
   /* Small pop-up menus (session actions, adding an agent) */
-  .menu { position: fixed; z-index: 20; min-width: 180px; padding: 5px; border-radius: 10px; background: var(--surface); border: 1px solid var(--line-strong); box-shadow: 0 16px 40px rgba(0, 0, 0, .35); }
+  .menu { position: fixed; z-index: 20; min-width: 180px; padding: 5px; border-radius: 12px; background: color-mix(in srgb, var(--surface) 86%, transparent); backdrop-filter: blur(20px); border: 1px solid var(--line-strong); box-shadow: 0 16px 40px rgba(0, 0, 0, .35); }
   .menu button { display: flex; justify-content: space-between; gap: 16px; width: 100%; padding: 7px 10px; border: 0; border-radius: 6px; background: none; text-align: left; cursor: pointer; }
   .menu button:hover:not(:disabled) { background: var(--raised); }
   .menu button:disabled { color: var(--faint); cursor: default; }
@@ -203,7 +209,7 @@
 
   .card {
     display: grid; gap: 10px; padding: 14px 16px; border-radius: 12px; cursor: pointer;
-    background: var(--surface); border: 1px solid var(--line);
+    background: var(--surface); border: 1px solid var(--line); transition: border-color .15s;
   }
   .card:hover { border-color: var(--line-strong); }
   .card-top { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
@@ -301,16 +307,19 @@
   .panel-empty { padding: 4px 8px; color: var(--faint); font-size: 12px; }
   .comment-form { padding: 10px 12px; border-top: 1px solid var(--line); }
   .comment-form input { height: 32px; font-size: 12.5px; }
-  /* An agent's terminal, framed the way Amoeba frames its composer: a rounded border in the owner's colour with their
-     name cut into it, the terminal sitting on the page background, and a quiet toolbar underneath. */
+  /* An agent's terminal: a plain card with the owner's name inside it, the terminal on the page background, and a quiet
+     toolbar underneath. The owner's colour is only in the name's dot (David found coloured outlines too busy). */
   .lane {
-    --c: var(--muted); position: relative; flex: 1 1 0; min-width: 0; display: flex; flex-direction: column; margin-top: 8px;
-    background: var(--lane); border: 1px solid color-mix(in srgb, var(--c) 55%, var(--line)); border-radius: 14px;
+    --c: var(--muted); position: relative; flex: 1 1 0; min-width: 0; display: flex; flex-direction: column;
+    background: var(--lane); border: 1px solid var(--line); border-radius: 12px; transition: border-color .15s;
   }
+  .lane:focus-within { border-color: var(--line-strong); }
   .lane.mine { order: -1; min-width: 440px; }
-  .lane-label { position: absolute; top: -8px; left: 14px; padding: 0 6px; background: var(--main); color: var(--c); font-size: 11px; font-weight: 600; line-height: 16px; }
-  :root[data-theme=light] .lane-label { color: color-mix(in srgb, var(--c) 62%, black); } /* teammates' colours are made for dark */
-  .screen { margin: 14px 8px 8px 16px; overflow: hidden; } /* margins, not padding: the fit addon sizes to the padded box */
+  /* Whose agent it is: their name, with their colour only in a small dot. */
+  .lane-label { display: flex; align-items: center; gap: 7px; padding: 10px 14px 0 16px; color: var(--muted); font-size: 11.5px; font-weight: 600; line-height: 16px; }
+  .lane-label::before { content: ''; width: 7px; height: 7px; border-radius: 50%; background: var(--c); }
+  .lane-label:empty { display: none; }
+  .screen { margin: 8px 8px 8px 16px; overflow: hidden; } /* margins, not padding: the fit addon sizes to the padded box */
   .lane .screen { flex: 1; min-height: 0; }
   .lane:not(.mine) .screen { overflow-x: auto; } /* a teammate's terminal too wide for a narrow pane even at the smallest font scrolls sideways */
   .lane-bar { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border-top: 1px solid var(--line); white-space: nowrap; font-size: 12px; color: var(--muted); }
@@ -362,7 +371,6 @@
   .code-editor .ed { height: 100%; }
   .code-editor .ed[hidden] { display: none; }
   textarea.code-input { resize: none; padding: 7px 10px; border: 1px solid var(--line-strong); border-radius: 8px; background: var(--canvas); color: var(--text); font: 12.5px/1.45 var(--ui); }
-  textarea.code-input:focus { outline: none; border-color: var(--muted); }
   .commit { margin: 0 12px 6px; }
   .commit-note { margin: 0 14px 6px; color: var(--muted); font-size: 12px; line-height: 1.4; }
   .commit-note:empty { display: none; }
@@ -428,12 +436,12 @@
   .pane-grid { flex: 1; min-height: 0; display: grid; grid-template-columns: repeat(var(--panes, 2), minmax(0, 1fr)); }
   .pane { display: flex; flex-direction: column; min-width: 0; min-height: 0; border-right: 1px solid var(--line); }
   .pane:last-child { border-right: 0; }
-  .pane-head { display: flex; align-items: center; gap: 8px; min-height: 42px; padding: 0 8px 0 16px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+  .pane-head { --stack-bg: var(--main); display: flex; align-items: center; gap: 8px; min-height: 42px; padding: 0 8px 0 16px; border-bottom: 1px solid var(--line); white-space: nowrap; }
   .pane-head b { overflow: hidden; text-overflow: ellipsis; }
   .pane-head .pane-task { min-width: 0; overflow: hidden; text-overflow: ellipsis; color: var(--faint); font-size: 12px; }
   .pane-head .spacer { margin-left: auto; }
   .pane-body { flex: 1; min-height: 0; display: flex; padding: 12px; }
-  .pane-body .lane { margin-top: 6px; min-width: 0; }
+  .pane-body .lane { min-width: 0; }
   .pane-empty { margin: auto; display: grid; justify-items: center; gap: 12px; width: min(340px, 100%); color: var(--muted); text-align: center; }
   .pane-empty[hidden] { display: none; }
   .pane-pick { display: grid; gap: 4px; width: 100%; max-height: 50vh; overflow: auto; }
@@ -496,7 +504,7 @@
   /* Quick switcher (⌘K) */
   .switcher { width: 560px; padding: 10px; top: 14vh; margin-top: 0; }
   .switcher input { height: 40px; font-size: 14px; border: 0; background: transparent; }
-  .switcher input:focus { border: 0; }
+  .switcher input:focus { border: 0; box-shadow: none; }
   .switcher-list { max-height: 50vh; overflow: auto; border-top: 1px solid var(--line); margin-top: 6px; padding-top: 6px; }
   .switch-row { display: flex; align-items: center; gap: 10px; width: 100%; padding: 8px 10px; border: 0; border-radius: 8px; background: none; text-align: left; cursor: pointer; }
   .switch-row.on { background: var(--raised); }
@@ -535,7 +543,7 @@
     background: var(--surface); color: var(--text); box-shadow: 0 30px 80px rgba(0, 0, 0, .55);
   }
   dialog[open] { animation: rise .18s ease-out; }
-  dialog::backdrop { background: rgba(0, 0, 0, .6); backdrop-filter: blur(6px); }
+  dialog::backdrop { background: rgba(0, 0, 0, .55); backdrop-filter: blur(8px); }
   @keyframes rise { from { opacity: 0; transform: translateY(6px) scale(.98); } }
   dialog h2 { font-size: 20px; font-weight: 650; letter-spacing: -0.02em; }
   dialog h3 { font-size: 13px; font-weight: 600; }
@@ -552,7 +560,7 @@
   .team-list { display: grid; gap: 8px; max-height: 300px; overflow: auto; }
   .team {
     display: flex; align-items: center; gap: 12px; padding: 12px 14px; border-radius: 12px; cursor: pointer; text-align: left;
-    background: var(--canvas); border: 1px solid var(--line);
+    --stack-bg: var(--canvas); background: var(--canvas); border: 1px solid var(--line);
   }
   .team:hover, .team.on { border-color: var(--muted); }
   .team .name { flex: 1; display: grid; gap: 1px; font-weight: 600; }
@@ -597,11 +605,12 @@
   .icon-btn:hover { background: var(--raised); color: var(--text); }
   .icon-btn svg { width: 16px; height: 16px; }
   .settings {
-    position: fixed; inset: 48px 0 0 var(--side); z-index: 5; width: auto; height: auto; max-width: none; max-height: none; margin: 0; padding: 0;
-    border: 0; border-radius: 0; box-shadow: none; background: var(--main); overflow: hidden;
+    position: fixed; inset: 48px 8px 8px var(--side); z-index: 5; width: auto; height: auto; max-width: none; max-height: none; margin: 0; padding: 0;
+    border: 1px solid var(--line); border-radius: 12px; box-shadow: none; background: var(--main); overflow: hidden;
   }
   .settings[open] { display: grid; grid-template-columns: 212px 1fr; animation: none; }
-  body:has(#updateBar:not([hidden])) .settings { top: 85px; } /* below the update bar, whose buttons stay reachable */
+  body.sidebar-hidden .settings { left: 8px; }
+  body:has(#updateBar:not([hidden])) .settings { top: 96px; } /* below the update bar, whose buttons stay reachable */
   .settings:focus { outline: none; }
   .settings-nav { display: flex; flex-direction: column; gap: 2px; padding: 22px 12px; background: var(--canvas); border-right: 1px solid var(--line); }
   .settings-nav span { padding: 14px 10px 4px; color: var(--faint); font-size: 11.5px; }

@@ -181,6 +181,49 @@ test('the hook relay passes on only context and asks from a hub, never an approv
   } finally { fake.close(); }
 });
 
+test('Codex is refused once where Claude Code would be asked, and the same step goes through when it tries again', async () => {
+  let reply;
+  const fake = http.createServer((req, res) => { req.resume(); req.on('end', () => res.writeHead(200).end(JSON.stringify(reply))); });
+  await new Promise(r => fake.listen(0, '127.0.0.1', r));
+  const relay = await teams.hookRelay(async id => ({ 'h-codex': 'codex', 'h-claude': 'claude' }[id]
+    ? { url: `http://127.0.0.1:${fake.address().port}`, cmd: { 'h-codex': 'codex', 'h-claude': 'claude' }[id] } : null));
+  const hook = async id => (await (await fetch(`${relay}/hooks/${id}`, { method: 'POST', body: '{}' })).text());
+  try {
+    reply = { hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'ask', permissionDecisionReason: 'Protoplasma: Max\'s agent already edited a.ts.', additionalContext: 'a note' } };
+    assert.deepEqual(JSON.parse(await hook('h-claude')), reply, 'Claude Code is still asked');
+    const first = JSON.parse(await hook('h-codex')).hookSpecificOutput;
+    assert.equal(first.permissionDecision, 'deny');
+    assert.match(first.permissionDecisionReason, /^Protoplasma: Max's agent already edited a\.ts\. Ask the person/);
+    assert.equal(first.additionalContext, 'a note');
+    assert.deepEqual(JSON.parse(await hook('h-codex')), { hookSpecificOutput: { hookEventName: 'PreToolUse', additionalContext: 'a note' } }, 'the retry goes through');
+    reply = { hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'ask', permissionDecisionReason: 'Protoplasma: a push to main' } };
+    assert.equal(JSON.parse(await hook('h-codex')).hookSpecificOutput.permissionDecision, 'deny', 'another step is refused once too');
+    assert.equal(await hook('h-codex'), '', 'and then goes through');
+    reply = { hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'deny', permissionDecisionReason: 'no' } };
+    assert.equal(await hook('h-codex'), '', 'a hub can\'t refuse anything itself');
+    reply = { hookSpecificOutput: { hookEventName: 'UserPromptSubmit', additionalContext: 'the session goal' } };
+    assert.deepEqual(JSON.parse(await hook('h-codex')), reply, 'Codex gets the team context');
+  } finally { fake.close(); }
+});
+
+test('Codex starts with Protoplasma\'s hooks and the address and secret they need', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'protoplasma-codex-'));
+  const codex = path.join(dir, 'codex'); // prints what it was started with
+  fs.writeFileSync(codex, '#!/bin/sh\nprintf "%s\\n" "$@"; echo "url=$PROTO_HOOK_URL secret=${#PROTO_HOOK_SECRET}"; exec cat\n', { mode: 0o755 });
+  const lane = startLane({ hub: 'http://127.0.0.1:9', hookBase: 'http://127.0.0.1:5555', team: 't', token: 'tok-bob', session: 's', cmd: codex, args: ['resume', '--last'] });
+  let out = '';
+  lane.term.onData(d => { out += d; });
+  try {
+    await sleep(800);
+    const [flag, setting, ...rest] = out.split(/\r?\n/);
+    assert.equal(flag, '-c');
+    assert.match(setting, /^hooks=\{UserPromptSubmit=\[.*PreToolUse=\[\{matcher="Bash\|exec_command\|apply_patch".*Stop=\[/);
+    assert.ok(setting.includes('curl -s --max-time 3'), 'a command hook that posts to the relay');
+    assert.ok(!setting.includes(lane.id) && !setting.includes('5555'), 'the same command every run, so Codex trusts it once');
+    assert.deepEqual(rest.slice(0, 3), ['resume', '--last', `url=http://127.0.0.1:5555/hooks/${lane.id} secret=48`]);
+  } finally { lane.term.kill(); fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
 test('an agent only takes typing from the hub when it was started open', async () => {
   // A hub that types into every agent that connects, whatever it was told.
   const fake = new WebSocket.Server({ port: 0, host: '127.0.0.1' });

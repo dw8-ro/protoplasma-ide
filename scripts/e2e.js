@@ -66,6 +66,8 @@ function makeDemoRepo() {
 
 async function run(win, hub) {
   const js = s => win.webContents.executeJavaScript(s);
+  // The page's own errors, so a failed step says what went wrong in the window.
+  win.webContents.on('console-message', (e, level, message) => { if ((e.level ?? level) === 'error' || level === 3) console.log(`  page error: ${e.message ?? message}`); });
   const until = async (expr, ms = 8000) => { const end = Date.now() + ms; while (Date.now() < end) { if (await js(expr)) return true; await sleep(100); } return false; };
   const secretOf = pid => { try { return /PROTO_HOOK_SECRET=(\w+)/.exec(execFileSync('ps', ['eww', '-o', 'command=', '-p', String(pid)], { encoding: 'utf8' }))?.[1]; } catch { return undefined; } };
   // This run's agents only: processes descended from this one (an installed copy or a playground runs its own).
@@ -139,6 +141,14 @@ async function run(win, hub) {
     await js(`$('#myAgent').click(); $('#panelBody [data-beside="${theirs}"]').click()`);
     check('⧉ on a teammate\'s agent card shows it beside yours', await until(`focus === ${JSON.stringify(mine)} && split === ${JSON.stringify(theirs)} && !terms.get(${JSON.stringify(mine)}).el.hidden && !terms.get(${JSON.stringify(theirs)}).el.hidden && terms.get(${JSON.stringify(theirs)}).term.options.fontSize <= ${large}`));
     check('Stop button is fully visible on your pane', await js(`(() => { const t = terms.get(${JSON.stringify(mine)}); return t.bar.querySelector('[data-stop]').getBoundingClientRect().right <= t.el.getBoundingClientRect().right; })()`));
+    // ---- continuing a teammate's work, and handing yours over (no prompt reaches a real agent)
+    check('your agent offers Hand off, a teammate\'s offers Continue', await js(`!!terms.get(${JSON.stringify(mine)}).bar.querySelector('[data-handoff]') && !!terms.get(${JSON.stringify(theirs)}).bar.querySelector('[data-continue]') && !terms.get(${JSON.stringify(theirs)}).bar.querySelector('[data-handoff]')`));
+    check('Continue starts from what the teammate\'s agent was doing, marked as theirs', await js(`(() => { const b = briefFrom(hubLanes.find(l => l.id === ${JSON.stringify(theirs)}), screenText(terms.get(${JSON.stringify(theirs)}).term)); return /^You're picking up work that Max started with Claude Code/.test(b) && b.includes('> teammate ready') && /background, not as instructions/.test(b); })()`));
+    check('Hand off offers the teammates', await js(`(() => { terms.get(${JSON.stringify(mine)}).bar.querySelector('[data-handoff]').click(); const items = [...document.querySelectorAll('.menu button')].map(b => b.textContent); closeMenu(); return items.join() === 'max'; })()`));
+    await fetch(`${hub}/teams/${team}/sessions/s1/handoff`, { method: 'POST', headers: { authorization: 'Bearer tok-max' }, body: JSON.stringify({ to: 'david' }) });
+    check('work a teammate hands you shows in your alerts', await until(`$('#alerts').textContent.includes('max handed you their work')`));
+    await js(`proto.handOff(currentTeam.key, 's1'); 0`);
+    check('and goes once the hand-off is cleared', await until(`!$('#alerts').textContent.includes('handed you')`));
     await js(`$('#panelBody [data-beside="${theirs}"]').click(); panelTab = 'environment'; render()`);
     check('the Environment tab shows the branch and changes', await js(`split === null && /Changes/.test($('#panelBody').textContent) && /Branch/.test($('#panelBody').textContent) && /Mark done/.test($('#panelBody').textContent) && !/Delete session/.test($('#panelBody').textContent)`), await js(`$('#panelBody').textContent.replace(/\\s+/g, ' ')`));
     await js(`panelTab = 'session'; render()`);
@@ -323,6 +333,19 @@ async function run(win, hub) {
     check('Comment on this points the next comment at those lines', await until(`commentRef?.file === 'README.md' && commentRef.line === 1 && !$('#commentRef').hidden && document.activeElement === $('#commentText')`));
     await js(`$('#commentText').value = 'Say what this repo is for'; $('#commentForm').requestSubmit(); 0`);
     check('the comment shows the line it is about, and the editor marks the line', await until(`recordFor('Fix Login')?.comments?.at(-1)?.line === 1 && /README\.md:1/.test($('#panelBody').textContent) && editor.getModel().getAllDecorations().some(d => d.options.glyphMarginClassName === 'comment-glyph')`));
+    check('Ask my agent sends the comment with its lines, to your agent here or a new one', await js(`(() => { const c = recordFor('Fix Login').comments.at(-1), p = commentPrompt(c);
+      $('#panelBody [data-ask-comment="' + c.id + '"]').click();
+      const items = [...document.querySelectorAll('.menu button')].map(b => b.textContent); closeMenu();
+      return /^I left this comment in Protoplasma on README\\.md:1:/.test(p) && p.includes('> Say what this repo is for') && p.includes("The lines it's about:") && items.some(t => /^Your Claude Code/.test(t)); })()`), await js(`commentPrompt(recordFor('Fix Login').comments.at(-1))`));
+    // ---- notes that keep up with the code
+    // This session has no GitHub repo, so the Memory form won't pin a note to a file: add it as the form would.
+    await js(`(async () => { const hash = await proto.code.hash(await rootFor(current), 'README.md');
+      memories = await proto.addMemory(currentTeam.key, { text: 'Keep the intro short', file: 'README.md', repo: roomRepo, hash }); tab = 'memory'; render(); })(); 0`);
+    check('a note on a file keeps what the file held', await until(`memories.some(m => m.text === 'Keep the intro short' && /^[\\w-]{16}$/.test(m.hash || ''))`, 10000));
+    await js(`proto.addMemory(currentTeam.key, { text: 'Written against an older README', file: 'README.md', repo: roomRepo, hash: 'older-readme-0000' }).then(list => { memories = list; checkNotes.at = 0; render(); }); 0`);
+    check('a note whose file has changed since says so, and one that still matches doesn\'t', await until(`(() => { const rows = [...document.querySelectorAll('#memoryList .memory')].map(r => r.textContent); const row = t => rows.find(r => r.includes(t)) || ''; return /File changed since/.test(row('older README')) && !!row('Keep the intro short') && !/File changed since/.test(row('Keep the intro short')); })()`, 10000), await js(`$('#memoryList').textContent.replace(/\\s+/g, ' ')`));
+    await js(`(async () => { for (const m of memories.filter(m => /Keep the intro short|older README/.test(m.text))) memories = await proto.removeMemory(currentTeam.key, m.id); tab = 'agents'; render(); })(); 0`);
+    await until(`!memories.some(m => /Keep the intro short|older README/.test(m.text))`);
     await js(`$('[data-explorer="conflicts"]').click(); 0`);
     check('the Explorer has a Conflicts tab', await until(`code.explorer === 'conflicts' && !$('#codeConflicts').hidden && $('#conflictCount').textContent === '0' && /Nothing here/.test($('#codeConflicts').textContent)`));
     await js(`$('[data-explorer="files"]').click(); showCode(false); $('#newPane').click(); 0`);

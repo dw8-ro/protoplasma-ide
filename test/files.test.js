@@ -90,6 +90,22 @@ test('nothing outside the session folder can be read or written, symlinks includ
   assert.equal(files.read(david, 'lobby.js').text, 'one\nDAVID\nthree\n');
 });
 
+test('a note can tell when its file has changed, and never reads a file outside the folder', async () => {
+  const dir = path.join(tmp, 'notes'), sub = path.join(dir, 'sub');
+  git(tmp, 'clone', '-q', remote, dir);
+  const before = await files.fileHash(dir, 'lobby.js', env);
+  assert.match(before, /^[\w-]{16}$/);
+  assert.equal(await files.fileHash(dir, 'lobby.js', env), before, 'the same contents, the same hash');
+  fs.appendFileSync(path.join(dir, 'lobby.js'), 'four\n');
+  assert.notEqual(await files.fileHash(dir, 'lobby.js', env), before);
+  fs.mkdirSync(sub);
+  fs.writeFileSync(path.join(sub, 'a.js'), 'a\n');
+  assert.equal(await files.fileHash(sub, 'sub/a.js', env), await files.fileHash(dir, 'sub/a.js', env), 'a session in a subfolder finds it by its path from the top');
+  fs.symlinkSync('/etc/hosts', path.join(dir, 'hosts-link'));
+  for (const file of ['../max/lobby.js', '/etc/hosts', 'hosts-link', 'missing.js', 'lobby.js/..']) assert.equal(await files.fileHash(dir, file, env), '', file);
+  assert.equal(await files.fileHash(sub, 'lobby.js', env), '', 'not in the subfolder');
+});
+
 test('saving through a link out of the folder makes no folders out there either', () => {
   assert.throws(() => files.write(david, 'evil-link/a/b/x.js', 'x'), /outside the session folder/);
   assert.ok(!fs.existsSync(path.join(tmp, 'david-evil', 'a')), 'no empty folders left outside');

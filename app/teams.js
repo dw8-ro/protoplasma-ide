@@ -172,7 +172,25 @@ function safeHookReply(text) {
 }
 
 /**
- * Where Claude Code sends its hooks: an http address on 127.0.0.1 that passes each hook on to the agent's hub and only
+ * Codex can't ask the person from a hook, so "ask first" becomes a refusal the first time, with the reason and a request
+ * to check with the person. The same step again within RETRY_MS goes through: by then they've been asked. This app
+ * makes the refusal, from an ask, so a hub still can't refuse anything outright.
+ */
+const RETRY_MS = 10 * 60 * 1000;
+const refused = new Map(); // `${lane}|${reason}` -> when Codex was first refused it
+function codexReply(id, reply, now = Date.now()) {
+  const out = reply && JSON.parse(reply).hookSpecificOutput;
+  if (out?.permissionDecision !== 'ask') return reply;
+  for (const [key, at] of refused) if (now - at > RETRY_MS || refused.size > 500) refused.delete(key);
+  const { permissionDecision, permissionDecisionReason: reason, ...rest } = out, key = `${id}|${reason}`;
+  if (refused.has(key)) return rest.additionalContext ? JSON.stringify({ hookSpecificOutput: rest }) : '';
+  refused.set(key, now);
+  return JSON.stringify({ hookSpecificOutput: { ...rest, permissionDecision: 'deny',
+    permissionDecisionReason: `${reason} Ask the person before going ahead. If they say yes, try the same step again.` } });
+}
+
+/**
+ * Where Claude Code and Codex send their hooks: an http address on 127.0.0.1 that passes each hook on to the agent's hub and only
  * a safe part of the answer back (safeHookReply). A hub on a Mac is pinned to the certificate it presented, which Claude
  * Code couldn't check itself; the online hub's is checked as usual. `hubFor(laneId)` resolves to { url, ca? } for one
  * of this Mac's agents, or to nothing. The relay adds no credentials: a hook still carries only its own agent's secret.
@@ -187,14 +205,18 @@ function hookRelay(hubFor) {
       if (!to) return res.writeHead(404).end();
       const fail = () => (res.headersSent ? res.destroy() : res.writeHead(502).end());
       const target = new URL(`${to.url}/hooks/${id}`);
-      // Claude Code waits 3 s for a hook, so the hub gets a little less.
+      // Claude Code waits 3 s for a hook (Codex's curl too), so the hub gets a little less.
       const out = (target.protocol === 'https:' ? https : http).request(target, { method: 'POST', signal: AbortSignal.timeout(2500),
         ...(to.ca && { ca: to.ca, checkServerIdentity: () => undefined }),
         headers: { authorization: String(req.headers.authorization || ''), 'content-type': 'application/json' } }, r => {
         let text = '';
         r.setEncoding('utf8').on('error', fail)
           .on('data', d => { if ((text += d).length > 5e6) out.destroy(new Error('too long')); })
-          .on('end', () => (r.statusCode === 200 ? res.writeHead(200, { 'content-type': 'application/json' }).end(safeHookReply(text)) : res.writeHead(r.statusCode).end()));
+          .on('end', () => {
+            if (r.statusCode !== 200) return res.writeHead(r.statusCode).end();
+            const reply = safeHookReply(text);
+            res.writeHead(200, { 'content-type': 'application/json' }).end(to.cmd === 'codex' ? codexReply(id, reply) : reply);
+          });
       });
       out.on('error', fail);
       req.pipe(out);
@@ -307,6 +329,8 @@ const stepRoute = (team, name, id = '') => `${sessionRoute(team, name)}/steps${i
 const addStep = (s, team, name, step) => hubApi(s, team, 'POST', stepRoute(team, name), step);
 const updateStep = (s, team, name, id, change) => hubApi(s, team, 'POST', stepRoute(team, name, id), change);
 const removeStep = (s, team, name, id) => hubApi(s, team, 'DELETE', stepRoute(team, name, id));
+// `to` hands the session to that teammate; no `to` clears the hand-off.
+const handOff = (s, team, name, to) => hubApi(s, team, to ? 'POST' : 'DELETE', `${sessionRoute(team, name)}/handoff`, to ? { to } : undefined);
 const removeComment = (s, team, name, id) => hubApi(s, team, 'DELETE', commentRoute(team, name, id));
 
 // At quit: the goodbye goes out before the socket closes, so other Macs stop listing this one at once.
@@ -318,4 +342,4 @@ const stopAnnouncing = () => new Promise(resolve => {
   setTimeout(done, 1000);
 });
 
-module.exports = { onlineHub, access, hookRelay, isPinned, hubApi, hubCert, teamsAt, listTeams, stopHosting, createTeam, invite, removeMember, deleteTeam, addMemory, removeMemory, saveSession, setSessionDone, renameSession, deleteSession, addComment, removeComment, addStep, updateStep, removeStep, stopAnnouncing };
+module.exports = { onlineHub, access, hookRelay, isPinned, hubApi, hubCert, teamsAt, listTeams, stopHosting, createTeam, invite, removeMember, deleteTeam, addMemory, removeMemory, saveSession, setSessionDone, renameSession, deleteSession, addComment, removeComment, addStep, updateStep, removeStep, handOff, stopAnnouncing };

@@ -262,7 +262,8 @@ function startHub({ port = 7681, host = '0.0.0.0', dataDir, owners, tls, passIss
 
   // ---- Live state ----
   const stopped = new Map();  // team id -> recently stopped agents, newest first, with the last of their output
-  const stoppedViews = teamId => (stopped.get(teamId) || []).map(({ id, session, login, name, avatar, cmd, cols, rows, endedAt }) => ({ id, session, login, name, avatar, cmd, cols, rows, endedAt }));
+  const stoppedViews = teamId => (stopped.get(teamId) || []).map(({ id, session, login, name, avatar, cmd, cols, rows, endedAt, prompt, touched, local }) =>
+    ({ id, session, login, name, avatar, cmd, cols, rows, endedAt, prompt: prompt || '', touched: touched || [], local: local || [] }));
   const lanes = new Map();    // id -> { id, team, login, name, avatar, session, cmd, root, repo, branch, cols, rows, open, status, lastActive, files: Set, history, hookSecret, ws }
   const watchers = new Set(); // app windows: ws.team, ws.login, ws.user, ws.session
   const teamLanes = teamId => [...lanes.values()].filter(l => l.team === teamId);
@@ -480,14 +481,25 @@ function startHub({ port = 7681, host = '0.0.0.0', dataDir, owners, tls, passIss
   // Within the limits a git report has, since every teammate's state and agent context carries these.
   const recordEdit = (lane, rel) => { if (rel.length <= 300 && lane.files.size < MAX_CHANGED) lane.files.add(rel); };
 
-  // A JSON reply steers the agent; an empty one lets it continue.
+  // A path an agent named, relative to its checkout, or null for one outside it (not its file).
+  const relOf = (lane, ev, file) => {
+    const full = path.resolve(ev.cwd || lane.root, String(file));
+    const root = lane.roots.find(r => full === r || full.startsWith(r + path.sep)) || lane.root;
+    const relative = path.relative(root, full);
+    return relative && !relative.startsWith('..') && !path.isAbsolute(relative) ? relative : null;
+  };
+  // The files a Codex patch (apply_patch) touches: it names each on a line of its own.
+  const patchFiles = text => [...String(text || '').matchAll(/^\*\*\* (?:(?:Update|Add|Delete) File|Move to): (.+)$/gm)].map(m => m[1].trim()).slice(0, 50);
+  const shellOf = command => (Array.isArray(command) ? command.join(' ') : String(command ?? ''));
+
+  // A JSON reply steers the agent; an empty one lets it continue. Claude Code and Codex send the same events.
   function onHook(lane, ev) {
-    const file = ev.tool_input?.file_path || ev.tool_input?.notebook_path;
-    const full = file && path.resolve(ev.cwd || lane.root, file);
-    const root = full && (lane.roots.find(r => full === r || full.startsWith(r + path.sep)) || lane.root);
-    const relative = full && path.relative(root, full);
-    const rel = relative && !relative.startsWith('..') && !path.isAbsolute(relative) ? relative : null; // outside the checkout: not its file
+    const named = ev.tool_input?.file_path || ev.tool_input?.notebook_path;
+    const patched = ev.tool_name === 'apply_patch' ? patchFiles(ev.tool_input?.command) : [];
+    const rels = [...(named ? [named] : []), ...patched].map(f => relOf(lane, ev, f)).filter(Boolean);
+    const editing = EDIT_TOOLS.includes(ev.tool_name) || ev.tool_name === 'apply_patch';
     lane.lastActive = new Date().toISOString();
+    lane.hooked = true; // its status comes from its hooks from now on, not from its own guesses (Codex)
     switch (ev.hook_event_name) {
       case 'UserPromptSubmit': {
         lane.status = 'working';
@@ -497,30 +509,33 @@ function startHub({ port = 7681, host = '0.0.0.0', dataDir, owners, tls, passIss
       }
       case 'PreToolUse': {
         lane.status = 'working'; // also after a permission was answered: the agent has gone on to its next tool
-        if (ev.tool_name === 'Bash') {
-          const command = String(ev.tool_input?.command || '');
+        if (ev.tool_name === 'Bash' || ev.tool_name === 'exec_command') {
+          const command = shellOf(ev.tool_input?.command ?? ev.tool_input?.cmd);
           const reason = pushRisk(lane, command) || shellWriteRisk(lane, command, ev.cwd);
           return reason && { hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'ask', permissionDecisionReason: `Protoplasma: ${reason}` } };
         }
-        // Attach the file's team notes, and require confirmation if a teammate's agent already edited it.
-        if (!rel) return null;
-        const pinned = notesFor(lane, rel);
-        const others = EDIT_TOOLS.includes(ev.tool_name) ? othersOn(lane, rel) : [];
-        // An edit counts from here, so agents needn't send PostToolUse, which carries every tool's whole output. Not when
-        // a person is asked first: they may say no (one they allow shows in the agent's next git report, as does any
-        // edit refused later that isn't there).
-        if (EDIT_TOOLS.includes(ev.tool_name) && !others.length) recordEdit(lane, rel);
-        if (!pinned.length && !others.length) return null;
+        // Attach each file's team notes, and require confirmation if a teammate's agent already edited one.
+        const context = [], asks = [];
+        for (const rel of rels) {
+          const pinned = notesFor(lane, rel), others = editing ? othersOn(lane, rel) : [];
+          // An edit counts from here, so agents needn't send PostToolUse, which carries every tool's whole output. Not
+          // when a person is asked first: they may say no (one they allow shows in the agent's next git report, as does
+          // any edit refused later that isn't there).
+          if (editing && !others.length) recordEdit(lane, rel);
+          if (pinned.length) context.push(`Team notes about ${rel} (from Protoplasma):\n${notes(pinned)}`);
+          if (others.length) asks.push(`${whoOn(lane, others)} already edited ${rel}.`);
+        }
+        if (!context.length && !asks.length) return null;
         const out = { hookEventName: 'PreToolUse' };
-        if (pinned.length) out.additionalContext = `Team notes about ${rel} (from Protoplasma):\n${notes(pinned)}`;
-        if (others.length) {
-          Object.assign(out, { permissionDecision: 'ask', permissionDecisionReason: `Protoplasma: ${whoOn(lane, others)} already edited ${rel}. Coordinate before changing it.` });
+        if (context.length) out.additionalContext = context.join('\n\n');
+        if (asks.length) {
+          Object.assign(out, { permissionDecision: 'ask', permissionDecisionReason: `Protoplasma: ${asks.join(' ')} Coordinate before changing ${asks.length === 1 ? 'it' : 'them'}.` });
         }
         return { hookSpecificOutput: out };
       }
       case 'PostToolUse': // from apps before 0.5.3, which still send it
         lane.status = 'working';
-        if (rel && EDIT_TOOLS.includes(ev.tool_name)) recordEdit(lane, rel);
+        if (editing) rels.forEach(rel => recordEdit(lane, rel));
         return null;
       case 'PermissionRequest': lane.status = 'needs you'; return null;
       case 'Stop': lane.status = 'idle'; return null;
@@ -549,10 +564,10 @@ function startHub({ port = 7681, host = '0.0.0.0', dataDir, owners, tls, passIss
     // No real id or session name is this long (names are capped at 60 where they're made). A long one is only ever an
     // attempt to make slug()/findSession churn on the single-threaded hub, so it's refused before any of that runs.
     if (parts.some(p => p.length > 200)) return json(404, { error: 'Not found.' });
-    if (rest.length || (leaf && !(sub === 'sessions' && ['comments', 'steps'].includes(leaf)))) return json(404, { error: 'Not found.' });
+    if (rest.length || (leaf && !(sub === 'sessions' && ['comments', 'steps', 'handoff'].includes(leaf)))) return json(404, { error: 'Not found.' });
     if (!resource && req.method === 'GET') return json(200, { app: 'protoplasma-hub' });
 
-    // Hook events from Claude Code, authenticated with the lane's own secret.
+    // Hook events from Claude Code and Codex, authenticated with the lane's own secret.
     if (resource === 'hooks' && id && !sub && req.method === 'POST') {
       const lane = lanes.get(id);
       if (!lane || !secretMatches(bearer(req), lane.hookSecret)) return json(401);
@@ -627,7 +642,9 @@ function startHub({ port = 7681, host = '0.0.0.0', dataDir, owners, tls, passIss
         const file = str(body.file, 300).trim().replace(/^\.?\//, '');
         if (!text) return json(400, { error: 'Write the note first.' });
         if (team.memories.length >= MAX_MEMORIES) return json(400, { error: `A team can keep ${MAX_MEMORIES} notes. Remove some first.` });
-        const memory = { id: crypto.randomBytes(6).toString('base64url'), text, file, repo: str(body.repo, 200).trim(), author: user.login, at: new Date().toISOString() };
+        // hash: what the file held when the note was written (files.js fileHash), so apps can say when it's changed since.
+        const hash = file && /^[\w-]{1,32}$/.test(body.hash) ? body.hash : undefined;
+        const memory = { id: crypto.randomBytes(6).toString('base64url'), text, file, repo: str(body.repo, 200).trim(), author: user.login, at: new Date().toISOString(), ...(hash && { hash }) };
         team.memories.push(memory);
       } else if (subId && req.method === 'DELETE') {
         const memory = team.memories.find(m => m.id === subId);
@@ -684,6 +701,25 @@ function startHub({ port = 7681, host = '0.0.0.0', dataDir, owners, tls, passIss
           if (typeof body.owner === 'string') step.owner = str(body.owner, 40).replace(/^@/, '');
         } else if (step && req.method === 'DELETE') {
           session.steps = session.steps.filter(s => s !== step);
+        } else return json(404, { error: 'Not found.' });
+        saveTeams();
+        broadcastState(team.id);
+        return json(200, team.sessions);
+      }
+      // Handing a session's work to someone on the team. It shows in their alerts until they start an agent in it, or
+      // whoever handed it, they or the owner clears it.
+      if (leaf === 'handoff' && !leafId) {
+        const session = findSession(team, subId);
+        if (!session) return json(404, { error: 'No such session.' });
+        if (req.method === 'POST') {
+          const to = str(body.to, 40).replace(/^@/, '');
+          if (!hasLogin(team, to) || same(to, user.login)) return json(400, { error: 'Hand it to someone else on the team.' });
+          session.handoff = { from: user.login, to, at: new Date().toISOString() };
+        } else if (req.method === 'DELETE') {
+          if (session.handoff && ![session.handoff.from, session.handoff.to, team.owner].some(x => same(x, user.login))) {
+            return json(403, { error: 'Only the people it was handed between, or the team owner, can clear a hand-off.' });
+          }
+          delete session.handoff;
         } else return json(404, { error: 'Not found.' });
         saveTeams();
         broadcastState(team.id);
@@ -810,9 +846,12 @@ function startHub({ port = 7681, host = '0.0.0.0', dataDir, owners, tls, passIss
     // One per checkout: the same path on two of someone's Macs is two checkouts.
     lane.tree = crypto.createHash('sha256').update(`${lane.login}\n${str(hello.machine, 64)}\n${lane.root}`).digest('hex').slice(0, 12);
     // Back after a dropped connection: it's still doing what it was (its next hook or report updates it).
-    if (before) Object.assign(lane, { status: before.status || lane.status, prompt: before.prompt, typedBy: before.typedBy, typedAt: before.typedAt,
+    if (before) Object.assign(lane, { status: before.status || lane.status, prompt: before.prompt, typedBy: before.typedBy, typedAt: before.typedAt, hooked: before.hooked,
       files: new Set([...(before.files || [])].filter(f => lane.changed.has(f))) });
     lanes.set(lane.id, lane);
+    // Someone handed this session to whoever just started an agent in it: they've picked it up.
+    const record = findSession(team, lane.session);
+    if (record?.handoff && same(record.handoff.to, user.login)) { delete record.handoff; saveTeams(); }
     stopped.set(team.id, (stopped.get(team.id) || []).filter(s => s.id !== lane.id)); // it reconnected
     const session = ensureSession(team, lane.session, user.login);
     lane.session = session.name; // a differently written name joins the existing session
@@ -843,7 +882,7 @@ function startHub({ port = 7681, host = '0.0.0.0', dataDir, owners, tls, passIss
         lane.branch = str(m.branch, 100) || lane.branch;
         lane.mainBranch = str(m.mainBranch, 100) || lane.mainBranch;
         broadcastState(team.id);
-      } else if (m?.t === 'status' && ['needs you', 'idle', 'working'].includes(m.status)) { // trust prompts, and agents without hooks
+      } else if (m?.t === 'status' && !lane.hooked && ['needs you', 'idle', 'working'].includes(m.status)) { // trust prompts, and agents without hooks
         lane.status = m.status;
         lane.lastActive = new Date().toISOString();
         broadcastState(team.id);
@@ -854,7 +893,9 @@ function startHub({ port = 7681, host = '0.0.0.0', dataDir, owners, tls, passIss
       if (lanes.get(lane.id) !== lane) return;
       lanes.delete(lane.id);
       const { id, session, login, name, avatar, cmd, cols, rows, history, startedAt, status, prompt, typedBy, typedAt, files } = lane;
-      const list = [{ id, session, login, name, avatar, cmd, cols, rows, history, endedAt: new Date().toISOString(), startedAt, status, prompt, typedBy, typedAt, files: [...files] },
+      // touched and local: what it changed and hadn't pushed, for whoever continues its work.
+      const list = [{ id, session, login, name, avatar, cmd, cols, rows, history, endedAt: new Date().toISOString(), startedAt, status, prompt, typedBy, typedAt, files: [...files],
+        touched: [...filesOf(lane)], local: [...lane.local] },
         ...(stopped.get(team.id) || []).filter(s => s.id !== id)];
       stopped.set(team.id, list.slice(0, MAX_STOPPED));
       broadcastState(team.id);

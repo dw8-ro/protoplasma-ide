@@ -269,4 +269,16 @@ function watch(root, onChange) {
 /** Where `root` sits in its repo ('' at the top, or outside git): agents report paths from the repo's top. */
 const prefixOf = (root, env) => git(root, ['rev-parse', '--show-prefix'], env).then(p => p.trim(), () => '');
 
-module.exports = { list, status, read, committed, write, search, pull, commitAndPush, watch, inside, prefixOf };
+/**
+ * What a file (a path from the repo's top, as notes keep it) holds now, as a short hash, or '' when it isn't in this
+ * folder. A note on a file keeps the hash it was written against, so the code view can say the file has changed since.
+ */
+async function fileHash(root, file, env) {
+  const prefix = await prefixOf(root, env), rel = !prefix ? file : file.startsWith(prefix) ? file.slice(prefix.length) : null;
+  try {
+    const full = rel && inside(root, rel);
+    return full && fs.statSync(full).size <= 20e6 ? require('crypto').createHash('sha256').update(fs.readFileSync(full)).digest('base64url').slice(0, 16) : '';
+  } catch { return ''; }
+}
+
+module.exports = { list, status, read, committed, write, search, pull, commitAndPush, watch, inside, prefixOf, fileHash };

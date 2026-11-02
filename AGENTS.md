@@ -19,7 +19,7 @@ Function names below are stable. Line numbers drift, so search by name.
 |---|---|---|
 | `npm install` | Installs dependencies (postinstall makes node-pty's `spawn-helper` executable) | Node 24 |
 | `npm start` | Runs the app from source. Updates are off in source runs. | |
-| `npm test` | 98 integration tests in `test/*.test.js`: real hub, real lanes, real git. About a minute. | git ≥ 2.28, macOS. No network or Electron needed. |
+| `npm test` | 105 integration tests in `test/*.test.js`: real hub, real lanes, real git. About a minute. | git ≥ 2.28, macOS. No network or Electron needed. |
 | `npm run e2e` | Drives the real Electron app through every main flow and prints `PASS`/`FAIL` per step, ending with `N/M passed`. 15-minute cap. | The `claude` CLI on the login-shell PATH and a GUI session. One step needs `gh auth status` to succeed (online). |
 | `npm run dist` | Packages `dist.noindex/Protoplasma-darwin-arm64/Protoplasma.app`, unsigned. | |
 | `npm run playground` | Two app copies (David on port 7801, Max on 7802) on a local hub and repo, each with an HTTP control API | |
@@ -64,7 +64,7 @@ app/index.html    CSP, all CSS (tokens and themes), icon sprite, all markup and 
 app/config.json   githubClientId (OAuth app, device flow), onlineHub (the Railway URL)
 scripts/          e2e.js, playground.js + playground-app.js, stage.js, screenshot.js, demo.js + gif.js, readme-art.js +
                   readme-art/ (the README image pages and diagram), sign.sh, icon.js
-test/             hub.test.js (40), hub-live.test.js (13), workspace.test.js (13), files.test.js (12), lan.test.js (10),
+test/             hub.test.js (44), hub-live.test.js (13), workspace.test.js (13), files.test.js (13), lan.test.js (12),
                   identity.test.js (4), updates.test.js (6)
 .github/workflows ci.yml (npm test on every push to main and PR), package.yml (dist check), release.yml (tag → release)
 Dockerfile        the hosted hub image (only src/hub.js + src/shared.js + ws)
@@ -165,14 +165,17 @@ docs/             screenshots (sources), readme/ (the README's images, dark and 
 - **Hooks:** `POST /hooks/:laneId` with `Authorization: Bearer <hookSecret>`, compared timing-safe. `onHook` handles:
   - **UserPromptSubmit:** sets the lane to working and adds `teamContext`: the session goal, plan, other agents and their
     files, notes, and a behind warning.
-  - **PreToolUse:** sets the lane to working (so it recovers after a permission). Bash: `pushRisk` or `shellWriteRisk`
-    → `ask`. Another tool: adds the file's notes; for edit tools (`EDIT_TOOLS`), records the edit (`recordEdit`: 300
-    characters, 200 files at most) and asks when `othersOn` the file.
+  - **PreToolUse:** sets the lane to working (so it recovers after a permission). Bash (and Codex's `exec_command`):
+    `pushRisk` or `shellWriteRisk` → `ask`. Another tool: adds each file's notes; for edit tools (`EDIT_TOOLS`, and
+    Codex's `apply_patch`, whose files `patchFiles` reads from the patch text), records the edit (`recordEdit`: 300
+    characters, 200 files at most) and asks when `othersOn` a file.
   - **PostToolUse:** only from apps before 0.5.3, which still register it: records the edit. New agents don't send it,
     because it carries every tool's whole output (files read, command output, MCP results).
   - **PermissionRequest:** sets the lane to "needs you". **Stop:** sets it to idle.
 
-  Claude Code's hook timeout is 3 s, so hook answers must stay fast. If the hook fails, Claude Code carries on.
+  Every hook sets `lane.hooked`. Claude Code and Codex send the same events and fields.
+  Claude Code's hook timeout is 3 s (Codex's curl has the same), so hook answers must stay fast. If the hook fails, the
+  agent carries on.
 - **Push guard** (`pushRisk` → `pushRiskOf`): a word heuristic, not a shell parser.
   - `partsOf` splits on `; | &` and line ends outside quotes, and drops `#` comments and heredoc bodies.
   - `commandsIn` also looks inside `-c`/`eval`/`ssh` quotes, `$(…)` and backticks, reading only the first 20,000
@@ -192,12 +195,19 @@ docs/             screenshots (sources), readme/ (the README's images, dark and 
   - `GET /` (health check).
   - `/teams`, `/teams/:id`, `/teams/:id/members[/:login]`, `/teams/:id/memories[/:id]`.
   - `/teams/:id/sessions[/:name]` (create, done, rename, delete).
-  - `…/sessions/:name/comments[/:id]` and `…/sessions/:name/steps[/:id]`.
+  - `…/sessions/:name/comments[/:id]`, `…/sessions/:name/steps[/:id]`, and `…/sessions/:name/handoff` (POST `{to}` hands
+    the session to someone on the team, as `session.handoff = {from, to, at}`; DELETE clears it, by either of them or the
+    owner; `onLane` clears it when `to` starts an agent in that session).
 
   Errors are `{error}` with status 400, 401, 403, 404, 409, 413, 503 or 500.
 - **Sessions:** `findSession` matches the exact name, then `slug(name)`, the stored `key`, or an alias. A renamed session
   keeps `key` (the original slug), so its branch and folders don't move, and its old names go into `aliases` (at most
   50). Creating a session whose name matches an existing one joins it.
+- **Notes:** a note pinned to a file may carry `hash` (16 base64url characters from files.js `fileHash`: what the file
+  held when it was written). Apps compare it with their own copy to show **File changed since**; the hub never reads
+  files.
+- **Stopped agents** keep `prompt`, `touched` (`filesOf`) and `local` (not pushed) for **Continue**; `stoppedViews()`
+  sends them.
 - **Standalone and Docker:** the env vars are `PORT`, `HOST`, `DATA_DIR` and `PROTO_OWNERS` (comma-separated; blank means
   anyone). The Dockerfile copies only `src/hub.js` and `src/shared.js` and installs only `ws`.
 
@@ -223,12 +233,17 @@ docs/             screenshots (sources), readme/ (the README's images, dark and 
   - For `claude`, adds `--settings` with HTTP hooks (`claudeHookSettings`: UserPromptSubmit, PreToolUse
     `Read|Bash|EDIT_TOOLS`, PermissionRequest and Stop, with a 3 s timeout; never PostToolUse). They go to `hookBase` when
     given, else to the hub.
-  - main.js always passes `hookBase` = teams.js `hookRelay`, a loopback http server that forwards `POST /hooks/:id` to
+  - For `codex`, adds `-c hooks={…}` (`codexHookSettings`, Codex's "session flags" layer): the same four events, each
+    running one fixed command (`CODEX_HOOK`) that `curl`s the hook to `$PROTO_HOOK_URL` with `$PROTO_HOOK_SECRET`, both
+    set in its env. Codex runs commands, not http hooks, and trusts a hook by its hash, so the command must never change
+    per run: the person approves it once on Codex's "Hooks need review" screen. PreToolUse matches
+    `Bash|exec_command|apply_patch` (`apply_patch` is Codex's edit tool).
+  - main.js always passes `hookBase` (for claude and codex) = teams.js `hookRelay`, a loopback http server that forwards `POST /hooks/:id` to
     the agent's hub and passes back only `safeHookReply`'s part of the answer. Claude Code would also take an allow, a
     deny, a block or a rewritten tool input from a hook, so a hub's operator (a team owner's Mac, or whoever took over
     the online hub) could run commands through it. A hub on a Mac is pinned to its certificate, which Claude Code
     couldn't check itself; the online hub's certificate is checked as usual. It adds no credentials.
-  - Sets `PROTO_HOOK_SECRET` in the agent's env, except for `NO_HOOKS` CLIs (codex, opencode).
+  - Sets `PROTO_HOOK_SECRET` in the agent's env, except for `NO_HOOKS` CLIs (opencode).
   - Signs in with `token`, or with `credentials()`, asked before each connection: `{token, ca}`, where `ca` pins a hub on a
     Mac to its certificate. The app passes `teams.access`, so a pass is renewed in time. If `credentials` fails, the
     lane reports it through `onRefused` and tries again every 30 s.
@@ -238,8 +253,10 @@ docs/             screenshots (sources), readme/ (the README's images, dark and 
   - `roots` lists the repo root both as git reports it (symlinks resolved) and as seen from the working folder.
 - **Messages:** `out` is batched every 16 ms; `size`; `git` only when it changed; `status`.
 - **Status:** "needs you" while the folder-trust prompt shows (`TRUST_PROMPT` plus its answers in `ANSWERS`, within the
-  last 400 characters: Yes and No for Claude Code, "Trust and continue" for Codex). For codex and opencode, working or idle is guessed from output: output more than 400 ms after
-  input means working, and 3 s of quiet means idle. Input clears "needs you", but the terminal's own escape-sequence
+  last 400 characters: Yes and No for Claude Code, "Trust and continue" for Codex), and while Codex's "Hooks need review"
+  shows ("Trust all and continue"). For codex and opencode, working or idle is guessed from output: output more than
+  400 ms after input means working, and 3 s of quiet means idle. Once a lane's hooks arrive, the hub sets `lane.hooked`
+  and ignores the lane's own `status` messages (Codex with trusted hooks). Input clears "needs you", but the terminal's own escape-sequence
   replies don't count.
 - **Connection:**
   - Pings every 20 s and terminates a socket that missed a pong.
@@ -305,6 +322,9 @@ docs/             screenshots (sources), readme/ (the README's images, dark and 
   - Sets `PROTO_SHARED_TEAM=1` for codex/opencode on a team with members.
   - Returns a `notice` when a codex/opencode agent on a team with members has no pre-push guard: an app-made clone
     whose repo has its own hooks, or a folder the user picked (the app never installs the guard there).
+  - With `prompt` (and no `resume`), passes it as the CLI's first message (`firstPrompt`/`FIRST_PROMPT`: an argument, or
+    `--prompt` for OpenCode, never through a shell; capped at 12,000 characters, a leading dash kept from reading as an
+    option).
   - Returns `{id, repo, notice}`.
 - **The IPC rule:** every `proto.x` in preload.js has a matching main handler. `invoke` pairs with `ipcMain.handle` and
   `send` with `ipcMain.on`. Wrap a handler in `signedIn(…)` if it needs the session, and in `inFolder(…)` if it takes a
@@ -368,6 +388,8 @@ docs/             screenshots (sources), readme/ (the README's images, dark and 
   - **Reads and writes** are confined to the folder. `inside()` compares real paths against `base + path.sep`, so
     symlinks and sibling folders like `david-evil` are refused. `within()` is the name-only check for git paths.
   - **`read`** returns one of `{text}`, `{gone}`, `{outside}`, `{binary}`, `{tooBig}` (over 2 MB) or `{notUtf8}`.
+  - **`fileHash`** (a repo-top path, `code:hash`): a short sha256 of the file through `inside()`, or '' when it isn't in
+    this folder.
   - **`status`** returns `prefix`, the folder's place in its repo. Teammates' paths are from the repo top, so code.js and
     `code:readLane` add or strip it.
   - **`commitAndPush`:**
@@ -404,6 +426,13 @@ docs/             screenshots (sources), readme/ (the README's images, dark and 
   - Only on-screen terminals get WebGL; a page gets about 16 contexts.
   - Teammates' terminals keep the owner's columns and rows, and `fitFont` scales the font, down to 6 px.
   - A teammate terminal sends input only while focused, and never xterm's automatic replies.
+- **Work between people:** **Continue** (`continueMenu`, on a teammate's agent or its stopped screen) starts your agent in
+  the session with `briefFrom`: their last prompt, changed and unpushed files, and the end of their screen
+  (`screenText`), labelled as background from their agent, since it's teammate text in your agent's prompt (the same
+  accepted prompt-injection risk as notes and goals). **Hand off** (`handOffMenu`) sets the session's `handoff`;
+  `renderAlerts` shows it to that person for a day. **Ask my agent** on a comment (`askMenu`, `commentPrompt`) pastes
+  it into one of your agents in the session (bracketed paste, then Enter) or starts one with it. `checkNotes` compares
+  pinned notes' hashes with this Mac's copy at most every 5 s, while Memory is open.
 - **Sharing files:** `answerFile` replies only for this Mac's own live lane, only with **Share the files your agents
   change** on, and only for files in `lane.files`. The renderer enforces the share setting; main's `code:readLane` then
   checks the file against the agent's own last git report (`lane.changed()`), since `lane.files` comes from the hub.
@@ -448,7 +477,8 @@ docs/             screenshots (sources), readme/ (the README's images, dark and 
   `v<version>`.
 - **Bundle id:** `com.electron.protoplasma` (packager's default). Never change it, because sameSigner and macOS identity
   rely on it.
-- **Agent lists:** `AGENTS` and `RESUME` in main.js, `NO_HOOKS` in lane.js, and the renderer's agent pickers.
+- **Agent lists:** `AGENTS`, `RESUME` and `FIRST_PROMPT` in main.js, `NO_HOOKS` in lane.js, and the renderer's agent
+  pickers (`agentMenu`, `continueMenu`, `askMenu`).
 - **Dependencies:** `allowScripts` in package.json records the Electron and node-pty versions whose install scripts the
   app needs (Electron's binary download, node-pty's prebuild; the root `postinstall` then marks `spawn-helper`
   executable). **It is not enforced:** there's no `@lavamoat/allow-scripts` or `.npmrc`, so `npm install`/`npm ci` run
@@ -466,9 +496,11 @@ docs/             screenshots (sources), readme/ (the README's images, dark and 
 ## Security boundaries
 - **Hooks:** a hook is authenticated only by the per-lane secret, never a GitHub token. `hookSecret`, `root`, `roots`
   and `history` must never appear in `state`. The hook relay (teams.js `hookRelay`) listens on 127.0.0.1 only and
-  passes the hook's own Authorization header through; it must never add a token or pass. Every Claude agent's hooks go
-  through it, and a hub's answer may only add context or ask the person (`safeHookReply`): never allow, deny, block,
-  stop or change a tool call. A new hook answer in the hub needs adding there too.
+  passes the hook's own Authorization header through; it must never add a token or pass. Every Claude and Codex agent's
+  hooks go through it, and a hub's answer may only add context or ask the person (`safeHookReply`): never allow, deny,
+  block, stop or change a tool call. A new hook answer in the hub needs adding there too. Codex can't ask, so the relay
+  itself turns an ask into one refusal, after which the same step within 10 minutes goes through (`codexReply`); the
+  refusal is the app's, from an ask, never a hub's.
 - **Typing in:** remote input only goes to lanes started with `open`, on the watcher's own team. lane.js also drops
   `in` itself unless it was started open, whatever a hub sends.
 - **Lane ids:** an id held by one login, live or stopped, can't be claimed by another. An `h-` id is made from its
@@ -545,13 +577,14 @@ docs/             screenshots (sources), readme/ (the README's images, dark and 
      stopped record in `onLane`'s close handler and to `stoppedViews()`, which picks a fixed set of fields.
   3. Send it from lane.js.
 - **Add an agent CLI:**
-  - Add it to `AGENTS` and `RESUME` (main.js), to `NO_HOOKS` (lane.js), to renderer.js `agentName`, and to the Settings
+  - Add it to `AGENTS`, `RESUME` and `FIRST_PROMPT` (main.js), to `NO_HOOKS` (lane.js), to renderer.js `agentName`, and to the Settings
     agent radios in index.html.
-  - Hooks are wired only for the command named `claude`. A CLI left out of `NO_HOOKS` gets `PROTO_HOOK_SECRET` but no
-    status at all, and stays "running". Keep it in `NO_HOOKS` unless you also add hook settings like
-    `claudeHookSettings`.
-  - Check the hard-coded `'claude'` tests in main.js `startLane` (shared-team push guard), lane.js `startLane` (hook
-    settings) and hub.js `onLane` (initial status).
+  - Hooks are wired only for the commands named `claude` and `codex`. A CLI left out of `NO_HOOKS` gets
+    `PROTO_HOOK_SECRET`; keep it in `NO_HOOKS` unless you also add hook settings like `claudeHookSettings` or
+    `codexHookSettings`. A CLI whose hooks might not run (Codex, until trusted) should keep guessing its status from
+    output (`byActivity`); the hub ignores those guesses once a hook arrives.
+  - Check the hard-coded `'claude'`/`'codex'` tests in main.js `startLane` (shared-team push guard, `hookBase`), lane.js
+    `startLane` (hook settings, `byActivity`), teams.js `hookRelay` (`codexReply`) and hub.js `onLane` (initial status).
 - **Add an IPC call:** add it to preload.js (`invoke` or `send`), add the matching main handler (`signedIn`, `inFolder`,
   coerced arguments), and call it as `proto.x(...)` with failures shown via `errorText(e)`.
 - **Add a preference:** add a default to `DEFAULT_PREFS`, and an input with `data-pref="key"` in the Settings markup. It

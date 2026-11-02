@@ -367,6 +367,43 @@ test('a session has a plan its agents are told about, and comments can point at 
   assert.deepEqual([comment.file, comment.line, comment.endLine, comment.snippet], ['src/join.ts', 9, 13, 'for (let n = 0']);
 });
 
+test('a session can be handed to a teammate, who picks it up by starting an agent in it', async () => {
+  const handoff = `/teams/${team.id}/sessions/s1/handoff`;
+  assert.equal((await api('tok-alice', 'POST', handoff, { to: 'alice' })).status, 400, 'not to yourself');
+  assert.equal((await api('tok-alice', 'POST', handoff, { to: 'nobody' })).status, 400, 'only to someone on the team');
+  assert.equal((await api('tok-carol', 'POST', handoff, { to: 'bob' })).status, 404, 'not by someone off the team (who can\'t see it)');
+  const handed = (await api('tok-alice', 'POST', handoff, { to: '@bob' })).body.find(x => x.name === 's1').handoff;
+  assert.deepEqual([handed.from, handed.to], ['alice', 'bob']);
+  let last;
+  const track = raw => { const m = JSON.parse(raw); if (m.t === 'state') last = m; };
+  watcher.on('message', track);
+  const picked = await rawLane('picks-up', { token: 'tok-bob', session: 's1', repo: 'acme/app' });
+  watcher.off('message', track);
+  assert.equal(last.sessions.find(x => x.name === 's1').handoff, undefined, 'starting an agent there picked it up');
+  // What a stopped agent was doing stays with it, for whoever continues its work.
+  picked.socket.send(JSON.stringify({ t: 'git', branch: 'session/s1', added: 1, removed: 0, files: 1, behind: 0, ahead: 0, changed: ['src/pick.ts'], local: ['src/pick.ts'] }));
+  await nextState(lanes => lanes.find(l => l.id === 'picks-up')?.files.includes('src/pick.ts'));
+  watcher.on('message', track);
+  await picked.close();
+  watcher.off('message', track);
+  const stoppedOne = last.stopped.find(s => s.id === 'picks-up');
+  assert.deepEqual([stoppedOne.touched, stoppedOne.local, stoppedOne.prompt], [['src/pick.ts'], ['src/pick.ts'], '']);
+  await api('tok-alice', 'POST', handoff, { to: 'bob' });
+  assert.equal((await api('tok-bob', 'DELETE', handoff)).status, 200, 'whoever it was handed to can clear it');
+});
+
+test('a note pinned to a file keeps what the file held, for telling when it changes', async () => {
+  const route = `/teams/${team.id}/memories`;
+  const add = async note => (await api('tok-alice', 'POST', route, { repo: 'acme/hash', ...note })).body.at(-1);
+  const kept = await add({ text: 'Uses the v2 schema', file: 'src/db.ts', hash: 'abcDEF123_-xyz00' });
+  assert.equal(kept.hash, 'abcDEF123_-xyz00');
+  const odd = await add({ text: 'An odd hash', file: 'src/db.ts', hash: '<img src=x>' });
+  assert.equal(odd.hash, undefined, 'only a hash-shaped value');
+  const whole = await add({ text: 'For the whole repo', hash: 'abc' });
+  assert.equal(whole.hash, undefined, 'only for a note on a file');
+  for (const note of [kept, odd, whole]) await api('tok-alice', 'DELETE', `${route}/${note.id}`);
+});
+
 test('a teammate\'s file is passed between apps only by its owner\'s', async () => {
   const nextMessage = (ws, match) => new Promise(resolve => ws.on('message', function on(raw) {
     const m = JSON.parse(raw);
@@ -494,6 +531,41 @@ test('agents without hooks report working and idle themselves', async () => {
   await lane.close();
 });
 
+test('Codex\'s hooks: its patches and shell are checked like Claude Code\'s edits, and its status comes from them', async () => {
+  const max = await rawLane('codex-max', { cmd: 'claude', repo: 'acme/patch', root: '/max', branch: 'session/a' });
+  const mine = await rawLane('codex-mine', { cmd: 'codex', repo: 'acme/patch', root: '/mine', branch: 'session/b' });
+  max.socket.send(JSON.stringify({ t: 'git', branch: 'session/a', added: 1, removed: 0, files: 1, behind: 0, ahead: 0, changed: ['src/store.ts'] }));
+  await nextState(lanes => lanes.find(l => l.id === 'codex-max')?.files.includes('src/store.ts'));
+  const patch = files => ['*** Begin Patch', ...files, '@@', '-a', '+b', '*** End Patch'].join('\n');
+  const apply = command => mine.hook({ hook_event_name: 'PreToolUse', tool_name: 'apply_patch', tool_input: { command }, cwd: '/mine' });
+  assert.equal(await apply(patch(['*** Update File: src/other.ts'])), null, 'a file nobody else changed');
+  const asked = await apply(patch(['*** Add File: src/new.ts', '*** Update File: src/store.ts', '*** Move to: src/store2.ts']));
+  assert.equal(asked?.permissionDecision, 'ask');
+  assert.match(asked.permissionDecisionReason, /already edited src\/store\.ts\. Coordinate before changing it\./);
+  const recorded = nextState(lanes => lanes.find(l => l.id === 'codex-mine')?.files.includes('src/new.ts'));
+  mine.socket.send(JSON.stringify({ t: 'size', cols: 100, rows: 30 })); // any change, to see the next state
+  assert.ok((await recorded).find(l => l.id === 'codex-mine').files.includes('src/other.ts'), 'its own edits count, like Claude Code\'s');
+  const shell = (tool_name, input) => mine.hook({ hook_event_name: 'PreToolUse', tool_name, tool_input: input, cwd: '/mine' });
+  assert.equal((await shell('Bash', { command: 'git push origin HEAD:main' }))?.permissionDecision, 'ask');
+  assert.equal((await shell('exec_command', { cmd: 'git push --force' }))?.permissionDecision, 'ask', 'its other shell too');
+  assert.equal(await shell('exec_command', { cmd: ['git', 'status'] }), null);
+  // Once hooks arrive they decide its status: its own guesses from its output no longer count.
+  const needs = nextState(lanes => lanes.find(l => l.id === 'codex-mine')?.status === 'needs you');
+  await mine.hook({ hook_event_name: 'PermissionRequest' });
+  await needs;
+  let guessed = false;
+  const track = raw => { const m = JSON.parse(raw); if (m.t === 'state' && m.lanes.find(l => l.id === 'codex-mine')?.status === 'idle') guessed = true; };
+  watcher.on('message', track);
+  mine.socket.send(JSON.stringify({ t: 'status', status: 'idle' }));
+  await sleep(300);
+  watcher.off('message', track);
+  assert.equal(guessed, false, 'a guess overrode its hooks');
+  const idle = nextState(lanes => lanes.find(l => l.id === 'codex-mine')?.status === 'idle');
+  await mine.hook({ hook_event_name: 'Stop' });
+  await idle;
+  await Promise.all([max.close(), mine.close()]);
+});
+
 test('an agent waiting on its folder trust prompt needs you until someone at its Mac answers', async () => {
   const asking = nextState(lanes => lanes.some(l => l.session === 'trust' && l.status === 'needs you'), 5000);
   const lane = startLaneHere({ hub: url, team: team.id, token: 'tok-alice', session: 'trust', cmd: 'sh', open: true,
@@ -524,6 +596,19 @@ test('Codex asking to trust its folder needs you too (its answers aren\'t Yes an
   // Codex 0.163's screen, as the lane sees it once escape sequences are gone (cursor moves leave no spaces).
   const lane = startLaneHere({ hub: url, team: team.id, token: 'tok-alice', session: 'codex-trust', cmd: 'sh',
     args: ['-c', 'printf "Folderaccess\\nTrustthisfolder?Codexcanread,edit,andrunfileshere.\\n› 1. Trust and continue\\n  2. Back to Agent Command Center\\n"; cat'] });
+  try {
+    await Promise.race([asking, sleep(5000).then(() => { throw new Error('never needed you'); })]);
+  } finally {
+    const gone = nextState(lanes => !lanes.some(l => l.id === lane.id));
+    lane.term.kill();
+    await gone;
+  }
+});
+
+test('Codex asking to trust Protoplasma\'s hooks needs you', async () => {
+  const asking = nextState(lanes => lanes.some(l => l.session === 'codex-hooks' && l.status === 'needs you'));
+  const lane = startLaneHere({ hub: url, team: team.id, token: 'tok-alice', session: 'codex-hooks', cmd: 'sh',
+    args: ['-c', 'printf "Hooksneedreview\\nHookscanrunoutsidethesandboxafteryoutrustthem.\\n› 1. Review hooks\\n  2. Trust all and continue\\n  3. Continue without trusting (hooks won\'t run)\\n"; cat'] });
   try {
     await Promise.race([asking, sleep(5000).then(() => { throw new Error('never needed you'); })]);
   } finally {

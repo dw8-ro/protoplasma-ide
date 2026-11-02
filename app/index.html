@@ -481,6 +481,8 @@
   .comment-ref .stop { position: static; }
   .comment-body .ref { display: block; padding: 0; border: 0; background: none; color: var(--muted); font: 11.5px var(--mono); text-align: left; cursor: pointer; }
   .comment-body .ref:hover { color: var(--text); text-decoration: underline; }
+  .comment-body .ref.ask { margin-top: 4px; font: 11.5px var(--ui); }
+  .memory-meta .changed { color: var(--overlap); }
   .comment-body code { display: block; margin: 2px 0; overflow: hidden; color: var(--faint); font: 11px var(--mono); white-space: nowrap; text-overflow: ellipsis; }
   .comment-glyph { margin-left: 5px; border-radius: 50%; background: var(--needs); width: 8px !important; height: 8px !important; margin-top: 6px; }
   .commented-line { background: color-mix(in srgb, var(--needs) 8%, transparent); }
@@ -804,7 +806,7 @@
       <div class="stage">
         <div id="dockTabs" class="dock-tabs" role="tablist" hidden><button data-dock="agent" class="on" role="tab">Agent</button><button data-dock="terminal" role="tab">Terminal</button></div>
         <div id="shellPane" class="shell" hidden></div>
-        <div id="backBar" class="back-bar" hidden><button id="backToAgents" class="btn small">Back to the agent</button><b id="stageTitle"></b></div>
+        <div id="backBar" class="back-bar" hidden><button id="backToAgents" class="btn small">Back to the agent</button><b id="stageTitle"></b><button id="continueReplay" class="btn small" hidden>Continue this work</button></div>
         <div id="lanes" class="lanes">
           <div id="empty" class="empty">
             <svg class="mark"><use href="#cell"/></svg>

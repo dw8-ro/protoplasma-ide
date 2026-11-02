@@ -16,16 +16,18 @@ const FLUSH_MS = 16; // TUIs redraw in many tiny writes; batch them into one mes
 const GIT_POLL_MS = 5000;
 const FETCH_EVERY = 12; // polls, so about once a minute
 const MAX_CHANGED = 200; // uncommitted paths reported to the hub
-// Codex and OpenCode have no hooks the hub can use, so their status comes from activity: output streaming means
-// working, and this long without output means idle. Output just after a keystroke is the echo, not work.
-const NO_HOOKS = ['codex', 'opencode'];
+// OpenCode has no hooks the hub can use. It, and Codex until its hooks are trusted, report status from activity:
+// output streaming means working, and this long without output means idle. Output just after a keystroke is the echo,
+// not work. Once Codex's hooks arrive, the hub goes by them instead.
+const NO_HOOKS = ['opencode'];
 const QUIET_MS = 3000;
 const ECHO_MS = 400;
-// A CLI asking whether to trust its folder (Claude Code and Codex do in every new session folder). No hook fires for it.
-// The question and its answers on screen together, so output that only mentions the phrase doesn't count: Yes and No
-// (Claude Code), or Codex's "Trust and continue" (its other answer is "Back to Agent Command Center").
-const TRUST_PROMPT = /trust\s*(?:this\s*folder|the\s*files\s*in\s*this\s*folder|the\s*contents\s*of\s*this\s*directory)/i;
-const ANSWERS = /\bYes\b[\s\S]*\bNo\b|\bNo\b[\s\S]*\bYes\b|Trust\s*and\s*continue/;
+// A CLI asking whether to trust its folder (Claude Code and Codex do in every new session folder), or Codex asking
+// whether to trust Protoplasma's hooks (the first time). No hook fires for either. The question and its answers on
+// screen together, so output that only mentions the phrase doesn't count: Yes and No (Claude Code), or Codex's
+// "Trust and continue" (its other answer is "Back to Agent Command Center") and "Trust all and continue".
+const TRUST_PROMPT = /trust\s*(?:this\s*folder|the\s*files\s*in\s*this\s*folder|the\s*contents\s*of\s*this\s*directory)|hooks\s*need\s*review/i;
+const ANSWERS = /\bYes\b[\s\S]*\bNo\b|\bNo\b[\s\S]*\bYes\b|Trust\s*(?:all\s*)?and\s*continue/;
 const stripAnsi = s => s.replace(/\x1b\[[0-?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b[@-Z\\-_]/g, '');
 
 // Per-run HTTP hooks for Claude Code. --settings merges with the user's own settings rather than replacing them.
@@ -41,6 +43,17 @@ function claudeHookSettings(url) {
     PermissionRequest: [{ hooks: [hook] }],
     Stop: [{ hooks: [hook] }],
   } });
+}
+
+// Codex's hooks for one run (`-c`, its "session flags" layer). Codex runs a command instead of calling an address, so
+// the command posts the hook to $PROTO_HOOK_URL with the lane's secret. The command never changes: Codex trusts a hook
+// by its hash, so the person approves it once. Outside Protoplasma, with no URL set, it does nothing.
+const CODEX_HOOK = '[ -z "$PROTO_HOOK_URL" ] || curl -s --max-time 3 -H "Authorization: Bearer $PROTO_HOOK_SECRET"'
+  + ' -H "content-type: application/json" --data-binary @- "$PROTO_HOOK_URL" || true';
+function codexHookSettings() {
+  // JSON strings are valid TOML strings. apply_patch is Codex's edit tool; exec_command is its other shell.
+  const group = matcher => `{${matcher ? `matcher=${JSON.stringify(matcher)},` : ''}hooks=[{type="command",command=${JSON.stringify(CODEX_HOOK)},timeout=5}]}`;
+  return `hooks={UserPromptSubmit=[${group()}],PreToolUse=[${group('Bash|exec_command|apply_patch')}],PermissionRequest=[${group()}],Stop=[${group()}]}`;
 }
 
 // Git run in the background doesn't run a folder's core.fsmonitor command, and only uses a bare repository it's pointed
@@ -161,14 +174,16 @@ function startLane({ hub, hookBase, team, token, credentials = () => ({ token })
   if (!installed(cmd, env)) throw new Error(`The "${cmd}" command isn't installed on this Mac. Install it, then start the agent again.`);
   const hookSecret = crypto.randomBytes(24).toString('hex');
   const id = laneIdOf(hookSecret);
-  if (path.basename(cmd) === 'claude') args = ['--settings', claudeHookSettings(`${hookBase || hub}/hooks/${id}`), ...args];
-  // TODO: hooks for Codex and OpenCode. Their lanes get terminal sharing but no overlap warnings yet.
+  const kind = path.basename(cmd), hookUrl = `${hookBase || hub}/hooks/${id}`;
+  if (kind === 'claude') args = ['--settings', claudeHookSettings(hookUrl), ...args];
+  if (kind === 'codex') args = ['-c', codexHookSettings(), ...args];
+  // TODO: hooks for OpenCode (a plugin). Its lanes get terminal sharing but no overlap warnings yet.
 
   let term;
   try {
     // The app's terminal (xterm.js) does 24-bit colour; saying so lets CLIs use their real colours.
-    // Codex and OpenCode have no hooks, so they (and whatever they run) don't get the hook secret.
-    const secret = NO_HOOKS.includes(path.basename(cmd)) ? {} : { PROTO_HOOK_SECRET: hookSecret };
+    // OpenCode has no hooks, so it (and whatever it runs) doesn't get the hook secret.
+    const secret = NO_HOOKS.includes(kind) ? {} : { PROTO_HOOK_SECRET: hookSecret, ...(kind === 'codex' && { PROTO_HOOK_URL: hookUrl }) };
     term = pty.spawn(cmd, args, { name: 'xterm-256color', cols, rows, cwd, env: { ...env, COLORTERM: 'truecolor', ...secret } });
   } catch {
     throw new Error(`Couldn't start "${cmd}". Is it installed and on your PATH?`);
@@ -177,7 +192,7 @@ function startLane({ hub, hookBase, team, token, credentials = () => ({ token })
   // Local scrollback, sent with every hello so a (re)started hub still gets the current screen.
   let ws, history = '', unsent = '', flushTimer = null, exited = false;
   let asking = false, recent = ''; // waiting on the trust prompt, and the latest output (plain text) to spot it in
-  const byActivity = NO_HOOKS.includes(path.basename(cmd));
+  const byActivity = kind !== 'claude'; // Codex too, until its hooks are trusted (the hub then ignores these)
   let activity = null, quiet = null, lastInput = 0;
   const report = status => { if (activity !== status) { activity = status; send({ t: 'status', status }); } };
   const root = git(cwd, 'rev-parse', '--show-toplevel') || cwd;

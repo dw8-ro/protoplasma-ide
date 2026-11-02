@@ -19,6 +19,10 @@ const pty = require('node-pty');
 const AGENTS = ['claude', 'codex', 'opencode'];
 // How each agent CLI picks up its most recent conversation in the folder it starts in.
 const RESUME = { claude: ['--continue'], codex: ['resume', '--last'], opencode: ['--continue'] };
+// How each CLI takes a first message: its own argument, never through a shell. A leading space keeps a message that
+// starts with a dash from being read as an option.
+const FIRST_PROMPT = { claude: p => [p], codex: p => [p], opencode: p => ['--prompt', p] };
+const firstPrompt = (cmd, text) => FIRST_PROMPT[cmd](String(text).slice(0, 12000).replace(/^-/, ' -'));
 const REPO_URL = 'https://github.com/dw8-ro/protoplasma-ide';
 const { onlineHub } = teams;
 
@@ -111,7 +115,7 @@ ipcMain.handle('teams:invite', signedIn(async (key, login) => {
   const notice = n ? `${n === 1 ? 'A Codex or OpenCode agent' : `${n} Codex or OpenCode agents`} you started while the team was just you ${n === 1 ? 'isn\'t' : 'aren\'t'} push-guarded, so ${n === 1 ? 'it' : 'they'} can still push to main. Restart ${n === 1 ? 'it' : 'them'} to turn the guard on.` : '';
   return { ...next, notice };
 }));
-ipcMain.handle('memories:add', signedIn((key, note) => teams.addMemory(session, teamFor(key), { text: String(note.text), file: String(note.file || ''), repo: String(note.repo || '') })));
+ipcMain.handle('memories:add', signedIn((key, note) => teams.addMemory(session, teamFor(key), { text: String(note.text), file: String(note.file || ''), repo: String(note.repo || ''), hash: String(note.hash || '') })));
 ipcMain.handle('memories:remove', signedIn((key, id) => teams.removeMemory(session, teamFor(key), String(id))));
 ipcMain.handle('sessions:save', signedIn((key, o) => teams.saveSession(session, teamFor(key), { name: String(o.name), task: String(o.task || '') })));
 ipcMain.handle('sessions:done', signedIn((key, name, done) => teams.setSessionDone(session, teamFor(key), String(name), !!done)));
@@ -122,6 +126,7 @@ ipcMain.handle('comments:add', signedIn((key, name, text, ref) => teams.addComme
 ipcMain.handle('steps:add', signedIn((key, name, step) => teams.addStep(session, teamFor(key), String(name), { text: String(step.text), owner: String(step.owner || '') })));
 ipcMain.handle('steps:update', signedIn((key, name, id, change) => teams.updateStep(session, teamFor(key), String(name), String(id), change)));
 ipcMain.handle('steps:remove', signedIn((key, name, id) => teams.removeStep(session, teamFor(key), String(name), String(id))));
+ipcMain.handle('sessions:handoff', signedIn((key, name, to) => teams.handOff(session, teamFor(key), String(name), to ? String(to) : '')));
 ipcMain.handle('comments:remove', signedIn((key, name, id) => teams.removeComment(session, teamFor(key), String(name), String(id))));
 ipcMain.handle('teams:remove', signedIn(async (key, login) => remember({ ...teamFor(key), ...await teams.removeMember(session, teamFor(key), String(login)) })));
 // Leaving or deleting closes the team here too.
@@ -185,17 +190,19 @@ ipcMain.handle('startLane', signedIn(async o => {
   // A renamed session keeps its original folder and branch, which `folderKey` names.
   const folder = o.repo ? await github.sessionFolder(String(o.repo), String(o.folderKey || o.session), env, { worktree: o.worktree !== false }) : { dir: String(o.cwd), guarded: false };
   const cwd = folder.dir;
-  // Codex and OpenCode have no hooks to ask with, so on a shared team the push guard in app-made clones stops them instead.
+  // OpenCode has no hooks to ask with, and Codex's only work once the person has trusted them, so on a shared team the
+  // push guard in app-made clones stops both as well.
   const shared = o.cmd !== 'claude' && team.members?.length > 0;
   const why = o.repo ? 'This repo has its own Git hooks, so Protoplasma\'s push guard isn\'t installed' : 'Protoplasma only installs its push guard in folders it makes, not in one you pick';
   const notice = shared && !folder.guarded ? `${why}: this agent can push to main or force-push without being stopped.` : '';
-  // Claude Code's hooks go through a relay on this Mac (teams.hookRelay), which pins a Mac hub's self-signed certificate
-  // and lets only context and "ask first" back from any hub, never an approval or a changed command.
+  // Claude Code's and Codex's hooks go through a relay on this Mac (teams.hookRelay), which pins a Mac hub's self-signed
+  // certificate and lets only context and "ask first" back from any hub, never an approval or a changed command.
   const credentials = () => teams.access(signedInAs, team.hub, team.owner);
-  const hookBase = o.cmd === 'claude' ? await teams.hookRelay(hookTarget) : undefined;
-  const lane = startLane({ hub: team.hub, hookBase, team: team.id, credentials, session: String(o.session), cmd: o.cmd, cwd, args: o.resume ? RESUME[o.cmd] : [],
+  const hookBase = ['claude', 'codex'].includes(o.cmd) ? await teams.hookRelay(hookTarget) : undefined;
+  const lane = startLane({ hub: team.hub, hookBase, team: team.id, credentials, session: String(o.session), cmd: o.cmd, cwd, args: o.resume ? RESUME[o.cmd] : o.prompt ? firstPrompt(o.cmd, o.prompt) : [],
     open: !!o.open, env: shared ? { ...env, PROTO_SHARED_TEAM: '1' } : env, onRefused: reason => toWindow('lane:refused', lane.id, reason), picked: !o.repo });
   lane.hub = { url: team.hub, credentials };
+  lane.cmd = o.cmd;
   lanes.set(lane.id, lane);
   folders.add(cwd);
   lane.cwd = cwd;
@@ -205,10 +212,10 @@ ipcMain.handle('startLane', signedIn(async o => {
   lane.term.onExit(() => { lanes.delete(lane.id); toWindow('lane:exit', lane.id); });
   return { id: lane.id, repo: lane.repo, notice };
 }));
-// The hub one of this Mac's agents sends its hooks to, with the certificate to pin it to, for the relay.
+// The hub one of this Mac's agents sends its hooks to, with the certificate to pin it to and which agent it is, for the relay.
 async function hookTarget(id) {
-  const hub = lanes.get(id)?.hub;
-  return hub && { url: hub.url, ca: (await hub.credentials()).ca };
+  const lane = lanes.get(id);
+  return lane?.hub && { url: lane.hub.url, ca: (await lane.hub.credentials()).ca, cmd: lane.cmd };
 }
 ipcMain.on('lane:write', (_, id, d) => lanes.get(id)?.write(d));
 ipcMain.handle('sessions:folder', (_, repo, name) => github.sessionFolderPath(String(repo), String(name)));
@@ -239,6 +246,7 @@ ipcMain.handle('code:list', inFolder(async root => files.list(root, await agentE
 ipcMain.handle('code:status', inFolder(async root => files.status(root, await agentEnv)));
 ipcMain.handle('code:read', inFolder((root, rel) => files.read(root, rel)));
 ipcMain.handle('code:committed', inFolder(async (root, rel) => files.committed(root, rel, await agentEnv)));
+ipcMain.handle('code:hash', inFolder(async (root, file) => files.fileHash(root, String(file), await agentEnv)));
 ipcMain.handle('code:write', inFolder((root, rel, text) => files.write(root, rel, text)));
 ipcMain.handle('code:search', inFolder(async (root, query) => files.search(root, query, await agentEnv)));
 ipcMain.handle('code:commit', inFolder(async (root, message) => files.commitAndPush(root, message, await agentEnv)));

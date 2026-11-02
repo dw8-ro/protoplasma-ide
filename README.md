@@ -39,7 +39,7 @@
 Protoplasma puts a team around the coding agents you already use. Each agent is the actual CLI running in a terminal on your own Mac, under your own account. Around it, the app shows who is working on what, flags a file two agents are changing before it turns into a merge conflict, and keeps each piece of work in a session with its own branch.
 
 - **The real CLI.** Your settings, permission modes, slash commands, custom commands and skills all work, because you type straight into the agent.
-- **Collisions caught early.** A file changed in two places is flagged for everyone, and Claude Code asks you before it edits one.
+- **Collisions caught early.** A file changed in two places is flagged for everyone, and Claude Code and Codex check with you before editing one.
 - **A branch per session.** Each session gets its own branch and folder, so `main` only changes through a push or a pull request.
 - **The code beside the agent.** A full editor with source control, which shows the agent's edits as it makes them.
 - **Your own hub, if you want one.** Teams run on a hosted hub, or inside the app on one of the team's Macs.
@@ -100,7 +100,7 @@ The [GitHub CLI](https://cli.github.com) (`brew install gh`, then `gh auth login
 
 ### The real CLI
 
-Each agent is the actual `claude`, `codex` or `opencode` process, under your own account, in a real terminal, and you type straight into it. The only thing Protoplasma adds is hooks for Claude Code, merged with your own settings, which give the agent the team's context and ask you before a conflicting edit or a risky push.
+Each agent is the actual `claude`, `codex` or `opencode` process, under your own account, in a real terminal, and you type straight into it. The only thing Protoplasma adds is hooks for Claude Code and Codex, for that run only, which give the agent the team's context and ask you before a conflicting edit or a risky push. Codex asks you to trust them the first time.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/readme/agents-dark.png">
@@ -109,7 +109,7 @@ Each agent is the actual `claude`, `codex` or `opencode` process, under your own
 
 ### Collisions caught early
 
-While an agent runs, its checkout reports the files changed compared with `main`, committed or not, whoever changed them. A file changed in two places is flagged before it becomes a merge conflict: in the sidebar, on the session's card and beside each agent. Claude Code asks you before it edits a file that another running agent on the same repo has changed, whether that's a teammate's agent or one of yours in another session.
+While an agent runs, its checkout reports the files changed compared with `main`, committed or not, whoever changed them. A file changed in two places is flagged before it becomes a merge conflict: in the sidebar, on the session's card and beside each agent. Claude Code asks you before it edits a file that another running agent on the same repo has changed, whether that's a teammate's agent or one of yours in another session. Codex is stopped the first time it tries and told to check with you.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/readme/overlap-dark.png">
@@ -127,9 +127,11 @@ An editor built on Monaco, the editor inside VS Code. Its Explorer marks what ch
 
 ### Sessions for every piece of work
 
-A session keeps its goal, branch, plan and comments. It stays on the board after its agents stop, with **Resume** to pick the conversation back up, and the last screen of recently stopped agents is one click away. Its status shows at a glance which agents are working, which need you, and where work overlaps. Only Claude Code reports when it's waiting for your approval: a Codex or OpenCode agent that's waiting shows as Idle, so check its terminal.
+A session keeps its goal, branch, plan and comments. It stays on the board after its agents stop, with **Resume** to pick the conversation back up, and the last screen of recently stopped agents is one click away. Its status shows at a glance which agents are working, which need you, and where work overlaps. Claude Code and Codex report when they're waiting for your approval (Codex once you've trusted Protoplasma's hooks). An OpenCode agent that's waiting shows as Idle, so check its terminal.
 
-A plan is a list of steps with owners that anyone can tick off. Notes belong to a repo, or to one file in it, so every session on that repo shares them. Claude gets the plan and the repo's notes with every prompt, and a file's notes just before it reads or edits that file.
+A plan is a list of steps with owners that anyone can tick off. Notes belong to a repo, or to one file in it, so every session on that repo shares them. Claude Code and Codex get the plan and the repo's notes with every prompt, and a file's notes just before they edit that file (Claude Code also when it reads one). A note on a file remembers what the file held when it was written, and Memory says **File changed since** once your copy is different, so you can check the note still holds.
+
+Work can move between people. **Continue** on a teammate's agent, running or stopped, starts your own agent in the same session with what theirs was doing: their last prompt, the files they changed, the end of their screen, and which of their changes aren't pushed yet. **Hand off** on your own agent offers the work to a teammate, and it shows in their alerts until they start an agent in that session. **Ask my agent** on a comment sends it, with the lines it's about, to your agent in the session, or starts one with it.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/readme/sessions-dark.png">
@@ -152,16 +154,16 @@ Pick one of your GitHub repos or a folder on your Mac, and the agent to run. A s
   <img src="docs/readme/how-it-works-light.svg" alt="Each Mac runs Protoplasma and its agents. Agents send their terminal and git status to the hub, Claude Code also sends hooks, and the hub sends live team state back to every app">
 </picture>
 
-- **Lanes** (`src/lane.js`) run an agent in a pseudo-terminal and stream it to the hub, with its branch, its changes compared with `main`, and its status. Claude Code also gets per-run [HTTP hooks](https://code.claude.com/docs/en/hooks) through `--settings`. Codex and OpenCode report working or idle from their terminal activity.
-- **The hub** (`src/hub.js`) relays terminals, tracks who changed what, keeps sessions, notes and comments, and answers Claude's hooks with the session's goal, the team's notes, and an `ask` before a conflicting edit or a risky push. It never runs agents. It runs online, or inside the app on one of the team's Macs; what it keeps is listed under [Security and privacy](#security-and-privacy).
+- **Lanes** (`src/lane.js`) run an agent in a pseudo-terminal and stream it to the hub, with its branch, its changes compared with `main`, and its status. Claude Code also gets per-run [HTTP hooks](https://code.claude.com/docs/en/hooks) through `--settings`, and Codex gets per-run [command hooks](https://developers.openai.com/codex/hooks) through `-c`. OpenCode, and Codex until its hooks are trusted, report working or idle from their terminal activity.
+- **The hub** (`src/hub.js`) relays terminals, tracks who changed what, keeps sessions, notes and comments, and answers Claude Code's and Codex's hooks with the session's goal, the team's notes, and an `ask` before a conflicting edit or a risky push. It never runs agents. It runs online, or inside the app on one of the team's Macs; what it keeps is listed under [Security and privacy](#security-and-privacy).
 - **The app** (`app/`) is Electron. The renderer has no Node access. The main process starts the agent CLIs in a clean login-shell environment, plus a shell for the Terminal tab, and the code view can only read and write inside a session's own folder.
 
 ### Working on the same code
 
 1. **A branch per session.** A session started from a GitHub repo gets its own git worktree on `session/<name>`, branched from the latest default branch, or continuing a teammate's pushed branch. It has no upstream, so a bare `git push` can't land on `main`. Names that differ only in case or punctuation are the same session.
 2. **Overlap warnings**, described under [Collisions caught early](#collisions-caught-early).
-3. **A push guard.** When the team has other people, Claude Code asks you before pushing to `main`, `master` or the repo's default branch, force-pushing, or deleting a remote branch. Codex and OpenCode can't be asked, so in repos the app cloned, a `pre-push` hook stops those pushes instead. It's a safeguard against mistakes rather than a lock: `git push --no-verify` skips it. If your team needs a guarantee, also protect `main` on GitHub. People pushing from their own terminal aren't affected.
-4. **A behind notice.** Each lane fetches about once a minute. A branch missing commits from `main`, or from its own pushed copy, shows `↓3`, and Claude is told to pull before changing more.
+3. **A push guard.** When the team has other people, Claude Code asks you before pushing to `main`, `master` or the repo's default branch, force-pushing, or deleting a remote branch. Codex can't be asked from a hook, so it's stopped the first time and told to check with you, and the same step goes through when it tries again. OpenCode has no hooks, so in repos the app cloned, a `pre-push` hook stops Codex's and OpenCode's pushes as well. It's a safeguard against mistakes rather than a lock: `git push --no-verify` skips it. If your team needs a guarantee, also protect `main` on GitHub. People pushing from their own terminal aren't affected.
+4. **A behind notice.** Each lane fetches about once a minute. A branch missing commits from `main`, or from its own pushed copy, shows `↓3`, and Claude Code and Codex are told to pull before changing more.
 5. **Shared session branches.** Everyone in a session works on `session/<name>`, each in their own checkout. **Commit & Push** puts your commit on top of whatever a teammate pushed first. If you both changed the same lines, it stops and offers **Pull**: their work comes in, the files you both changed are marked C, and once you've fixed them in the editor, **Commit & Push** finishes the merge.
 
 Work reaches `main` the usual way, through a pull request. These layers make collisions visible early; they don't replace review.
@@ -170,12 +172,12 @@ Work reaches `main` the usual way, through a pull request. These layers make col
 
 - **Sign-in** asks for read-only access to your public GitHub profile and nothing else. Repo access stays with the GitHub CLI on your Mac.
 - **What the hub keeps:** team names, members, notes, and sessions with their goals, repos, who started them, plans and comments (a comment on lines of code keeps the text of those lines).
-- **What passes through it:** while an agent runs, its terminal output, Claude Code's hook events (which include what a tool is about to change), its latest prompt, its branch, the names of the files its checkout changed, and its folder's path. Up to 512 KB of each agent's output is held in memory, with the last screen of the 20 most recently stopped agents per team. None of it is written to disk.
+- **What passes through it:** while an agent runs, its terminal output, Claude Code's and Codex's hook events (which include what a tool is about to change), its latest prompt, its branch, the names of the files its checkout changed, and its folder's path. Up to 512 KB of each agent's output is held in memory, with the last screen of the 20 most recently stopped agents per team. None of it is written to disk.
 - **Your GitHub sign-in** goes only to GitHub, the online hub and the hub on your own Mac. A team hosted on a teammate's Mac is reached over an encrypted connection, pinned to that Mac's certificate, with a pass from the online hub that works only on that Mac's hub and expires within 12 hours. Passes are only issued for a Mac whose owner registered it, so something on the network pretending to be a teammate's Mac gets nothing it can use. Looking for such teams is off until you turn it on in Your teams, and a team on your Mac can't be reached from the network until you invite someone to it.
 - **Your code** is read and written on your Mac only, and the hub never stores it. Teammates see which files changed; what your agent prints in its terminal is visible to the whole team. With **Share the files your agents change** on (Settings → Agents, off by default), a teammate can open those files read-only; each one passes through the hub and isn't kept.
 - **Teams** are invite-only, and removing someone disconnects them at once. People are recognised by their GitHub account's id, so renaming your account keeps your place, and whoever later takes your old username doesn't get it.
 - **Typing into your agent** lets a teammate run commands on your Mac, so it's off unless you turn it on, and your agent shows who last typed into it.
-- **The hub's answers to Claude Code** pass through the app on your Mac, which lets through only the team's context and a request to ask you first. A hub can't approve, block or change anything your agent does.
+- **The hub's answers to Claude Code and Codex** pass through the app on your Mac, which lets through only the team's context and a request to ask you first. A hub can't approve, block or change anything your agent does. (Codex can't be asked, so the app turns that request into stopping it once.)
 - **Teams on a Mac:** signing in to a teammate's Mac goes through the online hub, so that hub must be reachable. Everything else (terminals, typing, files) goes directly between the two Macs.
 
 ## Development
@@ -239,8 +241,8 @@ The first message on every WebSocket carries a team id and a GitHub token, or, f
 | | hub → lane | `in {d}` (only for agents teammates may type into) |
 | `/watch` | app → hub | `watch {token, team}`, `look {session}`, `in {lane, d}`, `replay {id}`, `file:get {lane, path, ask}` (a teammate's file), `file:put {req, text, error}` (answering for your own agent) |
 | | hub → app | `state {lanes, watchers, members, memories, sessions, stopped}`, `out {lane, d}`, `replay {id, d}`, `file:get {req, lane, path, from}`, `file:put {ask, text, error}` |
-| `/teams` | app → hub | REST for teams, members, notes, sessions (renaming, goals, plan steps) and comments |
-| `/hooks/:lane` | Claude Code → hub | Hook events, authenticated with a per-lane secret |
+| `/teams` | app → hub | REST for teams, members, notes, sessions (renaming, goals, plan steps, hand-offs) and comments |
+| `/hooks/:lane` | Claude Code, Codex → hub | Hook events, authenticated with a per-lane secret |
 | `/hubs` | app → online hub | `POST {fp}`: registers the certificate of the hub on your Mac |
 | `/passes` | app → online hub | `POST {aud}`: a pass for the hub whose certificate fingerprint is `aud`, with `owners`, who registered it. `GET /passes/key`: the public key passes are signed with |
 
@@ -251,6 +253,7 @@ A hub on someone's Mac serves https/wss with its own self-signed certificate. Te
 
 - [ ] Notarised builds, so browser downloads open without the first-launch prompt
 - [ ] Coordination tools over MCP, so agents can leave notes and message each other
+- [ ] Hooks for OpenCode (a plugin), like Claude Code's and Codex's
 - [ ] Viewer role
 
 ## Licence

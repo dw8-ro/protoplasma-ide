@@ -1,9 +1,33 @@
-# Handoff: Protoplasma IDE, 29 October 2026
+# Handoff: Protoplasma IDE, 2 November 2026
 
 Read this first in a new session, then [AGENTS.md](AGENTS.md) for how the code fits together. What the last sessions
 did: [docs/sessions/2026-10-29.md](docs/sessions/2026-10-29.md) (the second security audit),
 [docs/sessions/2026-10-26.md](docs/sessions/2026-10-26.md) (19–26 Oct) and
 [docs/sessions/2026-10-18.md](docs/sessions/2026-10-18.md) (the first security audit).
+
+## In progress: closing the gaps with Amoeba (2 Nov 2026, branch `claude/protoplasma-monetization-424cba`)
+
+Monetisation is on hold: David wants the app further along first. A comparison with Amoeba (useamoeba.com docs and
+changelog, 2 Nov) found Protoplasma already has most team features; these closed the gaps that mattered. Not
+committed yet: David decides when.
+- **Codex joins the team** (lane.js `codexHookSettings`, teams.js `codexReply`, hub.js `onHook`): Codex gets hooks for one
+  run with `-c hooks={…}` (its "session flags" layer, confirmed in Codex's source, `codex-rs/hooks/src/engine/discovery.rs`).
+  A fixed `curl` command posts to the relay, so Codex asks the person to trust it once ("Hooks need review", shown as
+  Needs you). Codex can't "ask", so the relay refuses once and lets the same step through within 10 minutes. The hub
+  reads `apply_patch` files and `exec_command`. **Not tried with a real Codex:** it isn't installed on David's Mac. To
+  check: install and sign in to Codex, start one in a team session, and see that its prompt gets the team context, that
+  editing a teammate's file is refused once, and that a push to main is refused once.
+- **Continue / Hand off** (renderer `continueMenu`, `handOffMenu`, hub `…/sessions/:name/handoff`): start your agent
+  from a teammate's agent's prompt, files and screen; hand a session to someone, shown in their alerts.
+- **Ask my agent** on a comment (renderer `askMenu`).
+- **Notes say when their file changed** (files.js `fileHash`, note `hash`, renderer `checkNotes`).
+- Left out: agents writing notes themselves (Codex's sandbox blocks the network for its commands, so only Claude Code
+  could), and OpenCode hooks (a plugin; nobody on the team uses OpenCode). A Viewer role waits for pricing.
+- Checks on 2 Nov: `npm test` 105 of 105 (twice; one earlier full run had the LAN "hooks reach a hub on a Mac" test
+  time out under load, and it passes alone), `npm run e2e` 134 of 134.
+- e2e needs `node_modules` in the worktree itself (the app's HTML loads xterm from it; the tests find the main
+  checkout's by walking up). Link it for the run with `ln -s ../../../node_modules node_modules` and remove the link
+  after: `.gitignore`'s `node_modules/` doesn't cover a link. e2e now prints the page's own errors.
 
 ## Where things stand
 

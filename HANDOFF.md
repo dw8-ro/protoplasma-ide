@@ -5,11 +5,17 @@ did: [docs/sessions/2026-10-29.md](docs/sessions/2026-10-29.md) (the second secu
 [docs/sessions/2026-10-26.md](docs/sessions/2026-10-26.md) (19–26 Oct) and
 [docs/sessions/2026-10-18.md](docs/sessions/2026-10-18.md) (the first security audit).
 
-## In progress: closing the gaps with Amoeba (2 Nov 2026, branch `claude/protoplasma-monetization-424cba`)
+## Latest release: v0.6.0 (2 Nov 2026, `040523f`): closing the gaps with Amoeba
+
+Released from the worktree branch `claude/protoplasma-monetization-424cba`, pushed as `HEAD:main` with tag `v0.6.0`.
+Release, CI and Package green; `Protoplasma-0.6.0-mac-arm64.zip` (152 MB) published. The online hub redeployed: an
+unsigned `POST /teams/x/sessions/y/handoff` answers 401 (the old hub's path guard said 404), a quick way to tell which
+hub is live. `node scripts/update-check.js 0.5.9` passed (0.5.9 → 0.6.0, tampered and ad hoc copies refused).
+Notes: [docs/release-notes/0.6.0.md](docs/release-notes/0.6.0.md). David's main checkout still had `main` at 0.5.9
+(`812cbac`) when this was written: pull there.
 
 Monetisation is on hold: David wants the app further along first. A comparison with Amoeba (useamoeba.com docs and
-changelog, 2 Nov) found Protoplasma already has most team features; these closed the gaps that mattered. Not
-committed yet: David decides when.
+changelog, 2 Nov) found Protoplasma already has most team features; these closed the gaps that mattered.
 - **Codex joins the team** (lane.js `codexHookSettings`, teams.js `codexReply`, hub.js `onHook`): Codex gets hooks for one
   run with `-c hooks={…}` (its "session flags" layer, confirmed in Codex's source, `codex-rs/hooks/src/engine/discovery.rs`).
   A fixed `curl` command posts to the relay, so Codex asks the person to trust it once ("Hooks need review", shown as
@@ -43,7 +49,7 @@ committed yet: David decides when.
 
 ## Where things stand
 
-- **Latest release: v0.5.9** (29 Oct 2026, `25ab5a4`): a tidier UI from the "Protoplasma UI refinement" session
+- **v0.5.9** (29 Oct 2026, `25ab5a4`): a tidier UI from the "Protoplasma UI refinement" session
   (`d886daf`: equal session tiles, one status line per card, black-and-white switches, grey agent-card lines, one
   dropdown chevron; screenshots and README images regenerated). That session ran `npm test` 98/98 and e2e 126/126 on
   the same app code; merged onto main with `npm test` 98/98. Release, CI green.
@@ -137,8 +143,8 @@ committed yet: David decides when.
   in `~/Protoplasma-sim`, signed in as David. Each new session stops at its folder-trust prompt, which is his to
   answer. `scripts/customer/act.js` and `observe.js` drive and watch it from a shell.
 - **Hub:** the hosted hub on Railway (`https://hub-production-fba9.up.railway.app`) redeploys on pushes to `main` that
-  touch `src/hub.js`. The last one is `8df2f17` (0.5.5). It still accepts apps before 0.5.3.
-- **Repo and GitHub:** `dw8-ro/protoplasma-ide`, public since 17 Oct. On 29 Oct, `main` = `origin/main` (after 0.5.9 and this note).
+  touch `src/hub.js`. The last one is `040523f` (0.6.0, 2 Nov). It still accepts apps before 0.5.3.
+- **Repo and GitHub:** `dw8-ro/protoplasma-ide`, public since 17 Oct. On 2 Nov, `origin/main` is 0.6.0 plus this note.
   Secret scanning, push protection, Dependabot alerts and private vulnerability reporting are on. Since 27 Oct, a
   ruleset ("Protect main") blocks force pushes to and deletion of the default branch, and workflows from every outside
   contributor need approval. Default workflow permissions are read-only.
@@ -256,10 +262,11 @@ new `look` straight away, so presence is right again within one round trip.
 
 ## Suggested next steps
 1. **First real install:** the README one-liner on a real Mac, then Max installs (he uses Codex), David invites his
-   GitHub login, and two physical Macs share a Mac-hosted team.
+   GitHub login, and two physical Macs share a Mac-hosted team. Max's Codex shows "Hooks need review" once: Trust all
+   and continue. That also tries Codex's `apply_patch` and a push to main live, which the 2 Nov test didn't.
 2. **On David's GitHub account:** "Keep my email addresses private" and "Block command line pushes that expose my
    email".
-3. **Codex and OpenCode have no hooks**, so no overlap warnings or file notes for them (lane.js TODO). Neither CLI is
-   installed on David's Mac, so this needs one installed to build and check against.
+3. **OpenCode has no hooks** (lane.js TODO; a plugin in `.opencode/plugins/` or `--prompt`-style config could do it), so
+   it gets no team context or overlap checks. Codex got them in 0.6.0. OpenCode isn't installed on David's Mac.
 4. Why Electron 44.9.0 refused the This Mac hub's certificate wasn't found; if a later Electron breaks it again, start
    from e2e's "creates a This Mac team…" step with `teams.isPinned`'s host and result logged.

@@ -30,8 +30,13 @@ committed yet: David decides when.
 - **Notes say when their file changed** (files.js `fileHash`, note `hash`, renderer `checkNotes`).
 - Left out: agents writing notes themselves (Codex's sandbox blocks the network for its commands, so only Claude Code
   could), and OpenCode hooks (a plugin; nobody on the team uses OpenCode). A Viewer role waits for pricing.
-- Checks on 2 Nov: `npm test` 106 of 106 (105 before the `CODEX_HOOK` test) (twice; one earlier full run had the LAN "hooks reach a hub on a Mac" test
-  time out under load, and it passes alone), `npm run e2e` 134 of 134.
+- A review before release fixed four bugs: a note from an older app (no hash) was stored with the hash "undefined" and
+  would show as changed; a receiver's agent reconnecting cleared a hand-off; Continue and Hand off used the open session
+  instead of the agent's own (wrong in pane mode); and Ask my agent could paste into an agent waiting on a permission
+  question, whose Enter might answer it. Two LAN tests that waited a fixed time for a terminal now wait for its output:
+  under load they failed now and then, and the release build runs them.
+- Checks on 2 Nov, after those fixes: `npm test` 106 of 106 (three runs), `npm run e2e` 137 of 137 (one earlier run
+  failed only "Comment on this points the next comment at those lines", the known focus flake).
 - e2e needs `node_modules` in the worktree itself (the app's HTML loads xterm from it; the tests find the main
   checkout's by walking up). Link it for the run with `ln -s ../../../node_modules node_modules` and remove the link
   after: `.gitignore`'s `node_modules/` doesn't cover a link. e2e now prints the page's own errors.

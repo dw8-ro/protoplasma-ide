@@ -145,7 +145,7 @@ test('Claude Code\'s hooks reach a hub on a Mac through the relay, pinned to its
   lane.term.onData(d => { out += d; });
   const post = (id, secret, body) => fetch(`${relay}/hooks/${id}`, { method: 'POST', headers: { authorization: `Bearer ${secret}` }, body: JSON.stringify(body) });
   try {
-    for (let i = 0; i < 50 && !/secret:\w+/.test(out); i++) await sleep(20);
+    for (let i = 0; i < 250 && !/secret:\w+/.test(out); i++) await sleep(20); // a slow start under load: up to 5 s
     assert.ok(out.includes(`${relay}/hooks/${lane.id}`), 'Claude Code is pointed at the relay');
     const secret = /secret:(\w+)/.exec(out)[1];
     // Straight to the hub, Claude Code can't check its self-signed certificate.
@@ -242,7 +242,7 @@ test('Codex starts with Protoplasma\'s hooks and the address and secret they nee
   let out = '';
   lane.term.onData(d => { out += d; });
   try {
-    await sleep(800);
+    for (let i = 0; i < 250 && !/secret=\d+/.test(out); i++) await sleep(20); // until it has printed everything, up to 5 s
     const [flag, setting, ...rest] = out.split(/\r?\n/);
     assert.equal(flag, '-c');
     assert.match(setting, /^hooks=\{UserPromptSubmit=\[.*PreToolUse=\[\{matcher="Bash\|exec_command\|apply_patch".*Stop=\[/);

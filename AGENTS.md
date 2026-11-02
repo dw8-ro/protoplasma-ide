@@ -197,7 +197,7 @@ docs/             screenshots (sources), readme/ (the README's images, dark and 
   - `/teams/:id/sessions[/:name]` (create, done, rename, delete).
   - `…/sessions/:name/comments[/:id]`, `…/sessions/:name/steps[/:id]`, and `…/sessions/:name/handoff` (POST `{to}` hands
     the session to someone on the team, as `session.handoff = {from, to, at}`; DELETE clears it, by either of them or the
-    owner; `onLane` clears it when `to` starts an agent in that session).
+    owner; `onLane` clears it when `to` starts a new agent in that session, not when one of theirs reconnects).
 
   Errors are `{error}` with status 400, 401, 403, 404, 409, 413, 503 or 500.
 - **Sessions:** `findSession` matches the exact name, then `slug(name)`, the stored `key`, or an alias. A renamed session
@@ -431,7 +431,9 @@ docs/             screenshots (sources), readme/ (the README's images, dark and 
   (`screenText`), labelled as background from their agent, since it's teammate text in your agent's prompt (the same
   accepted prompt-injection risk as notes and goals). **Hand off** (`handOffMenu`) sets the session's `handoff`;
   `renderAlerts` shows it to that person for a day. **Ask my agent** on a comment (`askMenu`, `commentPrompt`) pastes
-  it into one of your agents in the session (bracketed paste, then Enter) or starts one with it. `checkNotes` compares
+  it into one of your agents in the session (bracketed paste, then Enter) or starts one with it, but never into one that
+  needs you: that Enter could answer its permission or trust question. Continue and Hand off act on the agent's own
+  session, which in pane mode needn't be the open one. `checkNotes` compares
   pinned notes' hashes with this Mac's copy at most every 5 s, while Memory is open.
 - **Sharing files:** `answerFile` replies only for this Mac's own live lane, only with **Share the files your agents
   change** on, and only for files in `lane.files`. The renderer enforces the share setting; main's `code:readLane` then

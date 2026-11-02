@@ -643,7 +643,7 @@ function startHub({ port = 7681, host = '0.0.0.0', dataDir, owners, tls, passIss
         if (!text) return json(400, { error: 'Write the note first.' });
         if (team.memories.length >= MAX_MEMORIES) return json(400, { error: `A team can keep ${MAX_MEMORIES} notes. Remove some first.` });
         // hash: what the file held when the note was written (files.js fileHash), so apps can say when it's changed since.
-        const hash = file && /^[\w-]{1,32}$/.test(body.hash) ? body.hash : undefined;
+        const hash = file && typeof body.hash === 'string' && /^[\w-]{1,32}$/.test(body.hash) ? body.hash : undefined;
         const memory = { id: crypto.randomBytes(6).toString('base64url'), text, file, repo: str(body.repo, 200).trim(), author: user.login, at: new Date().toISOString(), ...(hash && { hash }) };
         team.memories.push(memory);
       } else if (subId && req.method === 'DELETE') {
@@ -849,8 +849,9 @@ function startHub({ port = 7681, host = '0.0.0.0', dataDir, owners, tls, passIss
     if (before) Object.assign(lane, { status: before.status || lane.status, prompt: before.prompt, typedBy: before.typedBy, typedAt: before.typedAt, hooked: before.hooked,
       files: new Set([...(before.files || [])].filter(f => lane.changed.has(f))) });
     lanes.set(lane.id, lane);
-    // Someone handed this session to whoever just started an agent in it: they've picked it up.
-    const record = findSession(team, lane.session);
+    // Someone handed this session to whoever just started an agent in it: they've picked it up. (Not one of theirs
+    // reconnecting after a blip: that's no answer to the hand-off.)
+    const record = !before && findSession(team, lane.session);
     if (record?.handoff && same(record.handoff.to, user.login)) { delete record.handoff; saveTeams(); }
     stopped.set(team.id, (stopped.get(team.id) || []).filter(s => s.id !== lane.id)); // it reconnected
     const session = ensureSession(team, lane.session, user.login);

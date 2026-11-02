@@ -822,15 +822,15 @@ function continueMenu(anchor, id) {
   const agent = hubLanes.find(l => l.id === id) || stoppedAgents.find(s => s.id === id);
   if (!agent) return;
   const t = terms.get(id), screen = t ? screenText(t.term) : replaying === id && replayTerm ? screenText(replayTerm) : '';
-  const source = sourceFor(current);
+  const session = agent.session, source = sourceFor(session); // its session: in pane mode that needn't be the open one
   if (!source) return alert('Add an agent to this session first, so it has a folder on this Mac. Then continue from here.');
   showMenu(anchor, [{ label: 'Continue this work with' }, ...['claude', 'codex', 'opencode'].map(cmd => ({
     text: agentName(cmd), disabled: !isInstalled(cmd), hint: isInstalled(cmd) ? '' : 'Not installed',
-    run: () => startAgent({ session: current, cmd, open: prefs.open, source, prompt: briefFrom(agent, screen) }).catch(err => alert(errorText(err))) }))]);
+    run: () => startAgent({ session, cmd, open: prefs.open, source, prompt: briefFrom(agent, screen) }).catch(err => alert(errorText(err))) }))]);
 }
 // Handing your agent's work in this session to a teammate: it shows in their alerts until they continue it.
 function handOffMenu(anchor, id) {
-  const lane = hubLanes.find(l => l.id === id), session = current;
+  const lane = hubLanes.find(l => l.id === id), session = lane?.session || current;
   const people = [currentTeam.owner, ...currentTeam.members].filter(login => !same(login, me.login));
   if (!people.length) return alert('Invite someone to the team first.');
   const to = login => {
@@ -1376,7 +1376,10 @@ function askMenu(anchor, c) {
     setTimeout(() => proto.write(id, '\r'), 150);
     focus = id; tab = 'agents'; code.dock = 'agent'; render(); terms.get(id)?.term.focus();
   };
-  showMenu(anchor, [...(mine.length ? [{ label: 'Send it to' }, ...mine.map(l => ({ text: `Your ${agentLabel(l, mine)}`, hint: (STATUS[statusOf(l)] || [])[1] || '', run: () => send(l.id) }))] : []),
+  // Not into one that's waiting on you (a permission or trust question): the Enter after the paste could answer it.
+  const waiting = l => statusOf(l) === 'needs you';
+  showMenu(anchor, [...(mine.length ? [{ label: 'Send it to' }, ...mine.map(l => ({ text: `Your ${agentLabel(l, mine)}`, disabled: waiting(l),
+    hint: waiting(l) ? 'Answer it first' : (STATUS[statusOf(l)] || [])[1] || '', run: () => send(l.id) }))] : []),
     { label: 'Start an agent with it' }, ...['claude', 'codex', 'opencode'].map(cmd => ({ text: agentName(cmd), disabled: !isInstalled(cmd) || !source,
       hint: !isInstalled(cmd) ? 'Not installed' : !source ? 'Add an agent here first' : '',
       run: () => startAgent({ session: current, cmd, open: prefs.open, source, prompt }).catch(err => alert(errorText(err))) }))]);

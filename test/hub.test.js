@@ -380,11 +380,17 @@ test('a session can be handed to a teammate, who picks it up by starting an agen
   const picked = await rawLane('picks-up', { token: 'tok-bob', session: 's1', repo: 'acme/app' });
   watcher.off('message', track);
   assert.equal(last.sessions.find(x => x.name === 's1').handoff, undefined, 'starting an agent there picked it up');
+  // One of theirs reconnecting after a blip is no answer to a new hand-off.
+  await api('tok-alice', 'POST', handoff, { to: 'bob' });
+  watcher.on('message', track);
+  const again = await rawLane('picks-up', { token: 'tok-bob', session: 's1', repo: 'acme/app' });
+  watcher.off('message', track);
+  assert.equal(last.sessions.find(x => x.name === 's1').handoff?.to, 'bob', 'a reconnect doesn\'t pick it up');
   // What a stopped agent was doing stays with it, for whoever continues its work.
-  picked.socket.send(JSON.stringify({ t: 'git', branch: 'session/s1', added: 1, removed: 0, files: 1, behind: 0, ahead: 0, changed: ['src/pick.ts'], local: ['src/pick.ts'] }));
+  again.socket.send(JSON.stringify({ t: 'git', branch: 'session/s1', added: 1, removed: 0, files: 1, behind: 0, ahead: 0, changed: ['src/pick.ts'], local: ['src/pick.ts'] }));
   await nextState(lanes => lanes.find(l => l.id === 'picks-up')?.files.includes('src/pick.ts'));
   watcher.on('message', track);
-  await picked.close();
+  await again.close();
   watcher.off('message', track);
   const stoppedOne = last.stopped.find(s => s.id === 'picks-up');
   assert.deepEqual([stoppedOne.touched, stoppedOne.local, stoppedOne.prompt], [['src/pick.ts'], ['src/pick.ts'], '']);
@@ -401,7 +407,9 @@ test('a note pinned to a file keeps what the file held, for telling when it chan
   assert.equal(odd.hash, undefined, 'only a hash-shaped value');
   const whole = await add({ text: 'For the whole repo', hash: 'abc' });
   assert.equal(whole.hash, undefined, 'only for a note on a file');
-  for (const note of [kept, odd, whole]) await api('tok-alice', 'DELETE', `${route}/${note.id}`);
+  const older = await add({ text: 'From an app that sends no hash', file: 'src/db.ts' });
+  assert.equal(older.hash, undefined, 'a missing hash isn\'t the word "undefined", which would mark the note changed');
+  for (const note of [kept, odd, whole, older]) await api('tok-alice', 'DELETE', `${route}/${note.id}`);
 });
 
 test('a teammate\'s file is passed between apps only by its owner\'s', async () => {

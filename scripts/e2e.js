@@ -337,6 +337,12 @@ async function run(win, hub) {
       $('#panelBody [data-ask-comment="' + c.id + '"]').click();
       const items = [...document.querySelectorAll('.menu button')].map(b => b.textContent); closeMenu();
       return /^I left this comment in Protoplasma on README\\.md:1:/.test(p) && p.includes('> Say what this repo is for') && p.includes("The lines it's about:") && items.some(t => /^Your Claude Code/.test(t)); })()`), await js(`commentPrompt(recordFor('Fix Login').comments.at(-1))`));
+    check('but not into an agent of yours that\'s waiting on you, where its Enter could answer the question', await js(`(() => {
+      const c = recordFor('Fix Login').comments.at(-1), l = hubLanes.find(l => l.id === ${JSON.stringify(second)}), was = l.status;
+      l.status = 'needs you';
+      $('#panelBody [data-ask-comment="' + c.id + '"]').click();
+      const b = [...document.querySelectorAll('.menu button')].find(b => /^Your Claude Code/.test(b.textContent)), ok = !!b?.disabled && /Answer it first/.test(b.textContent);
+      closeMenu(); l.status = was; return ok; })()`));
     // ---- notes that keep up with the code
     // This session has no GitHub repo, so the Memory form won't pin a note to a file: add it as the form would.
     await js(`(async () => { const hash = await proto.code.hash(await rootFor(current), 'README.md');
@@ -352,6 +358,12 @@ async function run(win, hub) {
     check('New pane opens pane mode with the session and room for another', await until(`view === 'panes' && panes.length === 2 && $('#panesView').querySelector('[data-pane="0"] .pane-body').contains(terms.get(${JSON.stringify(second)}).el) && !terms.get(${JSON.stringify(second)}).el.hidden && /room for another/.test($('#panesTitle').textContent)`));
     await js(`$('#paneGrid [data-pane-pick][data-name="s1"]').click(); 0`);
     check('a second session opens beside it, with its agent', await until(`panes[1] === 's1' && $('#paneGrid [data-pane="1"] .pane-body').contains(terms.get(${JSON.stringify(mine)}).el) && !terms.get(${JSON.stringify(mine)}).el.hidden`));
+    check('Continue on an agent in a pane starts yours in that agent\'s session, whichever is open', await js(`(async () => {
+      const real = startAgent, open = current; let started = null;
+      startAgent = async o => { started = o; };
+      try { current = 'Fix Login'; continueMenu(document.body, ${JSON.stringify(theirs)}); [...document.querySelectorAll('.menu button')].find(b => b.textContent.startsWith('Claude Code')).click(); await null; }
+      finally { startAgent = real; current = open; closeMenu(); }
+      return started?.session === 's1' && /Max started/.test(started.prompt); })()`));
     await js(`$('#singlePane').click(); 0`);
     check('Single goes back to one session, terminals and all', await until(`view === 'session' && current === 'Fix Login' && $('#lanes').contains(terms.get(${JSON.stringify(second)}).el) && $('#lanes').contains(terms.get(${JSON.stringify(mine)}).el)`));
 

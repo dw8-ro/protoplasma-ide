@@ -17,9 +17,13 @@ committed yet: David decides when.
   reads `apply_patch` files and `exec_command`. **Checked against Codex 0.166.0** (installed 2 Nov with
   `npm install -g @openai/codex`): `codex app-server`'s `hooks/list`, run with the same `-c`, lists all four hooks from
   `sessionFlags`, untrusted until approved, with fixed keys and hashes. lan.test.js runs `CODEX_HOOK` itself through
-  `sh` and `curl`. **Not tried with prompts:** that needs someone at the Mac to answer Codex's folder-trust and
-  hook-review screens and spend their Codex usage. To check: start Codex in a team session, and see that its prompt gets
-  the team context, that editing a teammate's file is refused once, and that a push to main is refused once.
+  `sh` and `curl`. **Tried live on 2 Nov** (`npm run playground -- --real`, David's ChatGPT sign-in, GPT-6-Luna): with a
+  stand-in Max lane that had changed README.md, Codex was asked to append to it. It got the team context (it said
+  README.md was being changed by another agent and asked first), its `printf >> README.md` was refused once with
+  Protoplasma's reason, and its retry went through. Status followed the hooks (Working, then Idle). Codex keeps the
+  trust in `~/.codex/config.toml` under `hooks.state."/<session-flags>/config.toml:…"`, so later runs don't ask again.
+  Not tried live: `apply_patch` (Codex used the shell) and a push to main. A Codex question
+  (`request_user_input_async`) shows as Idle once its turn ends, as Claude Code's plain-text questions do.
 - **Continue / Hand off** (renderer `continueMenu`, `handOffMenu`, hub `…/sessions/:name/handoff`): start your agent
   from a teammate's agent's prompt, files and screen; hand a session to someone, shown in their alerts.
 - **Ask my agent** on a comment (renderer `askMenu`).

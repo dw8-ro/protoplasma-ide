@@ -9,7 +9,8 @@ const http = require('node:http');
 const https = require('node:https');
 const WebSocket = require('ws');
 const { startHub, signPass, readPass } = require('../src/hub');
-const { startLane } = require('../src/lane');
+const { execFile } = require('node:child_process');
+const { startLane, CODEX_HOOK } = require('../src/lane');
 
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'protoplasma-lan-'));
 const verifyUser = async token => {
@@ -203,6 +204,33 @@ test('Codex is refused once where Claude Code would be asked, and the same step 
     assert.equal(await hook('h-codex'), '', 'a hub can\'t refuse anything itself');
     reply = { hookSpecificOutput: { hookEventName: 'UserPromptSubmit', additionalContext: 'the session goal' } };
     assert.deepEqual(JSON.parse(await hook('h-codex')), reply, 'Codex gets the team context');
+  } finally { fake.close(); }
+});
+
+test('Codex\'s hook command posts the hook through the relay with the agent\'s secret, and prints the answer', async () => {
+  let seen;
+  const fake = http.createServer((req, res) => {
+    let body = '';
+    req.on('data', d => { body += d; }).on('end', () => {
+      seen = { auth: req.headers.authorization, body };
+      res.writeHead(200).end(JSON.stringify({ hookSpecificOutput: { hookEventName: 'UserPromptSubmit', additionalContext: 'the goal' } }));
+    });
+  });
+  await new Promise(r => fake.listen(0, '127.0.0.1', r));
+  const relay = await teams.hookRelay(async id => (id === 'h-curl' ? { url: `http://127.0.0.1:${fake.address().port}`, cmd: 'codex' } : null));
+  // As Codex runs it: the command in a shell, the hook's JSON on stdin, the answer read from stdout.
+  const run = env => new Promise((resolve, reject) => {
+    const child = execFile('sh', ['-c', CODEX_HOOK], { env: { PATH: process.env.PATH, ...env } }, (err, out) => (err ? reject(err) : resolve(out)));
+    child.stdin.end(JSON.stringify({ hook_event_name: 'UserPromptSubmit', prompt: 'it\'s "quoted" $HOME' }));
+  });
+  try {
+    const out = await run({ PROTO_HOOK_URL: `${relay}/hooks/h-curl`, PROTO_HOOK_SECRET: 'a-hook-secret-0123456789' });
+    assert.deepEqual(JSON.parse(out), { hookSpecificOutput: { hookEventName: 'UserPromptSubmit', additionalContext: 'the goal' } });
+    assert.equal(seen.auth, 'Bearer a-hook-secret-0123456789');
+    assert.equal(JSON.parse(seen.body).prompt, 'it\'s "quoted" $HOME', 'the hook arrives as Codex sent it');
+    seen = null;
+    assert.equal(await run({}), '', 'outside Protoplasma it does nothing');
+    assert.equal(seen, null);
   } finally { fake.close(); }
 });
 

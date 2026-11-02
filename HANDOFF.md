@@ -14,16 +14,19 @@ committed yet: David decides when.
   run with `-c hooks={…}` (its "session flags" layer, confirmed in Codex's source, `codex-rs/hooks/src/engine/discovery.rs`).
   A fixed `curl` command posts to the relay, so Codex asks the person to trust it once ("Hooks need review", shown as
   Needs you). Codex can't "ask", so the relay refuses once and lets the same step through within 10 minutes. The hub
-  reads `apply_patch` files and `exec_command`. **Not tried with a real Codex:** it isn't installed on David's Mac. To
-  check: install and sign in to Codex, start one in a team session, and see that its prompt gets the team context, that
-  editing a teammate's file is refused once, and that a push to main is refused once.
+  reads `apply_patch` files and `exec_command`. **Checked against Codex 0.166.0** (installed 2 Nov with
+  `npm install -g @openai/codex`): `codex app-server`'s `hooks/list`, run with the same `-c`, lists all four hooks from
+  `sessionFlags`, untrusted until approved, with fixed keys and hashes. lan.test.js runs `CODEX_HOOK` itself through
+  `sh` and `curl`. **Not tried with prompts:** that needs someone at the Mac to answer Codex's folder-trust and
+  hook-review screens and spend their Codex usage. To check: start Codex in a team session, and see that its prompt gets
+  the team context, that editing a teammate's file is refused once, and that a push to main is refused once.
 - **Continue / Hand off** (renderer `continueMenu`, `handOffMenu`, hub `…/sessions/:name/handoff`): start your agent
   from a teammate's agent's prompt, files and screen; hand a session to someone, shown in their alerts.
 - **Ask my agent** on a comment (renderer `askMenu`).
 - **Notes say when their file changed** (files.js `fileHash`, note `hash`, renderer `checkNotes`).
 - Left out: agents writing notes themselves (Codex's sandbox blocks the network for its commands, so only Claude Code
   could), and OpenCode hooks (a plugin; nobody on the team uses OpenCode). A Viewer role waits for pricing.
-- Checks on 2 Nov: `npm test` 105 of 105 (twice; one earlier full run had the LAN "hooks reach a hub on a Mac" test
+- Checks on 2 Nov: `npm test` 106 of 106 (105 before the `CODEX_HOOK` test) (twice; one earlier full run had the LAN "hooks reach a hub on a Mac" test
   time out under load, and it passes alone), `npm run e2e` 134 of 134.
 - e2e needs `node_modules` in the worktree itself (the app's HTML loads xterm from it; the tests find the main
   checkout's by walking up). Link it for the run with `ln -s ../../../node_modules node_modules` and remove the link

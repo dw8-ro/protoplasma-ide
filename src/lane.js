@@ -320,7 +320,7 @@ function startLane({ hub, hookBase, team, token, credentials = () => ({ token })
   } };
 }
 
-module.exports = { startLane, repoFromRemote, gitStatus, fetchGit, installed };
+module.exports = { startLane, repoFromRemote, gitStatus, fetchGit, installed, CODEX_HOOK };
 
 // Standalone: PROTO_TOKEN=<github token> node src/lane.js <hub-url> <team-id> <session> [--open] [cmd...]
 // A classic token with no scopes is enough; it's only used for identity.

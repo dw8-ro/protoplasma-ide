@@ -1,14 +1,23 @@
-# Handoff: Protoplasma IDE, 2 November 2026
+# Handoff: Protoplasma IDE, 8 November 2026
 
 Read this first in a new session, then [AGENTS.md](AGENTS.md) for how the code fits together. What the last sessions
 did: [docs/sessions/2026-10-29.md](docs/sessions/2026-10-29.md) (the second security audit),
 [docs/sessions/2026-10-26.md](docs/sessions/2026-10-26.md) (19–26 Oct) and
 [docs/sessions/2026-10-18.md](docs/sessions/2026-10-18.md) (the first security audit).
 
-## Since 0.6.0 (8 Nov 2026, not released): small fixes, and research on Rust
+## Latest release: v0.6.1 (8 Nov 2026, `a52368f`): small fixes, lighter teammates' terminals, and research on Rust
+
+Released from the worktree branch `claude/protoplasma-main-function-9da099` (pushed as `HEAD:main`, then the tag).
+Notes: [docs/release-notes/0.6.1.md](docs/release-notes/0.6.1.md). `src/shared.js` changed, so the online hub
+redeployed (an unsigned `POST /teams/x/sessions/y/handoff` answers 401). Release, CI and Package green;
+`Protoplasma-0.6.1-mac-arm64.zip` (151 MB) published; `node scripts/update-check.js 0.6.0` passed (0.6.0 → 0.6.1,
+tampered and ad hoc copies refused). Before release: `npm test` 106 of 106, `npm run e2e` 138 of 138 (four runs, once with one page error,
+see below). Next, from the plan: the first real install with Max (two Macs), then the medium bugs in the research
+report, then decide on Tauri only if memory still matters.
 
 - **Research:** [docs/research/2026-11-08-rust-and-known-bugs.md](docs/research/2026-11-08-rust-and-known-bugs.md).
-  - The app measured at about 270–400 MB per copy; the GPU process (WebGL terminals) is the largest part.
+  - The app measured at about 330–420 MB per copy; the GPU process (Chromium's compositor and Skia cache) is the
+    largest part.
   - A Tauri/Rust app would save about 100–150 MB.
   - The hosted hub uses 28 MB on Railway.
   - The report lists the options and the remaining known bugs with fixes.
@@ -45,7 +54,7 @@ did: [docs/sessions/2026-10-29.md](docs/sessions/2026-10-29.md) (the second secu
     guarded.
   - e2e now prints each page error's stack, so if it happens again the stack says where to look.
 
-## Latest release: v0.6.0 (2 Nov 2026, `040523f`): closing the gaps with Amoeba
+## v0.6.0 (2 Nov 2026, `040523f`): closing the gaps with Amoeba
 
 Released from the worktree branch `claude/protoplasma-monetization-424cba`, pushed as `HEAD:main` with tag `v0.6.0`.
 Release, CI and Package green; `Protoplasma-0.6.0-mac-arm64.zip` (152 MB) published. The online hub redeployed: an

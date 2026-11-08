@@ -8,12 +8,14 @@ const EDIT_TOOLS = ['Edit', 'Write', 'MultiEdit', 'NotebookEdit'];
 
 /**
  * Appends terminal output to a scrollback buffer. Trims only past 2x the limit, so appends are amortised O(1)
- * instead of copying the whole buffer on every chunk.
- * TODO: the trimmed tail can start mid escape sequence. Replay through @xterm/headless if late joiners see glitches.
+ * instead of copying the whole buffer on every chunk. The kept part starts after a line end, so a late joiner's replay
+ * doesn't begin halfway through an escape sequence (printed as stray text); without one nearby, it's cut as it falls.
  */
 const appendScrollback = (buf, data) => {
   buf += data;
-  return buf.length > 2 * SCROLLBACK ? buf.slice(-SCROLLBACK) : buf;
+  if (buf.length <= 2 * SCROLLBACK) return buf;
+  const kept = buf.slice(-SCROLLBACK), line = kept.indexOf('\n');
+  return line >= 0 && line < 4096 ? kept.slice(line + 1) : kept;
 };
 
 /** A session name as a safe branch and folder name. Names that give the same slug are the same session. */

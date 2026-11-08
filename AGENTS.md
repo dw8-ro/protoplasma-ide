@@ -23,6 +23,7 @@ Function names below are stable. Line numbers drift, so search by name.
 | `npm run e2e` | Drives the real Electron app through every main flow and prints `PASS`/`FAIL` per step, ending with `N/M passed`. 15-minute cap. | The `claude` CLI on the login-shell PATH and a GUI session. One step needs `gh auth status` to succeed (online). |
 | `npm run dist` | Packages `dist.noindex/Protoplasma-darwin-arm64/Protoplasma.app`, unsigned. | |
 | `npm run playground` | Two app copies (David on port 7801, Max on 7802) on a local hub and repo, each with an HTTP control API | |
+| `node scripts/memory.js [--agents N] [--code]` | Memory per process type for both playground copies (David runs N agents, Max watches), as Activity Monitor counts it, median of 3 samples after a garbage collection. GPU figures swing by about 100 MB between runs (Chromium's Skia cache), so compare the page and main figures | `npm run playground` running, after customer scenarios 1 and 2 |
 | `for s in 1 2 3 4 5 6 7 8; do node scripts/customer/s$s.js; done` | The customer simulation (docs/usage-test/REPORT.md): 91 checks driven with real clicks and typing against a running playground, start to finish on one fresh playground | `npm run playground` running |
 | `npm run hub` | A standalone hub on `PORT` (default 7681). Memory only unless `DATA_DIR` is set. | |
 | `npm run screenshot` / `npm run demo` | Regenerate `docs/*.png` and `docs/demo.gif` (plus its framed copies in `docs/readme/`) from a staged fake team (`scripts/stage.js`) | |
@@ -425,6 +426,8 @@ docs/             screenshots (sources), readme/ (the README's images, dark and 
   recreated.
   - Only on-screen terminals get WebGL; a page gets about 16 contexts.
   - Teammates' terminals keep the owner's columns and rows, and `fitFont` scales the font, down to 6 px.
+  - Scrollback is 5,000 lines for your own agents and 2,000 for teammates' (about what the hub replays to a late
+    joiner). A full 5,000 lines is about 6.5 MB per terminal.
   - A teammate terminal sends input only while focused, and never xterm's automatic replies.
 - **Work between people:** **Continue** (`continueMenu`, on a teammate's agent or its stopped screen) starts your agent in
   the session with `briefFrom`: their last prompt, changed and unpushed files, and the end of their screen

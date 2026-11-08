@@ -68,6 +68,8 @@ async function run(win, hub) {
   const js = s => win.webContents.executeJavaScript(s);
   // The page's own errors, so a failed step says what went wrong in the window.
   win.webContents.on('console-message', (e, level, message) => { if ((e.level ?? level) === 'error' || level === 3) console.log(`  page error: ${e.message ?? message}`); });
+  // An uncaught error's message alone doesn't say where it came from: print its stack too.
+  await js(`addEventListener('error', e => e.error?.stack && console.error(e.error.stack))`);
   const until = async (expr, ms = 8000) => { const end = Date.now() + ms; while (Date.now() < end) { if (await js(expr)) return true; await sleep(100); } return false; };
   const secretOf = pid => { try { return /PROTO_HOOK_SECRET=(\w+)/.exec(execFileSync('ps', ['eww', '-o', 'command=', '-p', String(pid)], { encoding: 'utf8' }))?.[1]; } catch { return undefined; } };
   // This run's agents only: processes descended from this one (an installed copy or a playground runs its own).
@@ -178,6 +180,8 @@ async function run(win, hub) {
     check('Settings shows which agents are installed', await until(`/Claude Code/.test($('#providers').textContent) && /Installed/.test($('#providers').textContent)`), await js(`$('#providers').textContent.replace(/\\s+/g, ' ')`));
     await js(`$('input[data-pref=theme][value=light]').click()`);
     check('light theme applies to the app and terminals', await js(`document.documentElement.dataset.theme === 'light' && terms.get(${JSON.stringify(mine)}).term.options.theme.background === '#ffffff' && getComputedStyle(document.body).backgroundColor === 'rgb(243, 243, 245)'`));
+    check('pure black backgrounds take the terminal\'s own, in any theme, even split across two chunks of output',
+      await js(`forPage('\\x1b[1;48;2;0;', 'e2e') === '' && forPage('0;0mA', 'e2e') === '\\x1b[1;49mA' && forPage('\\x1b[48;5;16;38;2;0;0;0m') === '\\x1b[49;38;2;0;0;0m' && forPage('\\x1b[48;2;0;0;1m') === '\\x1b[48;2;0;0;1m'`));
     await js(`$('[data-step="0.5"]').click(); $('[data-step="0.5"]').click()`);
     check('terminal text size changes your pane', await js(`terms.get(${JSON.stringify(mine)}).term.options.fontSize === 13.5 && $('#fontSize').textContent === '13.5px'`));
     await js(`(() => { const select = $('select[data-pref=fontFamily]'); select.value = 'Menlo'; select.dispatchEvent(new Event('change', { bubbles: true })); $('[data-line="0.1"]').click(); })()`);
@@ -327,7 +331,9 @@ async function run(win, hub) {
     check('a session can be renamed while its agent runs, and the agent moves with it', await until(`hubLanes.find(l => l.id === ${JSON.stringify(second)})?.session === 'Login work' && local.get(${JSON.stringify(second)}).session === 'Login work' && /Login work/.test($('#sessions').textContent)`));
     await js(`proto.renameSession(currentTeam.key, 'Login work', 'Fix Login').then(r => { sessionRecords = r; render(); }); 0`);
     await until(`local.get(${JSON.stringify(second)}).session === 'Fix Login'`);
-    await js(`openSession('Fix Login'); openFile('README.md'); 0`);
+    // Waits for openFile itself: it marks the file active before it loads it, then focuses the editor, which used to take
+    // focus from the comment field below now and then.
+    await js(`openSession('Fix Login'); openFile('README.md')`);
     await until(`code.active === 'README.md' && !!editor.getModel()`);
     await js(`editor.setSelection(new monaco.Selection(1, 1, 1, 4)); editor.getAction('protoplasma.comment').run(); 0`);
     check('Comment on this points the next comment at those lines', await until(`commentRef?.file === 'README.md' && commentRef.line === 1 && !$('#commentRef').hidden && document.activeElement === $('#commentText')`));

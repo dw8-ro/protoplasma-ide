@@ -760,6 +760,10 @@ test('scrollback keeps the latest output within its limit', () => {
   for (let i = 0; i < 5000; i++) buf = appendScrollback(buf, `line ${i}\n`.padEnd(200, '.'));
   assert.ok(buf.length <= 2 * SCROLLBACK);
   assert.ok(buf.endsWith(`line 4999\n`.padEnd(200, '.')));
+  // The kept part starts on a fresh line, never inside a colour sequence.
+  let coloured = '';
+  for (let i = 0; i < 5000; i++) coloured = appendScrollback(coloured, `\x1b[38;2;255;100;0m${`line ${i}`.padEnd(130, '.')}\x1b[0m\r\n`);
+  assert.ok(coloured.startsWith('\x1b[38;2;255;100;0mline '), JSON.stringify(coloured.slice(0, 30)));
 });
 
 test('only a session\'s creator or the team owner changes its goal', async () => {

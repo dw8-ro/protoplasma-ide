@@ -28,6 +28,7 @@ const { PLAY_PORT, PLAY_DIR, PLAY_TOKEN, PLAY_REAL, PROTO_ONLINE_HUB: hub } = pr
 const people = { 'tok-david': { login: 'david', name: 'David', avatar: '' }, 'tok-max': { login: 'max', name: 'Max', avatar: '' } };
 hubModule.githubUser = async token => people[token] || null;
 app.setPath('userData', path.join(PLAY_DIR, 'userData'));
+app.commandLine.appendSwitch('js-flags', '--expose-gc'); // window.gc(), so scripts/memory.js measures after a collection
 
 // ---- Agents: bash in a terminal, named after the CLI ----
 const NAMES = { claude: 'Claude Code', codex: 'Codex', opencode: 'OpenCode' };

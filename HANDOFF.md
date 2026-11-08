@@ -5,6 +5,46 @@ did: [docs/sessions/2026-10-29.md](docs/sessions/2026-10-29.md) (the second secu
 [docs/sessions/2026-10-26.md](docs/sessions/2026-10-26.md) (19–26 Oct) and
 [docs/sessions/2026-10-18.md](docs/sessions/2026-10-18.md) (the first security audit).
 
+## Since 0.6.0 (8 Nov 2026, not released): small fixes, and research on Rust
+
+- **Research:** [docs/research/2026-11-08-rust-and-known-bugs.md](docs/research/2026-11-08-rust-and-known-bugs.md).
+  - The app measured at about 270–400 MB per copy; the GPU process (WebGL terminals) is the largest part.
+  - A Tauri/Rust app would save about 100–150 MB.
+  - The hosted hub uses 28 MB on Railway.
+  - The report lists the options and the remaining known bugs with fixes.
+- **Electron 44.10.2** (Chromium/V8 security backports).
+- **Terminal colours after a theme switch (C157):** pure-black backgrounds in agent output become the terminal's own
+  background (`49`) in both themes (renderer `forPage`, `defaultForBlack`), so the theme decides at draw time and a
+  switch recolours text already on screen. Before, light mode rewrote them to white as output arrived.
+- **Split escape sequences:** `forPage` holds back an unfinished escape sequence at the end of an agent's chunk until
+  the rest arrives, so it's still recoloured.
+- **Scrollback trim:** `appendScrollback` (shared.js) keeps from a line end, so a late joiner's replay no longer starts
+  inside an escape sequence. Test in hub.test.js.
+- **e2e:** the flaky "Comment on this…" step was the test's own race. `openFile` marks the file active before it loads
+  it, then focuses the editor, so the step now waits for `openFile`. A new step checks `forPage`.
+- **Left out:**
+  - C151 (retrying Monaco's load): it loads from the app's own files, so a failure doesn't go away on retry.
+  - The session-alias cap: it only matters after 50 renames of one session.
+- **Memory:** teammates' terminals keep 2,000 lines of scrollback, down from 5,000 (renderer `createTerminal`). With
+  six busy teammate terminals that saves 30–40 MB in the page process. Measure with the new `scripts/memory.js`; the
+  playground now starts with `--expose-gc`, so it measures after a collection. The GPU process can't be trimmed from
+  the app: mostly the compositor and Skia's cache. Details in the research report, option A.
+- **An unexplained page error, seen once:** "Cannot read properties of undefined (reading 'dimensions')".
+  - When: one e2e run, the first launch of a freshly downloaded Electron 44.10.2, while a second agent's terminal was
+    laid out (between "the clone gets the push guard" and "shows when the branch falls behind").
+  - Effect: no check failed.
+  - Reproduction attempts, none of which showed it:
+    - two more full e2e runs (138/138 each);
+    - 30 rounds of a playground stress test (agents started and stopped with output flowing, side-by-side, theme and
+      font flips, sidebar and panel).
+  - It's xterm's `RenderService.dimensions` getter (`this._renderer.value.dimensions`), so a terminal whose renderer is
+    gone.
+  - Ruled out in a standalone Electron test page: write, resize, fit or a font change after dispose; resize then dispose
+    in one frame; with and without WebGL.
+  - Also checked in xterm's code: its scroll sync, deferred resize and synchronized-output timer are all cleaned up or
+    guarded.
+  - e2e now prints each page error's stack, so if it happens again the stack says where to look.
+
 ## Latest release: v0.6.0 (2 Nov 2026, `040523f`): closing the gaps with Amoeba
 
 Released from the worktree branch `claude/protoplasma-monetization-424cba`, pushed as `HEAD:main` with tag `v0.6.0`.
@@ -219,7 +259,7 @@ is the one proposed to David; he hasn't chosen yet.
 ### Known and left alone on purpose
 - **C44:** inviting a login with an underscore is refused. Only GitHub Enterprise Managed Users have such logins, and they
   can't use the public device-flow sign-in anyway.
-- **C157:** after switching theme, terminal output already on screen keeps the old colours until it's redrawn.
+- **C157:** fixed on 8 Nov (see "Since 0.6.0").
 - **Part of C151:** there's no automatic retry when Monaco fails to load, because its AMD loader caches the failure. The
   code view now explains the failure instead.
 - **Test gaps** (C107, C109 to C111): all covered now (hub-live.test.js: hello validation, size clamps, hook states,

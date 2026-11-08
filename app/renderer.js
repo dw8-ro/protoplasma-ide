@@ -501,29 +501,41 @@ function watch(conn) {
 }
 
 // Claude Code draws parts of its mascot on a pure black background (even in its light theme), which only blends in on
-// a dark page. In light mode those cells get the page colour instead, so they read as gaps the way they do in dark.
+// a dark page. Those cells get the terminal's own background (49) instead, so they read as gaps in either theme, and
+// a theme switch recolours text already on screen too (the theme decides at draw time, not here).
 // Pure black is true-colour 0,0,0 or colour 16 of the 256-colour palette; the theme's own "black" is left alone.
-// ponytail: an escape sequence split across two chunks is left as it is; buffer partial sequences if that shows up.
-function whiteForBlack(params) {
+function defaultForBlack(params) {
   const p = params.split(';'), out = [];
   for (let i = 0; i < p.length; i++) {
     const bg = p[i] === '48', colour = bg || p[i] === '38';
     if (colour && p[i + 1] === '2') {
       const rgb = p.slice(i + 2, i + 5);
-      out.push(p[i], '2', ...(bg && rgb.join() === '0,0,0' ? ['255', '255', '255'] : rgb));
+      if (bg && rgb.join() === '0,0,0') out.push('49');
+      else out.push(p[i], '2', ...rgb);
       i += 4;
     } else if (colour && p[i + 1] === '5') {
-      out.push(p[i], '5', bg && p[i + 2] === '16' ? '231' : p[i + 2]); // 231 is white
+      if (bg && p[i + 2] === '16') out.push('49');
+      else out.push(p[i], '5', p[i + 2]);
       i += 2;
     } else out.push(p[i]);
   }
   return out.join(';');
 }
-const forPage = data => (effectiveTheme() !== 'light' ? data : data.replace(/\x1b\[([\d;]*)m/g, (_, params) => `\x1b[${whiteForBlack(params)}m`));
+// An escape sequence can be split across two chunks of output. With an agent's id, an unfinished one at the end is
+// held back until the rest arrives (xterm would wait for it anyway), so it's still recoloured.
+const unfinished = new Map();
+function forPage(data, id) {
+  if (id !== undefined) {
+    data = (unfinished.get(id) || '') + data;
+    const cut = data.search(/\x1b(\[[\d;:]*)?$/);
+    if (cut >= 0) { unfinished.set(id, data.slice(cut)); data = data.slice(0, cut); } else unfinished.delete(id);
+  }
+  return data.replace(/\x1b\[([\d;]*)m/g, (_, params) => `\x1b[${defaultForBlack(params)}m`);
+}
 const tails = new Map(); // your agents' latest output, for one that stops as soon as it starts
 function write(id, data) {
   if (local.has(id)) tails.set(id, ((tails.get(id) || '') + data).slice(-2000));
-  data = forPage(data);
+  data = forPage(data, id);
   const t = terms.get(id);
   if (t) t.term.write(data);
   else pending.set(id, ((pending.get(id) || '') + data).slice(-1_000_000)); // the latest screenfuls are enough
@@ -542,6 +554,7 @@ proto.onExit(id => {
   stopping.delete(id);
   if (terms.has(id)) dropTerminal(id); // even when no team is open (signed out), so nothing lingers
   pending.delete(id);
+  unfinished.delete(id);
   hubLanes = hubLanes.filter(l => l.id !== id);
   render();
 });
@@ -1648,6 +1661,7 @@ function dropTerminal(id) {
   t.el.remove();
   terms.delete(id);
   pending.delete(id);
+  unfinished.delete(id);
 }
 
 function createTerminal(l) {
@@ -1657,7 +1671,10 @@ function createTerminal(l) {
   el.innerHTML = '<span class="lane-label"></span><div class="screen"></div><div class="lane-bar"></div>';
   $('#lanes').append(el);
   const term = new Terminal({ cols: laneCols(l.cols), rows: laneRows(l.rows), fontSize: prefs.fontSize, lineHeight: prefs.lineHeight, fontFamily: terminalFont(),
-    theme: terminalTheme(), minimumContrastRatio: contrastFloor(), cursorBlink: mine, disableStdin: !mine && !l.open, scrollback: 5000 });
+    theme: terminalTheme(), minimumContrastRatio: contrastFloor(), cursorBlink: mine, disableStdin: !mine && !l.open,
+    // A full terminal's scrollback is about 6.5 MB at 107 columns. Teammates' terminals keep 2,000 lines, about what the
+    // hub replays to someone who joins late (SCROLLBACK), so watching from the start doesn't cost more than joining late.
+    scrollback: mine ? 5000 : 2000 });
   term.open(el.querySelector('.screen'));
   let resizer, refit;
 

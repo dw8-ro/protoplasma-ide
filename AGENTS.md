@@ -641,6 +641,11 @@ docs/             screenshots (sources), readme/ (the README's images, dark and 
     David.
   - Health check: `/`. URL: `https://hub-production-fba9.up.railway.app`.
   - Hub changes reach installed apps only after this deploy, so push `main` when hub code changed.
+  - **Free plan** since 14 Nov 2026: $1 of usage a month, 0.5 GB RAM, a 0.5 GB volume. The hub uses about 28 MB and its
+    volume under 100 MB. Free requires App Sleeping (the service's Serverless setting), so the hub sleeps after about
+    10 minutes with nobody connected and the next request wakes it in a few seconds. That's why `hubApi` waits 15 s for
+    the online hub and a Mac hub's pass-key fetch waits 8 s; lanes and the hub socket retry after a 1013 anyway.
+    Don't turn App Sleeping off: the next deploy is refused on Free without it.
 - **Install:** the README one-liner (`curl -fsSL https://raw.githubusercontent.com/dw8-ro/protoplasma-ide/main/install.sh | sh`)
   works without signing in, because the repo is public (since 17 Oct 2026).
   install.sh quits a running copy, swaps it via `.old`, and rolls back on failure.

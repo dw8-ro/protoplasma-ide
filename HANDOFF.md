@@ -14,7 +14,7 @@ shared.js changed) and a tag releases to installed copies: both are David's call
   while David was away: [docs/sessions/2026-11-15.md](docs/sessions/2026-11-15.md). **The findings behind it:**
   [docs/research/](docs/research/). **Notes for the release:** [docs/release-notes/0.7.0.md](docs/release-notes/0.7.0.md)
   (a minor version: `npm version minor`, not `npm run release`).
-- **Checks:** `npm test` 120 of 120. `npm run e2e` 143 of 143 (one later run: 142, failing only "Comment on this points
+- **Checks:** `npm test` 120 of 120. `npm run e2e` 144 of 144 on Electron 44.10.2 (some runs: one fewer, failing only "Comment on this points
   the next comment at those lines", which needs the window to have focus). The customer simulation: 91 of 91.
 
 What's in, by phase:
@@ -44,9 +44,12 @@ What it still needs, in order:
 - **Not built:** most of R9 (agents in one folder now share a git poll; polling less often when nothing changes
   isn't done), the rest of phase 3 (the team picker, one "beside", Plan and Memory in the
   side panel, a shorter bar, what to do about an overlap), and the rest of phase 5.
-- **Two things seen once and not explained** (details in the log): on the first launch of a freshly downloaded
-  Electron, e2e's "creates a This Mac team…" step failed and a terminal drew its text at half size. The second has a
-  guard now (renderer.js `scaleOff`) and e2e provokes and checks it; the first passed on every later run.
+- **Electron stays at 44.10.2. Don't take 44.11.x as it is:** its canvas refuses the font string xterm's WebGL renderer
+  draws letters with (`" normal 25px …"`, with a leading space), so every terminal's text comes out tiny in full-size
+  cells. This is what David saw twice. e2e now checks a canvas takes that font, so the next Electron update says so at
+  once. The way forward for 44.11 and later is an xterm that writes the font without the leading space.
+- **Seen once and not explained:** on the first launch of a freshly downloaded Electron, e2e's "creates a This Mac
+  team…" step failed; it passed on every later run.
 
 ## Latest release: v0.6.1 (8 Nov 2026, `a52368f`): small fixes, lighter teammates' terminals, and research on Rust
 

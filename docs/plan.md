@@ -38,7 +38,8 @@ Ctrl-C or digit the agent's Mac watches its screen for 2.5 s and tells the hub w
 - R4: answering a permission clears Needs you at once.
 - R7: the relay sends the hub only what it reads. Then change the privacy text in the README and Settings, which
   quote what passes through.
-- R12: fix the e2e step that needs a dirty checkout. R14: Electron `~44.11.3`.
+- R12: fix the e2e step that needs a dirty checkout. R14 (Electron 44.11.3) was tried and undone: its canvas refuses
+  the font xterm draws letters with, so terminal text came out tiny. Electron stays at `~44.10.2`.
 - Recheck Codex's hooks on 0.169.0 (`codex app-server`, `hooks/list`), and e2e on Claude Code 2.1.325.
 
 **Done when:** `npm test` and `npm run e2e` pass, with new tests for each of R1 to R5 (hub-live.test.js) and R7

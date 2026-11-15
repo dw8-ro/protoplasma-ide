@@ -510,6 +510,9 @@ async function run(win, hub) {
     // ---- signing out stops your agents and clears the board
     await js(`openNewAgent('bye'); $('input[name=source][value=folder]').checked = true; syncSource(); $('#cwd').value = ${JSON.stringify(root)}; $('#agentForm').requestSubmit()`);
     await until('local.size === 1 && hubLanes.length === 1', 15000);
+    // The letters in a terminal are drawn on a canvas with this font. Electron 44.11.3's canvas refused it (xterm writes it
+    // with a leading space), and every letter came out in the canvas's own 10px font: tiny, in full-size cells.
+    check('a canvas takes the font terminals draw their letters with', await js(`(() => { const c = document.createElement('canvas').getContext('2d'); c.font = ' normal 25px ' + terminalFont(); return c.font.startsWith('25px'); })()`));
     await js(`$('#signout').click()`);
     check('signing out stops your agents and returns to sign-in', await until(`local.size === 0 && me === null && currentTeam === null && $('#start').open && !$('#signinView').hidden && terms.size === 0`, 10000),
       await js(`JSON.stringify({ local: local.size, terms: terms.size, me: !!me })`));

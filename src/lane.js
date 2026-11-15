@@ -186,7 +186,7 @@ function startLane({ hub, hookBase, team, token, credentials = () => ({ token })
   const id = laneIdOf(hookSecret);
   // The app's "Other command" (`bare`) is run as it's written, whatever it's called: were `claude` typed there, it would
   // otherwise get hooks pointed straight at the hub, past the relay that guards what a hub may answer.
-  const kind = path.basename(cmd), agent = (!bare && AGENTS[kind]) || {}, hookUrl = `${hookBase || hub}/hooks/${id}`;
+  const kind = path.basename(cmd), known = Object.hasOwn(AGENTS, kind), agent = known && !bare ? AGENTS[kind] : {}, hookUrl = `${hookBase || hub}/hooks/${id}`;
   // What this CLI needs to send its hooks (agents.js). If that can't be set up, it runs without them.
   let hooked = null;
   try { hooked = agent.hooks?.({ url: hookUrl, env }) || null; } catch {}
@@ -197,7 +197,7 @@ function startLane({ hub, hookBase, team, token, credentials = () => ({ token })
     // The app's terminal (xterm.js) does 24-bit colour; saying so lets CLIs use their real colours.
     // An agent without hooks (and whatever it runs) doesn't get the hook secret: one in the table that has none, or the
     // app's "Other command" (`bare`). A command run by hand does (this file on its own, the tests), to post its own hooks.
-    const secret = hooked || (!AGENTS[kind] && !bare) ? { PROTO_HOOK_SECRET: hookSecret, ...hooked?.env } : {};
+    const secret = hooked || (!known && !bare) ? { PROTO_HOOK_SECRET: hookSecret, ...hooked?.env } : {};
     term = pty.spawn(cmd, args, { name: 'xterm-256color', cols, rows, cwd, env: { ...env, COLORTERM: 'truecolor', ...secret } });
   } catch {
     throw new Error(`Couldn't start "${cmd}". Is it installed and on your PATH?`);

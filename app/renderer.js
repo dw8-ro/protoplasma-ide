@@ -820,7 +820,8 @@ $('#agentForm').onsubmit = async e => {
     button.textContent = fromRepo ? 'Getting the repo…' : 'Starting…';
     // What you typed is the session's goal, and the agent's first message too, unless it was already the goal of a
     // session you're adding an agent to, or the CLI can't be started with one.
-    const cmd = $('input[name=cmd]:checked').value;
+    const cmd = $('input[name=cmd]:checked')?.value;
+    if (!cmd) throw new Error('No agent to start yet. Try again in a moment.'); // the list of agents hasn't arrived
     const first = $('#sendTask').checked && !$('#task').dataset.from && agents.find(a => a.cmd === cmd)?.prompts ? task : '';
     await startAgent({ session, cmd, open: $('#open').checked, source, task, prompt: first });
     if (fromRepo) store.set('repo', source.repo);
@@ -1219,12 +1220,12 @@ const diffStat = lanes => {
 // Commits a lane's branch is missing from its upstream.
 const behindChip = l => { const n = l.git?.behind | 0; return n ? `<span class="behind" title="${n} commit${n === 1 ? '' : 's'} behind. Pull before pushing.">↓${n}</span>` : ''; };
 // Files this checkout's commits would conflict in, if its branch were merged with main today (lane.js mainConflicts).
-const clashChip = files => { const n = files?.length | 0; return n ? `<span class="behind clash" title="Would conflict with main in ${esc(files.slice(0, 8).join(', '))}${n > 8 ? ` and ${n - 8} more` : ''}. Merge main and settle them before a pull request.">${n} conflict${n === 1 ? '' : 's'} with main</span>` : ''; };
+const clashChip = files => { files = Array.isArray(files) ? files : []; const n = files.length; return n ? `<span class="behind clash" title="Would conflict with main in ${esc(files.slice(0, 8).join(', '))}${n > 8 ? ` and ${n - 8} more` : ''}. Merge main and settle them before a pull request.">${n} conflict${n === 1 ? '' : 's'} with main</span>` : ''; };
 const branchLine = lanes => {
   const names = [...new Set(lanes.map(l => l.branch).filter(Boolean))];
   const diff = diffStat(lanes);
   const behind = behindChip({ git: { behind: Math.max(0, ...lanes.map(l => l.git?.behind || 0)) } });
-  return names.length || diff ? `<div class="card-branch"><svg><use href="#branch"/></svg><span class="names" title="${esc(names.join(', '))}">${esc(names.join(', '))}</span>${behind}${clashChip([...new Set(lanes.flatMap(l => l.conflicts || []))])}${diff}</div>` : '';
+  return names.length || diff ? `<div class="card-branch"><svg><use href="#branch"/></svg><span class="names" title="${esc(names.join(', '))}">${esc(names.join(', '))}</span>${behind}${clashChip([...new Set(lanes.flatMap(l => (Array.isArray(l.conflicts) ? l.conflicts : [])))])}${diff}</div>` : '';
 };
 const lastActive = lanes => {
   const at = lanes.map(l => l.lastActive).filter(Boolean).sort().pop();
@@ -1475,7 +1476,7 @@ function environment(inRoom, rec) {
   const mine = inRoom.filter(l => local.has(l.id)); // your checkout's commits; teammates' are on their own Macs
   const behind = Math.max(0, ...(mine.length ? mine : inRoom).map(l => l.git?.behind || 0));
   const ahead = Math.max(0, ...mine.map(l => l.git?.ahead || 0)), unpushed = Math.max(0, ...mine.map(l => l.git?.unpushed || 0));
-  const clashing = [...new Set((mine.length ? mine : inRoom).flatMap(l => l.conflicts || []))];
+  const clashing = [...new Set((mine.length ? mine : inRoom).flatMap(l => (Array.isArray(l.conflicts) ? l.conflicts : [])))];
   const github = roomRepo && `https://github.com/${roomRepo}`;
   const row = (label, value, action = '') => `<${action ? 'button' : 'div'} class="panel-row" ${action}><b>${label}</b><span class="mono">${value}</span></${action ? 'button' : 'div'}>`;
   return [

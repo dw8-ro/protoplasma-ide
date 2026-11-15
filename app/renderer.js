@@ -1290,7 +1290,7 @@ function renderRoom(lanes) {
     setHTML(t.bar, `<span class="tag" title="${esc(agent)}">${esc(agent)}</span><span class="state ${cls}"><span class="dot"></span>${esc(label)}</span>` +
       `${diffStat([l])}${behindChip(l)}${clashChip(l.conflicts)}${l.branch ? `<span class="branch" title="${esc(l.branch)}">${esc(l.branch)}</span>` : ''}` +
       (mine && l.typedBy && Date.now() - Date.parse(l.typedAt) < 10 * 60_000 ? `<span class="typed" title="${esc(l.typedBy)} typed into this agent">${esc(l.typedBy)} typed, ${ago(l.typedAt)}</span>` : '') +
-      `<span class="access" title="${access}">${access}</span>`
+      (mine && !l.open ? '' : `<span class="access" title="${access}">${access}</span>`) // your own agent that only you type into is the usual case: nothing to say
       + (mine ? `<button class="btn ghost small" data-handoff="${esc(l.id)}" title="Hand this work to a teammate">Hand off</button>`
         : `<button class="btn ghost small" data-continue="${esc(l.id)}" title="Start your own agent from what this one was doing">Continue</button>`)
       + (mine && !stopping.has(l.id) ? `<button class="btn ghost small" data-stop="${esc(l.id)}">Stop</button>` : ''));

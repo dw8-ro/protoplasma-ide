@@ -1220,6 +1220,7 @@ function renderRoom(lanes) {
     const mine = local.has(l.id);
     t.el.hidden = !onStage.includes(l.id);
     gpu(t, !t.el.hidden);
+    if (scaleOff(t)) { gpu(t, false); gpu(t, true); }
     if (!t.el.hidden && !t.shown) requestAnimationFrame(() => t.term.scrollToBottom()); // output while hidden can leave it scrolled up
     t.shown = !t.el.hidden;
     t.el.style.setProperty('--c', colorFor(l.login));
@@ -1654,10 +1655,21 @@ function gpu(t, on) {
   } catch { t.webgl?.dispose(); t.webgl = null; t.webglFailed = true; }
 }
 
+// Whether a terminal's text is drawn for another scale than its cells. xterm's WebGL renderer keeps the display's pixel
+// ratio from when it was made but draws its letters for the ratio at the time, and nothing tells it when the two part
+// (seen once: letters at half size in full-size cells, until the next resize). A new renderer has both right.
+// ponytail: reads xterm's own fields, so an xterm that renames them only loses this check (e2e's offSize would say so).
+const scaleOff = t => {
+  const drawn = t.webgl && t.term._core?._renderService?._renderer?.value, atlas = drawn?._charAtlas?._config;
+  return !!atlas && (atlas.devicePixelRatio !== devicePixelRatio || drawn._devicePixelRatio !== devicePixelRatio);
+};
+
 function dropTerminal(id) {
   const t = terms.get(id);
   t.resizer?.disconnect();
-  t.term.dispose();
+  // Once xterm has read what was already written to it: output still queued when a terminal goes (an agent's last
+  // words, a team switch) can ask for the window's size, which a disposed terminal answers with a TypeError.
+  t.term.write('', () => setTimeout(() => t.term.dispose()));
   t.el.remove();
   terms.delete(id);
   pending.delete(id);

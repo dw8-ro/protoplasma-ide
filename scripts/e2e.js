@@ -69,11 +69,16 @@ async function run(win, hub) {
   // Terminals on screen whose text isn't the size their cells were measured at (a font changed while they were hidden):
   // such text is drawn small and spaced out, or large and overlapping. A monospace character is about 0.6 of its font size wide.
   const OFF_SIZE = `globalThis.offSize = () => [...terms].filter(([, t]) => !t.el.hidden && t.el.offsetParent).map(([id, t]) => {
-    const cell = t.term._core._charSizeService?.width, font = t.term.options.fontSize;
-    return { id: id.slice(0, 10), mine: local.has(id), font, cell, cols: t.term.cols, rows: t.term.rows, webgl: !!t.webgl, fits: !!t.refit, dpr: devicePixelRatio, ok: cell > 0 && Math.abs(cell / font - 0.6) < 0.06 };
+    const core = t.term._core, cell = core._charSizeService?.width, font = t.term.options.fontSize, drawn = core._renderService?._renderer?.value;
+    const atlas = drawn?._charAtlas?._config, scale = drawn?.dimensions?.device.cell.width / drawn?.dimensions?.css.cell.width;
+    const ok = cell > 0 && Math.abs(cell / font - 0.6) < 0.06 && !!drawn && Math.abs(scale - devicePixelRatio) < 0.3
+      && (!atlas || (atlas.fontSize === font && atlas.devicePixelRatio === devicePixelRatio));
+    return { id: id.slice(0, 10), mine: local.has(id), font, cell, cols: t.term.cols, rows: t.term.rows, webgl: !!t.webgl, failed: !!t.webglFailed, fits: !!t.refit,
+      dpr: devicePixelRatio, scale, atlasFont: atlas?.fontSize, atlasDpr: atlas?.devicePixelRatio, ok };
   }).filter(x => !x.ok); 0`;
   // The page's own errors, so a failed step says what went wrong in the window.
-  win.webContents.on('console-message', (e, level, message) => { if ((e.level ?? level) === 'error' || level === 3) console.log(`  page error: ${e.message ?? message}`); });
+  win.webContents.on('console-message', (e, level, message) => { if ((e.level ?? level) === 'error' || level === 3) console.log(`  page error: ${e.message ?? message}`);
+    else if (/webgl/i.test(e.message ?? message)) console.log(`  page says: ${e.message ?? message}`); });
   // Where a page error came from: the console message alone has no stack.
   const traceErrors = () => win.webContents.executeJavaScript(`addEventListener('error', e => console.error('  at: ' + String(e.error?.stack || e.filename + ':' + e.lineno).split('\\n').slice(0, 8).join(' | ')));
     addEventListener('unhandledrejection', e => console.error('  rejected: ' + String(e.reason?.stack || e.reason).split('\\n').slice(0, 8).join(' | '))); 0`).catch(() => {});
@@ -264,6 +269,18 @@ async function run(win, hub) {
     check('the session works on its own branch', await until(`hubLanes.find(l => l.id === ${JSON.stringify(second)})?.branch === 'session/fix-login'`, 12000),
       await js(`hubLanes.find(l => l.id === ${JSON.stringify(second)})?.branch`));
     check('its text is drawn at the size its cells were measured for', await until(`!!terms.get(${JSON.stringify(second)}) && !terms.get(${JSON.stringify(second)}).el.hidden && offSize().length === 0`, 6000), await js('JSON.stringify(offSize())'));
+    // The display's pixel ratio blinks just as the terminal redraws its letters, and nothing tells it: they'd stay at
+    // half size in full-size cells. The app notices at its next redraw and gives the terminal a new renderer.
+    if (await js(`!!terms.get(${JSON.stringify(second)}).webgl`)) {
+      await js(`(() => { const own = Object.getOwnPropertyDescriptor(window, 'devicePixelRatio'), real = devicePixelRatio;
+        Object.defineProperty(window, 'devicePixelRatio', { get: () => real / 2, configurable: true });
+        const t = terms.get(${JSON.stringify(second)}).term;
+        t.options.theme = { ...t.options.theme }; // any change of options redraws the letters
+        if (own) Object.defineProperty(window, 'devicePixelRatio', own); else delete window.devicePixelRatio; })(); 0`);
+      const off = await js('JSON.stringify(offSize())');
+      await js('render(); 0');
+      check('letters drawn for another pixel ratio are redrawn at the right one', off !== '[]' && await until('offSize().length === 0', 6000), `${off} -> ${await js('JSON.stringify(offSize())')}`);
+    }
     check('in its own folder, leaving the clone on main', fs.existsSync(path.join(demoOwner, 'demo@fix-login', 'README.md')) && git(clone, 'branch', '--show-current') === 'main');
     check('the clone gets the push guard', /Added by Protoplasma/.test(fs.readFileSync(path.join(clone, '.git/hooks/pre-push'), 'utf8')));
 

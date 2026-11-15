@@ -22,6 +22,15 @@ be easy. Phases 1 and 3 are those.
 ## Phases
 
 ### 1. Status you can trust, and less sent to the hub (small, first)
+**Built on 15 Nov 2026, not released.** Everything below is in, with tests (`npm test` 112 of 112). What it still
+needs: the live checks in [first-install.md](first-install.md) ("Status tells the truth"), then a push of `main`
+(the hub changed) and a release, both David's call. Notes for the release are in
+[release-notes/0.6.2.md](release-notes/0.6.2.md).
+
+How R2 and R4 were done: no hook reports an interrupt or an answered permission, so after a person's Enter, Esc,
+Ctrl-C or digit the agent's Mac watches its screen for 2.5 s and tells the hub whether it kept printing (lane.js
+`decided`, hub.js `key`).
+
 - R1: keep `hooked` when an agent reconnects.
 - R2: an interrupted agent goes Idle (Codex's `Interrupt` hook; for Claude Code, Esc or Ctrl-C followed by quiet).
 - R3, R5: a question from the agent shows as Needs you (`AskUserQuestion`, `ExitPlanMode`, Codex's

@@ -252,6 +252,20 @@ test('Codex starts with Protoplasma\'s hooks and the address and secret they nee
   } finally { lane.term.kill(); fs.rmSync(dir, { recursive: true, force: true }); }
 });
 
+// Codex trusts a hook by its place and its exact text. Changing any of these makes everyone who uses Codex review the
+// hooks again, so new hooks are added after them (lane.js codexHookSettings; check with `node scripts/codex-hooks.js`).
+test('Codex\'s first four hooks keep their exact text, and newer ones come after them', () => {
+  const { codexHookSettings } = require('../src/lane');
+  assert.equal(CODEX_HOOK, '[ -z "$PROTO_HOOK_URL" ] || curl -s --max-time 3 -H "Authorization: Bearer $PROTO_HOOK_SECRET"'
+    + ' -H "content-type: application/json" --data-binary @- "$PROTO_HOOK_URL" || true');
+  const run = `hooks=[{type="command",command=${JSON.stringify(CODEX_HOOK)},timeout=5}]`;
+  const setting = codexHookSettings();
+  assert.ok(setting.startsWith(`hooks={UserPromptSubmit=[{${run}}],PreToolUse=[{matcher="Bash|exec_command|apply_patch",${run}},`), 'the prompt hook and the first tool hook');
+  assert.ok(setting.includes(`],PermissionRequest=[{${run}}],Stop=[{${run}}],`), 'the permission and stop hooks');
+  assert.ok(setting.includes(`,{matcher="request_user_input",${run}}],PermissionRequest=`), 'its question tool, as a second group');
+  assert.ok(setting.endsWith(`,Interrupt=[{hooks=[{type="command",command=${JSON.stringify(CODEX_HOOK)},timeout=3}]}]}`), 'and an interrupt');
+});
+
 test('the hook relay sends the hub only what it reads: no file contents, and only the start of a prompt', async () => {
   const seen = [];
   const fake = http.createServer((req, res) => {

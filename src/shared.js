@@ -6,8 +6,8 @@ const SCROLLBACK = 256 * 1024;
 /** Claude Code tools that change files. Edits through these are tracked for overlap warnings. */
 const EDIT_TOOLS = ['Edit', 'Write', 'MultiEdit', 'NotebookEdit'];
 
-/** Tools that put a question to the person (Claude Code's two, and Codex's): the agent then waits on them. */
-const ASK_TOOLS = ['AskUserQuestion', 'ExitPlanMode', 'request_user_input'];
+/** Tools that put a question to the person (Claude Code's two, and Codex's in both its forms): the agent then waits on them. */
+const ASK_TOOLS = ['AskUserQuestion', 'ExitPlanMode', 'request_user_input', 'request_user_input_async'];
 
 /**
  * Appends terminal output to a scrollback buffer. Trims only past 2x the limit, so appends are amortised O(1)

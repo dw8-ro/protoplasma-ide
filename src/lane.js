@@ -57,8 +57,12 @@ const CODEX_HOOK = '[ -z "$PROTO_HOOK_URL" ] || curl -s --max-time 3 -H "Authori
   + ' -H "content-type: application/json" --data-binary @- "$PROTO_HOOK_URL" || true';
 function codexHookSettings() {
   // JSON strings are valid TOML strings. apply_patch is Codex's edit tool; exec_command is its other shell.
-  const group = matcher => `{${matcher ? `matcher=${JSON.stringify(matcher)},` : ''}hooks=[{type="command",command=${JSON.stringify(CODEX_HOOK)},timeout=5}]}`;
-  return `hooks={UserPromptSubmit=[${group()}],PreToolUse=[${group('Bash|exec_command|apply_patch')}],PermissionRequest=[${group()}],Stop=[${group()}]}`;
+  // Codex trusts each hook by its place (event, group) and its text (matcher, timeout, command): changing one of the
+  // first four would have everyone review it again, and a new one is reviewed once on its own. So those four stay
+  // exactly as they are, and later ones go after them: its question tool as a second PreToolUse group, and Interrupt
+  // (3 s is the most Codex gives it). Check a change with `node scripts/codex-hooks.js`.
+  const group = (matcher, timeout = 5) => `{${matcher ? `matcher=${JSON.stringify(matcher)},` : ''}hooks=[{type="command",command=${JSON.stringify(CODEX_HOOK)},timeout=${timeout}}]}`;
+  return `hooks={UserPromptSubmit=[${group()}],PreToolUse=[${group('Bash|exec_command|apply_patch')},${group('request_user_input')}],PermissionRequest=[${group()}],Stop=[${group()}],Interrupt=[${group('', 3)}]}`;
 }
 
 // Git run in the background doesn't run a folder's core.fsmonitor command, and only uses a bare repository it's pointed
@@ -344,7 +348,7 @@ function startLane({ hub, hookBase, team, token, credentials = () => ({ token })
   } };
 }
 
-module.exports = { startLane, repoFromRemote, gitStatus, fetchGit, installed, CODEX_HOOK };
+module.exports = { startLane, repoFromRemote, gitStatus, fetchGit, installed, CODEX_HOOK, codexHookSettings };
 
 // Standalone: PROTO_TOKEN=<github token> node src/lane.js <hub-url> <team-id> <session> [--open] [cmd...]
 // A classic token with no scopes is enough; it's only used for identity.

@@ -20,7 +20,7 @@ Function names below are stable. Line numbers drift, so search by name.
 |---|---|---|
 | `npm install` | Installs dependencies (postinstall makes node-pty's `spawn-helper` executable) | Node 24 |
 | `npm start` | Runs the app from source. Updates are off in source runs. | |
-| `npm test` | 106 integration tests in `test/*.test.js`: real hub, real lanes, real git. About a minute. | git ≥ 2.28, macOS. No network or Electron needed. |
+| `npm test` | 112 integration tests in `test/*.test.js`: real hub, real lanes, real git. About a minute. | git ≥ 2.28, macOS. No network or Electron needed. |
 | `npm run e2e` | Drives the real Electron app through every main flow and prints `PASS`/`FAIL` per step, ending with `N/M passed`. 15-minute cap. | The `claude` CLI on the login-shell PATH and a GUI session. One step needs `gh auth status` to succeed (online). |
 | `npm run dist` | Packages `dist.noindex/Protoplasma-darwin-arm64/Protoplasma.app`, unsigned. | |
 | `npm run playground` | Two app copies (David on port 7801, Max on 7802) on a local hub and repo, each with an HTTP control API | |
@@ -31,6 +31,7 @@ Function names below are stable. Line numbers drift, so search by name.
 | `npm run readme-art` | Builds the README images in `docs/readme/` (dark and light) from `docs/*.png`: the pages in `scripts/readme-art/`, rendered offscreen, and the how-it-works SVG | Run after `npm run screenshot` |
 | `npm run icon` | Renders `app/icon.svg` to `build/icon.png` and `build/icon.icns` | |
 | `npm run release` | Bumps the patch version, tags `v<version>` and pushes. GitHub Actions builds, signs and publishes. | On `main`, with `main` equal to `origin/main` |
+| `node scripts/codex-hooks.js` | Lists what the installed Codex makes of the hooks the app starts it with (`codex app-server`, no prompt, nothing trusted): each hook, and whether it's trusted, new or modified. Run after changing `codexHookSettings` and after a Codex update. | The `codex` CLI |
 | `node scripts/update-check.js [older version]` | After a release: a downloaded copy of an older release updates itself to the latest one with `app/updates.js` (real download, signer and version checks, swap; `open` stubbed), and a tampered or ad hoc copy is refused. `UPDATER=<file>` tests an older updater. About a minute. | Online |
 
 **Verifying a change:** run `npm test`, then `npm run e2e`. For packaging changes, also run `npm run dist`, then
@@ -52,7 +53,7 @@ Syntax checks: `node --check <file>` and `sh -n install.sh scripts/sign.sh`.
 src/hub.js        the hub: REST, /lane and /watch WebSockets, Claude hook answers, push guard, overlaps (~800 lines)
 src/lane.js       runs one agent CLI in a PTY and connects it to the hub; git status polling (~290)
 src/workspace.js  per-session git worktrees and the pre-push guard hook (~130)
-src/shared.js     slug(), scrollback limit, EDIT_TOOLS; shared by hub, lane, workspace (~30)
+src/shared.js     slug(), scrollback limit, EDIT_TOOLS, ASK_TOOLS; shared by hub, lane, workspace (~30)
 app/main.js       Electron main: single-instance lock, login-shell env, every IPC handler, menu, window, quit (~330)
 app/preload.js    window.proto: the whole renderer API over IPC (~80)
 app/teams.js      hub discovery (online / This Mac / nearby via Bonjour), hosting, hubApi REST client (~130)
@@ -66,7 +67,7 @@ app/index.html    CSP, all CSS (tokens and themes), icon sprite, all markup and 
 app/config.json   githubClientId (OAuth app, device flow), onlineHub (the Railway URL)
 scripts/          e2e.js, playground.js + playground-app.js, stage.js, screenshot.js, demo.js + gif.js, readme-art.js +
                   readme-art/ (the README image pages and diagram), sign.sh, icon.js
-test/             hub.test.js (44), hub-live.test.js (13), workspace.test.js (13), files.test.js (13), lan.test.js (13),
+test/             hub.test.js (44), hub-live.test.js (16), workspace.test.js (13), files.test.js (13), lan.test.js (16),
                   identity.test.js (4), updates.test.js (6)
 .github/workflows ci.yml (npm test on every push to main and PR), package.yml (dist check), release.yml (tag → release)
 Dockerfile        the hosted hub image (only src/hub.js + src/shared.js + ws)
@@ -152,8 +153,13 @@ docs/             screenshots (sources), readme/ (the README's images, dark and 
     A hello's `repo` must look like `owner/name`.
   - One person runs at most `MAX_LANES` (30) live agents per team: every teammate's app keeps a terminal for each.
   - Builds the lane record. `tree` is a hash of login, machine and root, and identifies one checkout.
-  - On a reconnect, carries over status, prompt and files.
-  - Relays `out` to every watcher on the team, and handles `size`, `git` and `status`.
+  - On a reconnect, carries over status, prompt, files and `hooked` (also from a stopped agent's record, so one that
+    comes back after a dropped connection keeps its status from its hooks).
+  - Relays `out` to every watcher on the team, and handles `size`, `git`, `status` and `key`.
+  - `key {moving}` is what the screen did after a person's deciding key (lane.js `decided`). Only for a lane with
+    hooks: still printing moves "needs you" to working (an answered permission, which no hook reports until the
+    tool ends), and a quiet screen after Esc or Ctrl-C moves working or "needs you" to idle (an interrupt runs no
+    Stop hook). The next hook corrects either.
 - **`onWatcher`:** handles `look` (presence), `replay` (a stopped agent's last screen), `in` (typing, only into lanes
   started with `open`), and the `file:get`/`file:put` relay through `relayFile`. Only the lane owner's login may answer
   a file request.
@@ -167,13 +173,14 @@ docs/             screenshots (sources), readme/ (the README's images, dark and 
 - **Hooks:** `POST /hooks/:laneId` with `Authorization: Bearer <hookSecret>`, compared timing-safe. `onHook` handles:
   - **UserPromptSubmit:** sets the lane to working and adds `teamContext`: the session goal, plan, other agents and their
     files, notes, and a behind warning.
-  - **PreToolUse:** sets the lane to working (so it recovers after a permission). Bash (and Codex's `exec_command`):
+  - **PreToolUse:** sets the lane to working (so it recovers after a permission). A tool that asks the person
+    (`ASK_TOOLS`: `AskUserQuestion`, `ExitPlanMode`, Codex's `request_user_input`) sets "needs you" instead. Bash (and Codex's `exec_command`):
     `pushRisk` or `shellWriteRisk` → `ask`. Another tool: adds each file's notes; for edit tools (`EDIT_TOOLS`, and
     Codex's `apply_patch`, whose files `patchFiles` reads from the patch text), records the edit (`recordEdit`: 300
     characters, 200 files at most) and asks when `othersOn` a file.
   - **PostToolUse:** only from apps before 0.5.3, which still register it: records the edit. New agents don't send it,
     because it carries every tool's whole output (files read, command output, MCP results).
-  - **PermissionRequest:** sets the lane to "needs you". **Stop:** sets it to idle.
+  - **PermissionRequest:** sets the lane to "needs you". **Stop**, and Codex's **Interrupt:** set it to idle.
 
   Every hook sets `lane.hooked`. Claude Code and Codex send the same events and fields.
   Claude Code's hook timeout is 3 s (Codex's curl has the same), so hook answers must stay fast. If the hook fails, the
@@ -233,13 +240,19 @@ docs/             screenshots (sources), readme/ (the README's images, dark and 
   - Makes a 48-hex `hookSecret` and the id from it (`laneIdOf` in shared.js: `h-` and 32 hex), so only whoever holds
     the secret can connect under that id. `changed()` returns its last git report's files, which `code:readLane` checks.
   - For `claude`, adds `--settings` with HTTP hooks (`claudeHookSettings`: UserPromptSubmit, PreToolUse
-    `Read|Bash|EDIT_TOOLS`, PermissionRequest and Stop, with a 3 s timeout; never PostToolUse). They go to `hookBase` when
+    `Read|Bash|EDIT_TOOLS|ASK_TOOLS`, PermissionRequest and Stop, with a 3 s timeout; never PostToolUse). They go to `hookBase` when
     given, else to the hub.
-  - For `codex`, adds `-c hooks={…}` (`codexHookSettings`, Codex's "session flags" layer): the same four events, each
+  - For `codex`, adds `-c hooks={…}` (`codexHookSettings`, Codex's "session flags" layer): the same four events and
+    `Interrupt`, each
     running one fixed command (`CODEX_HOOK`) that `curl`s the hook to `$PROTO_HOOK_URL` with `$PROTO_HOOK_SECRET`, both
     set in its env. Codex runs commands, not http hooks, and trusts a hook by its hash, so the command must never change
     per run: the person approves it once on Codex's "Hooks need review" screen. PreToolUse matches
-    `Bash|exec_command|apply_patch` (`apply_patch` is Codex's edit tool).
+    `Bash|exec_command|apply_patch` (`apply_patch` is Codex's edit tool), and a second group matches its question
+    tool, `request_user_input`.
+    Codex keys a hook by event, group and position and hashes its matcher, timeout and command: changing any of the
+    first four marks it "modified" and everyone reviews it again, while a new group or event is reviewed once and
+    leaves the others trusted. So new hooks go after the old ones, never into them (a test in lan.test.js pins their
+    text). `node scripts/codex-hooks.js` lists what the installed Codex makes of the settings, without a prompt.
   - main.js always passes `hookBase` (for claude and codex) = teams.js `hookRelay`, a loopback http server that forwards `POST /hooks/:id` to
     the agent's hub and passes back only `safeHookReply`'s part of the answer. Claude Code would also take an allow, a
     deny, a block or a rewritten tool input from a hook, so a hub's operator (a team owner's Mac, or whoever took over
@@ -253,13 +266,18 @@ docs/             screenshots (sources), readme/ (the README's images, dark and 
   plus `cols, rows, history, git` on each connect (`token` from that connection's credentials).
   - `machine` is a hash of the hostname.
   - `roots` lists the repo root both as git reports it (symlinks resolved) and as seen from the working folder.
-- **Messages:** `out` is batched every 16 ms; `size`; `git` only when it changed; `status`.
+- **Messages:** `out` is batched every 16 ms; `size`; `git` only when it changed; `status`; `key` (below).
 - **Status:** "needs you" while the folder-trust prompt shows (`TRUST_PROMPT` plus its answers in `ANSWERS`, within the
   last 400 characters: Yes and No for Claude Code, "Trust and continue" for Codex), and while Codex's "Hooks need review"
   shows ("Trust all and continue"). For codex and opencode, working or idle is guessed from output: output more than
   400 ms after input means working, and 3 s of quiet means idle. Once a lane's hooks arrive, the hub sets `lane.hooked`
   and ignores the lane's own `status` messages (Codex with trusted hooks). Input clears "needs you", but the terminal's own escape-sequence
   replies don't count.
+- **After a deciding key** (`decided`): Enter, Esc on its own, Ctrl-C, and for Claude Code a digit (its dialogs pick an
+  option by number). The lane watches the screen for 2.5 s (`WATCH_MS`) and sends `key {moving}`: `moving` when output
+  arrived more than 1 s after the key (`REDRAW_MS`, past the redraw the key caused) and not as an echo of typing. It
+  sends nothing after Enter or a digit followed by a still screen (a dialog's next question). It rests on a working
+  agent repainting its screen (ponytail in lane.js).
 - **Connection:**
   - Pings every 20 s and terminates a socket that missed a pong.
   - Reconnects after 3 s for codes below 4000, or every 30 s after 4003. It doesn't retry after 4000 or 4001.
@@ -362,6 +380,11 @@ docs/             screenshots (sources), readme/ (the README's images, dark and 
     main.js `hookTarget`: the lane's hub and, for a hub on a Mac, its pinned `ca`, only for this Mac's own lanes.
     `safeHookReply` lets back only `hookSpecificOutput` for PreToolUse or UserPromptSubmit, with `additionalContext`
     and a `permissionDecision` of `ask`.
+  - `slimHook` is what goes TO the hub: the relay reads each hook (up to 20 MB) and passes on only the event, `cwd`,
+    and for a PreToolUse the tool with its `file_path`, `notebook_path`, `command` or `cmd` (20,000 characters; a
+    Codex patch cut to the lines naming its files), or for a UserPromptSubmit the prompt's first 300 characters.
+    File contents, both sides of an edit and the rest of a prompt never leave the Mac. Something that isn't JSON is
+    answered 200 and not passed on.
   - `isPinned(hostname, pem)` backs main.js's `setCertificateVerifyProc`: Chromium accepts a self-signed certificate
     only when it's this Mac's hub's, or a pin that passed a team owner check (`vouched`). Chromium names the host but
     not the port, so a pin left by listing a look-alike nearby hub on the same address mustn't count.
@@ -469,15 +492,19 @@ docs/             screenshots (sources), readme/ (the README's images, dark and 
   `app/github.js` `sessionFolderPath`.
 - **Limits:**
   - `MAX_CHANGED` (200) in hub.js and lane.js.
-  - `EDIT_TOOLS` drives both the lane's hook matcher and the hub's edit tracking.
+  - `EDIT_TOOLS` drives both the lane's hook matcher and the hub's edit tracking. `ASK_TOOLS` drives the matcher
+    and the hub's "needs you" for a question (Codex's matcher in `codexHookSettings` names its own).
+  - teams.js `slimHook` passes the hub exactly the hook fields `onHook` reads. A field the hub starts reading has to
+    be added there, or it arrives empty from every app.
   - The hub's `MAX_SHARED_FILE` and 5 MB frame limit, and renderer `answerFile`'s limits.
 - **Status strings** `'needs you' | 'idle' | 'working'`: the lane, the hub's allow-list, and the renderer's `STATUS`.
   The hub also gives agents without hooks the initial status `'running'` (`onLane`), which the renderer's `STATUS` and
   `sessionStatus` handle.
 - **Push-guard rules:** `PROTECTED_BRANCHES`/`pushRiskOf` in the hub and `PUSH_GUARD` in workspace.js.
 - **Privacy numbers:** the README "Security and privacy" section and the in-app Data & privacy text (index.html) quote
-  the constants. Up to 512 KB of output (2 × `SCROLLBACK`), the last 20 stopped agents (`MAX_STOPPED`), and comment
-  snippets of up to 300 characters.
+  the constants. Up to 512 KB of output (2 × `SCROLLBACK`), the last 20 stopped agents (`MAX_STOPPED`), comment
+  snippets of up to 300 characters, and what `slimHook` lets through of a hook (20,000 characters of a command, 300 of
+  a prompt, and no file contents).
 - **Release artifact:** the zip name `Protoplasma-<ver>-mac-arm64.zip` (release.yml) must match `ASSET` in
   updates.js and the patterns in install.sh. The zip holds `Protoplasma.app` at the top level, and tags are
   `v<version>`.
@@ -504,7 +531,8 @@ docs/             screenshots (sources), readme/ (the README's images, dark and 
   and `history` must never appear in `state`. The hook relay (teams.js `hookRelay`) listens on 127.0.0.1 only and
   passes the hook's own Authorization header through; it must never add a token or pass. Every Claude and Codex agent's
   hooks go through it, and a hub's answer may only add context or ask the person (`safeHookReply`): never allow, deny,
-  block, stop or change a tool call. A new hook answer in the hub needs adding there too. Codex can't ask, so the relay
+  block, stop or change a tool call. What goes to the hub is cut to what it reads (`slimHook`): never the text a tool
+  writes or a whole prompt. A new hook answer in the hub needs adding there too. Codex can't ask, so the relay
   itself turns an ask into one refusal, after which the same step within 10 minutes goes through (`codexReply`); the
   refusal is the app's, from an ask, never a hub's.
 - **Typing in:** remote input only goes to lanes started with `open`, on the watcher's own team. lane.js also drops

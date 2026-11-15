@@ -66,8 +66,19 @@ function makeDemoRepo() {
 
 async function run(win, hub) {
   const js = s => win.webContents.executeJavaScript(s);
+  // Terminals on screen whose text isn't the size their cells were measured at (a font changed while they were hidden):
+  // such text is drawn small and spaced out, or large and overlapping. A monospace character is about 0.6 of its font size wide.
+  const OFF_SIZE = `globalThis.offSize = () => [...terms].filter(([, t]) => !t.el.hidden && t.el.offsetParent).map(([id, t]) => {
+    const cell = t.term._core._charSizeService?.width, font = t.term.options.fontSize;
+    return { id: id.slice(0, 10), mine: local.has(id), font, cell, cols: t.term.cols, rows: t.term.rows, webgl: !!t.webgl, fits: !!t.refit, dpr: devicePixelRatio, ok: cell > 0 && Math.abs(cell / font - 0.6) < 0.06 };
+  }).filter(x => !x.ok); 0`;
   // The page's own errors, so a failed step says what went wrong in the window.
   win.webContents.on('console-message', (e, level, message) => { if ((e.level ?? level) === 'error' || level === 3) console.log(`  page error: ${e.message ?? message}`); });
+  // Where a page error came from: the console message alone has no stack.
+  const traceErrors = () => win.webContents.executeJavaScript(`addEventListener('error', e => console.error('  at: ' + String(e.error?.stack || e.filename + ':' + e.lineno).split('\\n').slice(0, 8).join(' | ')));
+    addEventListener('unhandledrejection', e => console.error('  rejected: ' + String(e.reason?.stack || e.reason).split('\\n').slice(0, 8).join(' | '))); 0`).catch(() => {});
+  win.webContents.on('did-finish-load', traceErrors);
+  if (!win.webContents.isLoading()) traceErrors();
   // An uncaught error's message alone doesn't say where it came from: print its stack too.
   await js(`addEventListener('error', e => e.error?.stack && console.error(e.error.stack))`);
   const until = async (expr, ms = 8000) => { const end = Date.now() + ms; while (Date.now() < end) { if (await js(expr)) return true; await sleep(100); } return false; };
@@ -245,12 +256,14 @@ async function run(win, hub) {
     check('Claude gets the note before reading the file', /Never cache totals/.test((await hook(mine, mySecret, { hook_event_name: 'PreToolUse', tool_name: 'Read', tool_input: { file_path: path.join(root, 'src/x.ts') } }))?.additionalContext || ''));
 
     // ---- an agent from a GitHub repo: its own branch and folder
+    await js(OFF_SIZE);
     const clone = makeDemoRepo();
     await js(`openNewAgent('Fix Login'); $('input[name=source][value=repo]').checked = true; syncSource(); $('#repo').value = 'protoplasma-e2e/demo'; $('#task').value = ''; $('#agentForm').requestSubmit()`);
     check('starts an agent from a repo', await until('local.size === 2', 15000), await js(`$('#agentErr').textContent`));
     const second = await js(`[...local.keys()].find(id => id !== ${JSON.stringify(mine)})`);
     check('the session works on its own branch', await until(`hubLanes.find(l => l.id === ${JSON.stringify(second)})?.branch === 'session/fix-login'`, 12000),
       await js(`hubLanes.find(l => l.id === ${JSON.stringify(second)})?.branch`));
+    check('its text is drawn at the size its cells were measured for', await until(`!!terms.get(${JSON.stringify(second)}) && !terms.get(${JSON.stringify(second)}).el.hidden && offSize().length === 0`, 6000), await js('JSON.stringify(offSize())'));
     check('in its own folder, leaving the clone on main', fs.existsSync(path.join(demoOwner, 'demo@fix-login', 'README.md')) && git(clone, 'branch', '--show-current') === 'main');
     check('the clone gets the push guard', /Added by Protoplasma/.test(fs.readFileSync(path.join(clone, '.git/hooks/pre-push'), 'utf8')));
 
@@ -374,6 +387,7 @@ async function run(win, hub) {
       return started?.session === 's1' && /Max started/.test(started.prompt); })()`));
     await js(`$('#singlePane').click(); 0`);
     check('Single goes back to one session, terminals and all', await until(`view === 'session' && current === 'Fix Login' && $('#lanes').contains(terms.get(${JSON.stringify(second)}).el) && $('#lanes').contains(terms.get(${JSON.stringify(mine)}).el)`));
+    check('after pane mode, text is still drawn at the size its cells were measured for', await until('offSize().length === 0', 6000), await js('JSON.stringify(offSize())'));
 
     // ---- with session branches off, a repo session works on the clone's own branch
     await js(`$('#settingsBtn').click(); $('input[data-pref=sessionBranches]').click(); $('#settingsDone').click();

@@ -764,6 +764,8 @@ function syncSessionName() {
   $('#startAgent').textContent = adding ? 'Start agent' : 'Start the session';
 }
 $('#session').oninput = syncSessionName;
+// Opened options come into view above the footer, which sticks to the bottom of a dialog too tall for the window.
+$('#agentMore').ontoggle = e => { if (e.target.open) e.target.scrollIntoView({ block: 'nearest' }); };
 $('#task').oninput = () => { $('#task').dataset.from = ''; };
 $('#new').onclick = () => openNewAgent();
 $('#cancel').onclick = () => $('#agent').close();

@@ -13,12 +13,19 @@ run('5. Typing into agents, sharing files, stopping, panes, switcher', async () 
   // David starts a second agent that teammates may type into.
   await js('david', `openNewAgent(current); return 1`);
   await until('david', `$('#agent').open`, 3000);
-  if (!(await js('david', `return $('#open').checked`))) { await click('david', '#agentMore summary'); await click('david', 'label:has(#open)'); }
+  if (!(await js('david', `return $('#open').checked`))) {
+    await click('david', '#agentMore summary'); // the box is under More options
+    await until('david', `$('#agentMore').open`, 2000);
+    await sleep(300); // the dialog has grown and settled
+    await click('david', 'label:has(#open)');
+    await until('david', `$('#open').checked`, 2000);
+  }
   await click('david', '#startAgent');
   check('David adds an open agent', await until('david', `local.size === 2`, 15000), await js('david', `return $('#agentErr').textContent`));
   const openLane = await js('david', `return [...local.keys()].find(id => id !== ${JSON.stringify(davidLane)})`);
   await until('max', `hubLanes.some(l => l.id === ${JSON.stringify(openLane)})`, 8000);
-  await js('max', `focus = ${JSON.stringify(openLane)}; tab = 'agents'; render(); return 1`);
+  // Max opens the session it's in: a teammate's agent has a terminal here only while its session is on screen.
+  await js('max', `openSession(hubLanes.find(l => l.id === ${JSON.stringify(openLane)}).session, ${JSON.stringify(openLane)}); return 1`);
   check('Max sees "You can type" on it', await until('max', `/You can type/.test($('#room').textContent)`, 4000));
   await click('max', `.xterm-screen`).catch(() => {});
   await js('max', `terms.get(${JSON.stringify(openLane)}).term.focus(); return 1`); await type('max', 'echo typed-by-max'); await key('max', 'enter');

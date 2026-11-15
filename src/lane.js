@@ -138,6 +138,16 @@ const fetchGit = (cwd, env = process.env) => new Promise(resolve => {
   execFile('git', [...SAFE_GIT, 'fetch', '--quiet'], { cwd, timeout: 20_000, env: e }, () => resolve());
 });
 
+// Agents working in one folder share each look at it: one set of git processes, not one for each of them.
+const looks = new Map(); // folder -> { at, status }
+function sharedStatus(cwd, env) {
+  const last = looks.get(cwd);
+  if (last && Date.now() - last.at < GIT_POLL_MS - 500) return last.status;
+  const status = gitStatus(cwd, { env });
+  looks.set(cwd, { at: Date.now(), status });
+  return status;
+}
+
 // node-pty doesn't report a missing command (the lane would start and exit at once), so look for it first.
 const runnable = file => { try { fs.accessSync(file, fs.constants.X_OK); return fs.statSync(file).isFile(); } catch { return false; } };
 const installed = (cmd, env) => (cmd.includes('/') ? [cmd] : (env.PATH || '').split(path.delimiter).map(dir => path.join(dir, cmd))).some(runnable);
@@ -305,7 +315,7 @@ function startLane({ hub, hookBase, team, token, credentials = () => ({ token })
     if (polls++ % FETCH_EVERY === 0 && !fetching) { fetching = true; fetchGit(cwd, env).finally(() => { fetching = false; }); } // beside the poll, not in it
     if (polling) return;
     polling = true;
-    const next = await gitStatus(cwd, { env }).finally(() => { polling = false; });
+    const next = await sharedStatus(cwd, env).finally(() => { polling = false; });
     if (exited || !next?.branch) return;
     const { untracked, ...stats } = next;
     newFiles = untracked;
@@ -322,6 +332,7 @@ function startLane({ hub, hookBase, team, token, credentials = () => ({ token })
     clearTimeout(quiet);
     clearTimeout(retry);
     clearTimeout(watching);
+    looks.delete(cwd); // another agent still in the folder just looks again
     flush();
     if (ws?.readyState === WebSocket.OPEN) return ws.close();
     // Offline when it ended: one last try, so teammates see how it finished rather than an older screen.

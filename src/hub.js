@@ -310,7 +310,9 @@ function startHub({ port = 7681, host = '0.0.0.0', dataDir, owners, tls, passIss
   const broadcastState = teamId => {
     lastBroadcast.set(teamId, Date.now());
     const team = teams.get(teamId);
-    toTeam(teamId, { t: 'state', lanes: views(teamId), watchers: presence(teamId), members: team?.members || [], memories: team?.memories || [], sessions: team?.sessions || [], stopped: stoppedViews(teamId) });
+    // replays: this hub sends a window the screen of an agent whose session comes into view (`look`), so the window
+    // needn't keep a terminal for every agent on the team.
+    toTeam(teamId, { t: 'state', replays: true, lanes: views(teamId), watchers: presence(teamId), members: team?.members || [], memories: team?.memories || [], sessions: team?.sessions || [], stopped: stoppedViews(teamId) });
   };
   const teamView = t => ({ id: t.id, name: t.name, owner: t.owner, members: t.members, agents: teamLanes(t.id).length });
 

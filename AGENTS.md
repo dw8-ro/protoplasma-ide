@@ -473,8 +473,9 @@ docs/             screenshots (sources), readme/ (the README's images, dark and 
   connection, connects to `${hub}/watch`, and handles `state`, `out`, `replay`, `file:get` and `file:put`.
 - **Terminals:** `createTerminal` makes one per lane of your own, and one per teammate's lane while its session is on
   screen (`onScreen`: the open session, or the sessions in panes; `render()` tells the hub with `look`). A teammate's
-  terminal is dropped when its session leaves the screen and filled again from the hub's replay when it returns. With
-  a hub from before this, output for agents that aren't on screen waits in `pending` (1 MB each at most). The element
+  terminal is dropped when its session leaves the screen and filled again from the hub's replay when it returns. That's
+  only with a hub whose `state` says `replays: true`: with one from before this (the hosted hub until it's redeployed,
+  a teammate's Mac on an older app), every agent keeps its terminal, as before (`hubReplays`). The element
   is moved between `#lanes` and pane columns, never recreated while it lives.
   - Only on-screen terminals get WebGL; a page gets about 16 contexts.
   - Teammates' terminals keep the owner's columns and rows, and `fitFont` scales the font, down to 6 px.

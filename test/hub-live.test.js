@@ -245,6 +245,7 @@ test('a window gets agents\' output only for the sessions it shows, and their sc
     ws.on('error', reject);
   });
   const picky = await open({ sees: [] }), plain = await open({});
+  assert.equal((await state()).replays, true, 'the hub says it replays screens, so a window may drop the terminals it isn\'t showing');
   await handled(a, 101);
   await handled(b, 101);
   assert.deepEqual(picky.got, [], 'nothing until it shows a session');

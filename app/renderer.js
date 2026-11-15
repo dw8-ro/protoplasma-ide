@@ -108,6 +108,7 @@ let stoppedAgents = [];    // recently stopped agents; the hub keeps their last 
 let replaying = null;      // the stopped agent whose last screen is on the stage
 let lookedAt;              // what the hub was last told this window is looking at (`look`)
 let onScreen = [];         // the sessions whose terminals are on screen: the hub sends agents' output only for those
+let hubReplays = false;    // the hub fills a terminal again when its session comes back on screen (older hubs can't)
 const lastStatus = new Map(); // lane id -> previous status, for notifications
 const local = new Map();   // agents running in this app: id -> { teamKey, session, cmd, open, repo, login, name, avatar, refused? }
 const terms = new Map();   // id -> { term, el, bar }
@@ -200,6 +201,7 @@ proto.onSignedIn(({ user, error }) => {
 let gotState = false; // the open team's sessions have arrived from its hub (until then, none look gone)
 function clearTeamView() {
   gotState = false;
+  hubReplays = false;
   hubLanes = [];
   teamWatchers = [];
   memories = [];
@@ -480,6 +482,7 @@ function watch(conn) {
       }
       if (m.t === 'state') {
         gotState = true;
+        hubReplays = m.replays === true;
         // A hub on a Mac could send anything; iterated fields default to arrays so a non-array can't throw out of render().
         hubLanes = Array.isArray(m.lanes) ? m.lanes : [];
         const sessions = Array.isArray(m.sessions) ? m.sessions : [];
@@ -1261,7 +1264,8 @@ function renderRoom(lanes) {
   const onStage = view === 'panes' ? paneLaneIds() : tab === 'agents' ? [focus, split] : [];
 
   // A teammate's agent has a terminal here only while its session is on screen: that's when the hub sends its output.
-  const inView = l => local.has(l.id) || onScreen.includes(l.session);
+  // With a hub that can't replay a screen (one from before this), every agent keeps its terminal, as it always did.
+  const inView = l => local.has(l.id) || !hubReplays || onScreen.includes(l.session);
   for (const id of terms.keys()) if (!local.has(id) && !lanes.some(l => l.id === id && inView(l))) dropTerminal(id);
   for (const id of pending.keys()) if (!local.has(id) && !lanes.some(l => l.id === id)) pending.delete(id); // kept from an older hub, for an agent that's gone
   for (const t of terms.values()) t.el.hidden = true; // local lanes on other teams stay alive, just hidden

@@ -974,11 +974,15 @@ function startHub({ port = 7681, host = '0.0.0.0', dataDir, owners, tls, passIss
     // of them would peg the single-threaded hub: they get a per-socket budget. file:get has its own (fileRate).
     let acts = 0, actsSince = Date.now();
     const flooding = () => { if (Date.now() - actsSince >= 1000) { acts = 0; actsSince = Date.now(); } return ++acts > 30; };
+    let views = 0, viewsSince = Date.now();
+    const viewing = () => { if (Date.now() - viewsSince >= 10_000) { views = 0; viewsSince = Date.now(); } return ++views > 40; };
     ws.on('message', raw => {
       const m = parse(raw);
       if (m?.t === 'look') {
         if (flooding()) return;
-        if (ws.sees && Array.isArray(m.sees)) {
+        // Bringing a session into view replays its agents' screens (up to SCROLLBACK each), so it has a budget of its
+        // own: more than a person clicking around needs, and too few to make the hub pour out screens.
+        if (ws.sees && Array.isArray(m.sees) && !viewing()) {
           const sees = new Set(m.sees.slice(0, 8).map(s => str(s, 60)));
           for (const l of teamLanes(team.id)) if (sees.has(l.session) && !ws.sees.has(l.session)) send(ws, { t: 'out', lane: l.id, d: `\x1bc${l.history}` });
           ws.sees = sees;

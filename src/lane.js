@@ -174,7 +174,9 @@ function startLane({ hub, hookBase, team, token, credentials = () => ({ token })
   if (!installed(cmd, env)) throw new Error(`The "${cmd}" command isn't installed on this Mac. Install it, then start the agent again.`);
   const hookSecret = crypto.randomBytes(24).toString('hex');
   const id = laneIdOf(hookSecret);
-  const kind = path.basename(cmd), agent = AGENTS[kind] || {}, hookUrl = `${hookBase || hub}/hooks/${id}`;
+  // The app's "Other command" (`bare`) is run as it's written, whatever it's called: were `claude` typed there, it would
+  // otherwise get hooks pointed straight at the hub, past the relay that guards what a hub may answer.
+  const kind = path.basename(cmd), agent = (!bare && AGENTS[kind]) || {}, hookUrl = `${hookBase || hub}/hooks/${id}`;
   // What this CLI needs to send its hooks (agents.js). If that can't be set up, it runs without them.
   let hooked = null;
   try { hooked = agent.hooks?.({ url: hookUrl, env }) || null; } catch {}

@@ -490,6 +490,19 @@ docs/             screenshots (sources), readme/ (the README's images, dark and 
   needs you: that Enter could answer its permission or trust question. Continue and Hand off act on the agent's own
   session, which in pane mode needn't be the open one. `checkNotes` compares
   pinned notes' hashes with this Mac's copy at most every 5 s, while Memory is open.
+- **New session** (`#agent`, `openNewAgent`, the form's `onsubmit`): `#task` comes first ("What should the agent do?").
+  `#session` is optional: left empty, `sessionNameFrom` names the session after the first five words typed, with a
+  number if that name is taken, so a made-up name never joins another session (a name the person types does join the
+  session of that name). With `#sendTask` on (under More options, on by default) the text is also the agent's first
+  message, unless it was the prefilled goal of a session being joined (`#task`'s `dataset.from`) or the CLI takes none.
+  **e2e unticks `#sendTask`:** a real Claude Code must never be sent a prompt. The agent pickers are drawn from
+  `agents` (`syncAgents`) and hide when one agent is installed.
+- **Text scale:** `scaleOff` notices a WebGL terminal whose letters were drawn for another pixel ratio than its cells
+  (xterm keeps the ratio from when its renderer was made, and nothing tells it when the display's changes without an
+  event) and gives it a new renderer at the next `render()`. e2e's `offSize()` provokes and checks it.
+- **A terminal that's gone:** anything queued for later that touches a terminal (`requestAnimationFrame` in
+  `renderRoom`) has to check it's still in `terms`: teammates' terminals are dropped whenever their session leaves the
+  screen, and frames wait while the window is hidden.
 - **Sharing files:** `answerFile` replies only for this Mac's own live lane, only with **Share the files your agents
   change** on, and only for files in `lane.files`. The renderer enforces the share setting; main's `code:readLane` then
   checks the file against the agent's own last git report (`lane.changed()`), since `lane.files` comes from the hub.

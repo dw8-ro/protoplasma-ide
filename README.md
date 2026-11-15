@@ -146,7 +146,7 @@ Any other agent CLI works too: put its command in Settings → Agents → **Othe
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/readme/start-dark.png">
-  <img src="docs/readme/start-light.png" alt="Starting a session: what you're working on, the goal, a GitHub repo, and Claude Code, Codex or OpenCode">
+  <img src="docs/readme/start-light.png" alt="Starting a session: what the agent should do, a GitHub repo, and Claude Code, Codex or OpenCode">
 </picture>
 
 ## How it works

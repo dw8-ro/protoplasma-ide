@@ -57,6 +57,17 @@ Overlaps and the push guard, the core of the app:
 - [ ] **Max:** ask Codex to push to main. It's stopped once with Protoplasma's reason. **David:** ask Claude to run
   `git push origin HEAD:main`. Claude asks first. **Say no both times.**
 
+Status tells the truth (these are expected to fail on 0.6.1: they're the checks for phase 1 of
+[plan.md](plan.md), so note what you see and try them again after that release):
+- [ ] **David:** give Claude something long to do and press Esc while it works. Its card says Idle within a few
+  seconds, not Working.
+- [ ] **David:** ask Claude to ask you which of two names you prefer before it renames something. While its question
+  is up, the card says Needs you and the alert shows.
+- [ ] **David:** ask Claude to run `sleep 60` and approve it. The card goes from Needs you to Working as soon as you
+  approve, not a minute later.
+- [ ] **Max:** the same three with Codex.
+- [ ] **Max:** while Codex waits for an approval, close the lid for a minute and open it. It still says Needs you.
+
 Sharing work:
 - [ ] **David:** open the code view (**Code**), make a change, and **Commit & Push**. It goes to `session/try-it`,
   never main. Within about a minute, Max's agent card says it's behind, and his agent's next prompt is told to pull.

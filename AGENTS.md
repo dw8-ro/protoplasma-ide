@@ -8,6 +8,7 @@ before edits to a file a teammate changed. The app also has a Monaco code view, 
 comments on code lines, opt-in sharing of changed files, and self-updates from GitHub Releases.
 
 - **Current state and open work:** [HANDOFF.md](HANDOFF.md). Read it first in a new session.
+- **What's next, in order:** [docs/plan.md](docs/plan.md), from the research in [docs/research/](docs/research/).
 - **The last full review:** [docs/recheck/](docs/recheck/). Its line numbers are from 0.4.1.
 - **User-facing docs:** [README.md](README.md), including the wire-protocol table.
 

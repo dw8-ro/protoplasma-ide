@@ -79,6 +79,9 @@ The order David likes: a review page first, then code.
 in, say what to do, pick the repo), and e2e plus the customer simulation pass on the new screens.
 
 ### 4. Lighter
+**Partly built on 15 Nov 2026:** R8 (output only for sessions on screen) and R10 are in, with tests. R9 (fewer git
+processes) isn't: it needs care with how quickly changes made outside the agent show up.
+
 - R8: output only for sessions someone is showing, and terminals made when first shown. Measure before and after
   with `node scripts/memory.js --agents 6`, and the hub's outbound traffic on Railway.
 - R9: one git poll per folder, slower when the agent is quiet. R10: build overlap sets once per pair.
@@ -88,6 +91,9 @@ in, say what to do, pick the repo), and e2e plus the customer simulation pass on
 an idle agent starts fewer than one git process a second.
 
 ### 5. Better collision avoidance (pick after real use)
+**First item built on 15 Nov 2026:** each agent's branch is checked against main (`conflicts`), shown as "N conflicts
+with main" and told to the agent. Not yet: against teammates' pushed session branches, line ranges, plan-step claims.
+
 - **Will these branches conflict?** `git merge-tree --write-tree` (git 2.38 or later) answers exactly, without
   touching the folder: each agent's branch against main and against teammates' pushed session branches. Show "will
   conflict with …" on the card before anyone opens a pull request.

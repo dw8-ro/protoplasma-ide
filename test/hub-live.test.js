@@ -219,6 +219,20 @@ const watcher = token => new Promise((resolve, reject) => {
   ws.on('error', reject);
 });
 
+test('a branch that would conflict with main is shown to the team, and its agent is told', async () => {
+  const l = await lane({ branch: 'session/x' });
+  l.ws.send(JSON.stringify({ t: 'git', branch: 'session/x', mainBranch: 'main', added: 1, removed: 1, files: 1, behind: 1, ahead: 1, changed: ['a.ts'], conflicts: ['src/a.ts', 42, 'x'.repeat(400)] }));
+  let mine;
+  for (let i = 0; i < 50 && !mine?.conflicts?.length; i++) mine = (await state()).lanes.find(x => x.id === l.id);
+  assert.deepEqual(mine.conflicts, ['src/a.ts', 'x'.repeat(300)], 'names only, and no longer than a path');
+  const context = (await hook(l.id, { hook_event_name: 'UserPromptSubmit', prompt: 'hi' })).hookSpecificOutput.additionalContext;
+  assert.match(context, /Your branch "session\/x" would conflict with main if it were merged today \(from Protoplasma\), in: src\/a\.ts/);
+  l.ws.send(JSON.stringify({ t: 'git', branch: 'session/x', mainBranch: 'main', added: 1, removed: 1, files: 1, behind: 0, ahead: 1, changed: ['a.ts'], conflicts: [] }));
+  for (let i = 0; i < 50 && mine.conflicts.length; i++) mine = (await state()).lanes.find(x => x.id === l.id);
+  assert.deepEqual(mine.conflicts, [], 'and it goes once they are settled');
+  await closed(l.ws);
+});
+
 test('a window gets agents\' output only for the sessions it shows, and their screens as one comes into view', async () => {
   const a = await lane({ session: 'in-view' }), b = await lane({ session: 'elsewhere' });
   a.ws.send(JSON.stringify({ t: 'out', d: 'A-before ' }));

@@ -291,7 +291,7 @@ function startHub({ port = 7681, host = '0.0.0.0', dataDir, owners, tls, passIss
     return ls.map(l => ({ id: l.id, login: l.login, name: l.name, avatar: l.avatar, session: l.session, cmd: l.cmd, repo: l.repo, branch: l.branch,
       git: l.git, tree: l.tree, cols: l.cols, rows: l.rows, open: l.open, status: l.status, lastActive: l.lastActive, prompt: l.prompt || '',
       typedBy: l.typedBy || '', typedAt: l.typedAt || null, startedAt: l.startedAt, local: [...l.local],
-      files: [...filesOf(l)], overlaps: overlaps(l) }));
+      files: [...filesOf(l)], overlaps: overlaps(l), conflicts: l.conflicts || [] }));
   }
   // With `session`: only to windows showing that session (ws.sees), and to every window that never said which it shows.
   const toTeam = (teamId, msg, session) => {
@@ -337,6 +337,11 @@ function startHub({ port = 7681, host = '0.0.0.0', dataDir, owners, tls, passIss
     if (lane.git?.behind) {
       parts.push(`Your branch "${lane.branch}" is ${lane.git.behind} commit${lane.git.behind === 1 ? '' : 's'} behind: main or its pushed copy has ` +
         'commits it doesn\'t (from Protoplasma). Pull or rebase before making more changes, and before pushing.');
+    }
+    if (lane.conflicts?.length) {
+      const main = lane.mainBranch || 'main', more = lane.conflicts.length - MAX_CONTEXT_FILES;
+      parts.push(`Your branch "${lane.branch}" would conflict with ${main} if it were merged today (from Protoplasma), in: `
+        + `${lane.conflicts.slice(0, MAX_CONTEXT_FILES).join(', ')}${more > 0 ? ` and ${more} more` : ''}. Merge ${main} into your branch and settle those before a pull request.`);
     }
     return parts.join('\n\n') || null;
   }
@@ -822,6 +827,7 @@ function startHub({ port = 7681, host = '0.0.0.0', dataDir, owners, tls, passIss
   // ---- WebSockets: agents (/lane) and app windows (/watch) ----
   const gitStats = g => g && typeof g === 'object'
     ? { added: g.added | 0, removed: g.removed | 0, files: g.files | 0, behind: g.behind | 0, ahead: g.ahead | 0, unpushed: g.unpushed | 0 } : null;
+  const fileNames = v => (Array.isArray(v) ? v.slice(0, 50).map(f => str(f, 300)).filter(Boolean) : []); // e.g. what would conflict with main
   const changedFiles = g => new Set(Array.isArray(g?.changed) ? g.changed.slice(0, MAX_CHANGED).map(f => str(f, 300)).filter(Boolean) : []);
   const size = (v, min, max, fallback) => Math.min(max, Math.max(min, v | 0 || fallback)); // terminal cols and rows
   function onLane(ws, user, team, hello) {
@@ -850,7 +856,7 @@ function startHub({ port = 7681, host = '0.0.0.0', dataDir, owners, tls, passIss
       mainBranch: str(hello.git?.mainBranch, 100),
       roots: (Array.isArray(hello.roots) ? hello.roots.slice(0, 4) : []).map(r => str(r, 1000)).filter(Boolean),
       cols: size(hello.cols, 20, 500, 120), rows: size(hello.rows, 5, 200, 36), open: !!hello.open, status: str(hello.cmd, 40) === 'claude' ? 'idle' : 'running', lastActive: new Date().toISOString(), startedAt: before?.startedAt || new Date().toISOString(), files: new Set(), changed: changedFiles(hello.git), local: changedFiles(hello.git?.local ? { changed: hello.git.local } : hello.git),
-      git: gitStats(hello.git), history: typeof hello.history === 'string' ? hello.history.slice(-SCROLLBACK) : '', hookSecret: hello.hookSecret, ws };
+      git: gitStats(hello.git), conflicts: fileNames(hello.git?.conflicts), history: typeof hello.history === 'string' ? hello.history.slice(-SCROLLBACK) : '', hookSecret: hello.hookSecret, ws };
     // One per checkout: the same path on two of someone's Macs is two checkouts.
     lane.tree = crypto.createHash('sha256').update(`${lane.login}\n${str(hello.machine, 64)}\n${lane.root}`).digest('hex').slice(0, 12);
     // Back after a dropped connection: it's still doing what it was (its next hook or report updates it).
@@ -885,6 +891,7 @@ function startHub({ port = 7681, host = '0.0.0.0', dataDir, owners, tls, passIss
         if (`${lane.cols}x${lane.rows}` !== was) broadcastState(team.id);
       } else if (m?.t === 'git') {
         lane.git = gitStats(m);
+        lane.conflicts = fileNames(m.conflicts);
         lane.changed = changedFiles(m);
         lane.local = Array.isArray(m.local) ? changedFiles({ changed: m.local }) : lane.changed;
         lane.files = new Set([...lane.files].filter(f => lane.changed.has(f))); // edits since committed to main, or undone, no longer count

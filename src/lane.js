@@ -17,6 +17,7 @@ const FLUSH_MS = 16; // TUIs redraw in many tiny writes; batch them into one mes
 const GIT_POLL_MS = 5000;
 const FETCH_EVERY = 12; // polls, so about once a minute
 const MAX_CHANGED = 200; // uncommitted paths reported to the hub
+const MAX_CONFLICTS = 50; // files reported as conflicting with main
 // An agent whose hooks aren't sure to run (Codex until they're trusted, OpenCode, any other command: see agents.js)
 // reports status from activity: output streaming means working, and this long without output means idle. Output just
 // after a keystroke is the echo, not work. Once its hooks arrive, the hub goes by them instead.
@@ -101,9 +102,29 @@ async function gitStatus(cwd, { env = process.env, fetch = false } = {}) {
     if (name) changed.push(name);
   }
   for (const file of added.slice(0, MAX_CHANGED)) changed.push(file); // (a spread of a huge list would overflow the stack)
+  // Would this branch's commits conflict with main's, merged today? Only asked when each has commits the other lacks.
+  stats.conflicts = main && ahead && behind ? await mainConflicts(cwd, main, line, env) : [];
   const local = sinceUpstream === null ? changed : [...new Set([...(sinceUpstream || '').split('\0').filter(Boolean), ...added])];
   // untracked: the new files (not sent to the hub; see code:readLane).
   return { ...stats, changed: changed.slice(0, MAX_CHANGED), local: local.slice(0, MAX_CHANGED), untracked: added.slice(0, MAX_CHANGED) };
+}
+/**
+ * The files that would conflict if this checkout's commits were merged with main's today (git 2.38 or later; an older
+ * git says nothing). Commits only: edits not committed yet aren't counted. Asked once for each pair of commits, since
+ * git writes the merged files it tries out as loose objects (unreachable ones, which its own gc clears).
+ */
+const clashes = new Map(); // folder -> { pair: "<HEAD's commit>\n<main's>", files }
+async function mainConflicts(cwd, main, line, env) {
+  const pair = await line('rev-parse', 'HEAD', main);
+  if (!pair) return [];
+  if (clashes.get(cwd)?.pair !== pair) {
+    clashes.set(cwd, { pair, files: await new Promise(resolve => execFile('git',
+      [...SAFE_GIT, '-c', 'core.quotePath=false', 'merge-tree', '--write-tree', '--name-only', '--no-messages', '-z', 'HEAD', main],
+      { cwd, encoding: 'utf8', maxBuffer: 10e6, timeout: 20_000, env: gitEnv(env) },
+      // Exit 1 is "conflicts": the merged tree's id, then the files. Anything else (clean, or a git that can't say): none.
+      (err, out) => resolve(err?.code === 1 ? String(out).split('\0').slice(1).filter(Boolean).slice(0, MAX_CONFLICTS) : []))) });
+  }
+  return clashes.get(cwd).files;
 }
 // Git run in the background never asks for anything: no password prompt nobody sees, no ssh passphrase on a terminal.
 const gitEnv = env => ({ ...env, GIT_TERMINAL_PROMPT: '0', GIT_OPTIONAL_LOCKS: '0', GIT_SSH_COMMAND: env.GIT_SSH_COMMAND || 'ssh -o BatchMode=yes' });

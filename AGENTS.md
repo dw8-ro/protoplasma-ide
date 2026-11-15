@@ -20,7 +20,7 @@ Function names below are stable. Line numbers drift, so search by name.
 |---|---|---|
 | `npm install` | Installs dependencies (postinstall makes node-pty's `spawn-helper` executable) | Node 24 |
 | `npm start` | Runs the app from source. Updates are off in source runs. | |
-| `npm test` | 117 integration tests in `test/*.test.js`: real hub, real lanes, real git. About a minute. | git ≥ 2.28, macOS. No network or Electron needed. |
+| `npm test` | 119 integration tests in `test/*.test.js`: real hub, real lanes, real git. About a minute. | git ≥ 2.28, macOS. No network or Electron needed. |
 | `npm run e2e` | Drives the real Electron app through every main flow and prints `PASS`/`FAIL` per step, ending with `N/M passed`. 15-minute cap. | The `claude` CLI on the login-shell PATH and a GUI session. One step needs `gh auth status` to succeed (online). |
 | `npm run dist` | Packages `dist.noindex/Protoplasma-darwin-arm64/Protoplasma.app`, unsigned. | |
 | `npm run playground` | Two app copies (David on port 7801, Max on 7802) on a local hub and repo, each with an HTTP control API | |
@@ -69,8 +69,8 @@ app/index.html    CSP, all CSS (tokens and themes), icon sprite, all markup and 
 app/config.json   githubClientId (OAuth app, device flow), onlineHub (the Railway URL)
 scripts/          e2e.js, playground.js + playground-app.js, stage.js, screenshot.js, demo.js + gif.js, readme-art.js +
                   readme-art/ (the README image pages and diagram), sign.sh, icon.js
-test/             hub.test.js (44), hub-live.test.js (17), workspace.test.js (13), files.test.js (13), lan.test.js (16),
-                  identity.test.js (4), updates.test.js (6), agents.test.js (4)
+test/             hub.test.js (44), hub-live.test.js (18), workspace.test.js (13), files.test.js (13), lan.test.js (16),
+                  identity.test.js (4), updates.test.js (6), agents.test.js (4), conflicts.test.js (1)
 .github/workflows ci.yml (npm test on every push to main and PR), package.yml (dist check), release.yml (tag → release)
 Dockerfile        the hosted hub image (only src/hub.js + src/shared.js + ws)
 install.sh        the one-line installer
@@ -309,8 +309,14 @@ docs/             screenshots (sources), readme/ (the README's images, dark and 
     set (a downloaded archive, never a clone): a known limit (ponytail in lane.js).
   - Main is `origin/HEAD`, else `origin/main` or `origin/master`; the diff is from the merge-base.
   - Uses `-z` output and caps file lists at 200 (`MAX_CHANGED`, which must equal the hub's).
+  - `conflicts`: the files this checkout's commits would conflict in if its branch were merged with main today
+    (`mainConflicts`: `git merge-tree --write-tree`, git 2.38 or later; an older git reports none). Asked only when
+    the branch and main each have commits the other lacks, and once per pair of commits. Commits only: edits not
+    committed yet don't count. The hub passes it on (`lane.conflicts`, 50 names at most), tells the lane's agent in its
+    prompt context, and the app shows "N conflicts with main" on the card and the bar, with the files under Environment.
   - Returns null when git fails.
-  - **It writes one thing:** it sets the upstream of a `session/*` branch when the remote branch exists.
+  - **It writes two things:** it sets the upstream of a `session/*` branch when the remote branch exists, and
+    `merge-tree` leaves the merged files it tried as loose objects nothing refers to (git's own gc clears them).
 - **Standalone:** `PROTO_TOKEN=<token> node src/lane.js <hub> <team> <session> [--open] [cmd args…]`. The tests and e2e
   use it.
 

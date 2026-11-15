@@ -1216,11 +1216,13 @@ const diffStat = lanes => {
 };
 // Commits a lane's branch is missing from its upstream.
 const behindChip = l => { const n = l.git?.behind | 0; return n ? `<span class="behind" title="${n} commit${n === 1 ? '' : 's'} behind. Pull before pushing.">↓${n}</span>` : ''; };
+// Files this checkout's commits would conflict in, if its branch were merged with main today (lane.js mainConflicts).
+const clashChip = files => { const n = files?.length | 0; return n ? `<span class="behind clash" title="Would conflict with main in ${esc(files.slice(0, 8).join(', '))}${n > 8 ? ` and ${n - 8} more` : ''}. Merge main and settle them before a pull request.">${n} conflict${n === 1 ? '' : 's'} with main</span>` : ''; };
 const branchLine = lanes => {
   const names = [...new Set(lanes.map(l => l.branch).filter(Boolean))];
   const diff = diffStat(lanes);
   const behind = behindChip({ git: { behind: Math.max(0, ...lanes.map(l => l.git?.behind || 0)) } });
-  return names.length || diff ? `<div class="card-branch"><svg><use href="#branch"/></svg><span class="names" title="${esc(names.join(', '))}">${esc(names.join(', '))}</span>${behind}${diff}</div>` : '';
+  return names.length || diff ? `<div class="card-branch"><svg><use href="#branch"/></svg><span class="names" title="${esc(names.join(', '))}">${esc(names.join(', '))}</span>${behind}${clashChip([...new Set(lanes.flatMap(l => l.conflicts || []))])}${diff}</div>` : '';
 };
 const lastActive = lanes => {
   const at = lanes.map(l => l.lastActive).filter(Boolean).sort().pop();
@@ -1277,7 +1279,7 @@ function renderRoom(lanes) {
     const [cls, label] = STATUS[statusOf(l)] || ['idle', l.status];
     setHTML(t.label, mine ? 'Me' : esc(l.name));
     setHTML(t.bar, `<span class="tag" title="${esc(agent)}">${esc(agent)}</span><span class="state ${cls}"><span class="dot"></span>${esc(label)}</span>` +
-      `${diffStat([l])}${behindChip(l)}${l.branch ? `<span class="branch" title="${esc(l.branch)}">${esc(l.branch)}</span>` : ''}` +
+      `${diffStat([l])}${behindChip(l)}${clashChip(l.conflicts)}${l.branch ? `<span class="branch" title="${esc(l.branch)}">${esc(l.branch)}</span>` : ''}` +
       (mine && l.typedBy && Date.now() - Date.parse(l.typedAt) < 10 * 60_000 ? `<span class="typed" title="${esc(l.typedBy)} typed into this agent">${esc(l.typedBy)} typed, ${ago(l.typedAt)}</span>` : '') +
       `<span class="access" title="${access}">${access}</span>`
       + (mine ? `<button class="btn ghost small" data-handoff="${esc(l.id)}" title="Hand this work to a teammate">Hand off</button>`
@@ -1469,6 +1471,7 @@ function environment(inRoom, rec) {
   const mine = inRoom.filter(l => local.has(l.id)); // your checkout's commits; teammates' are on their own Macs
   const behind = Math.max(0, ...(mine.length ? mine : inRoom).map(l => l.git?.behind || 0));
   const ahead = Math.max(0, ...mine.map(l => l.git?.ahead || 0)), unpushed = Math.max(0, ...mine.map(l => l.git?.unpushed || 0));
+  const clashing = [...new Set((mine.length ? mine : inRoom).flatMap(l => l.conflicts || []))];
   const github = roomRepo && `https://github.com/${roomRepo}`;
   const row = (label, value, action = '') => `<${action ? 'button' : 'div'} class="panel-row" ${action}><b>${label}</b><span class="mono">${value}</span></${action ? 'button' : 'div'}>`;
   return [
@@ -1477,6 +1480,7 @@ function environment(inRoom, rec) {
     behind ? row('Behind', `${behind} commit${behind === 1 ? '' : 's'}`) : '',
     ahead ? row('Ahead of the default branch', `${ahead} commit${ahead === 1 ? '' : 's'}`) : '',
     unpushed ? row('Not pushed', `${unpushed} commit${unpushed === 1 ? '' : 's'}`) : '',
+    clashing.length ? `<div class="panel-label">Would conflict with main</div><ul class="files">${clashing.map(f => `<li class="overlap" data-open-file="${esc(f)}" title="Open ${esc(f)}"><span class="path"><bdi>${esc(f)}</bdi></span></li>`).join('')}</ul>` : '',
     fileList(inRoom, 8),
     github ? '<div class="panel-label">GitHub</div>' + row('Repository', esc(roomRepo), `data-url="${esc(github)}"`)
       + row('Pull requests', '', 'data-tab="pulls"') + row('Issues', '', 'data-tab="issues"')

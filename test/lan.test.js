@@ -252,6 +252,58 @@ test('Codex starts with Protoplasma\'s hooks and the address and secret they nee
   } finally { lane.term.kill(); fs.rmSync(dir, { recursive: true, force: true }); }
 });
 
+test('the hook relay sends the hub only what it reads: no file contents, and only the start of a prompt', async () => {
+  const seen = [];
+  const fake = http.createServer((req, res) => {
+    let body = '';
+    req.on('data', d => { body += d; }).on('end', () => { seen.push(JSON.parse(body)); res.writeHead(200).end(); });
+  });
+  await new Promise(r => fake.listen(0, '127.0.0.1', r));
+  const relay = await teams.hookRelay(async id => (id === 'h-slim' ? { url: `http://127.0.0.1:${fake.address().port}` } : null));
+  const post = body => fetch(`${relay}/hooks/h-slim`, { method: 'POST', body: typeof body === 'string' ? body : JSON.stringify(body) });
+  const secret = 'TEXT-THAT-STAYS-HERE';
+  try {
+    await post({ hook_event_name: 'PreToolUse', tool_name: 'Write', cwd: '/r', session_id: 'x', transcript_path: '/t', tool_input: { file_path: '/r/a.ts', content: secret } });
+    await post({ hook_event_name: 'PreToolUse', tool_name: 'Edit', cwd: '/r', tool_input: { file_path: '/r/a.ts', old_string: secret, new_string: secret } });
+    await post({ hook_event_name: 'PreToolUse', tool_name: 'apply_patch', cwd: '/r',
+      tool_input: { command: `*** Begin Patch\n*** Update File: src/a.ts\n@@\n-${secret}\n+${secret}\n*** Add File: b.ts\n+${secret}\n*** End Patch` } });
+    await post({ hook_event_name: 'PreToolUse', tool_name: 'Bash', cwd: '/r', tool_input: { command: `git push origin main ${'x'.repeat(30_000)}`, description: secret } });
+    await post({ hook_event_name: 'PreToolUse', tool_name: 'exec_command', cwd: '/r', tool_input: { cmd: ['git', 'push'] } });
+    await post({ hook_event_name: 'UserPromptSubmit', prompt: `fix it ${'y'.repeat(5000)}${secret}` });
+    await post({ hook_event_name: 'PermissionRequest', tool_name: 'Bash', tool_input: { command: secret } });
+    assert.deepEqual(seen[0], { hook_event_name: 'PreToolUse', cwd: '/r', tool_name: 'Write', tool_input: { file_path: '/r/a.ts' } });
+    assert.deepEqual(seen[1].tool_input, { file_path: '/r/a.ts' });
+    assert.equal(seen[2].tool_input.command, '*** Update File: src/a.ts\n*** Add File: b.ts', 'a patch: the lines naming its files');
+    assert.equal(seen[3].tool_input.command.length, 20_000, 'as much of a command as the hub reads');
+    assert.equal(seen[4].tool_input.cmd, 'git push');
+    assert.equal(seen[5].prompt.length, 300);
+    assert.deepEqual(seen[6], { hook_event_name: 'PermissionRequest' });
+    assert.ok(!JSON.stringify(seen).includes(secret), 'nothing of what was written, edited or asked beyond that');
+    assert.equal((await post('not a hook')).status, 200, 'the agent carries on');
+    assert.equal(seen.length, 7, 'and the hub hears nothing of it');
+  } finally { fake.close(); }
+});
+
+test('after a person\'s deciding key, the agent\'s Mac tells the hub whether the screen kept moving', { timeout: 20_000 }, async () => {
+  const got = [];
+  const fake = new WebSocket.Server({ port: 0, host: '127.0.0.1' });
+  fake.on('connection', ws => ws.on('message', raw => { const m = JSON.parse(raw); if (m.t === 'key') got.push(m.moving); }));
+  await new Promise(r => fake.on('listening', r));
+  const hub = `http://127.0.0.1:${fake.address().port}`;
+  const busy = startLane({ hub, team: 't', token: 'tok-bob', session: 's', cmd: 'sh', args: ['-c', 'while :; do printf .; sleep 0.2; done'] });
+  const still = startLane({ hub, team: 't', token: 'tok-bob', session: 's', cmd: 'sh', args: ['-c', 'cat'] });
+  try {
+    await sleep(500); // both are connected
+    busy.write('\r'); // an answer, and it prints on: back at work
+    still.write('\r'); // Enter, then a still screen: nothing to say (a dialog's next question)
+    await sleep(3200);
+    assert.deepEqual(got, [true]);
+    still.write('\x1b'); // Esc, then a still screen: interrupted
+    await sleep(3200);
+    assert.deepEqual(got, [true, false]);
+  } finally { busy.term.kill(); still.term.kill(); fake.close(); }
+});
+
 test('an agent only takes typing from the hub when it was started open', async () => {
   // A hub that types into every agent that connects, whatever it was told.
   const fake = new WebSocket.Server({ port: 0, host: '127.0.0.1' });

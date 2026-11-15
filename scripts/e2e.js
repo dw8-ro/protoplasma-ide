@@ -136,7 +136,9 @@ async function run(win, hub) {
     check('the session opens on your own agent, with its goal', await until(`view === 'session' && current === 's1' && focus === ${JSON.stringify(mine)} && !terms.get(${JSON.stringify(mine)}).el.hidden && terms.get(${JSON.stringify(theirs)}).el.hidden && $('#roomTask').textContent === 'E2E goal' && $('#roomWho').textContent === 'Your agent'`));
     check('the session panel lists both people and their agents', await until(`$('#panelBody').querySelectorAll('.person').length === 2 && $('#panelBody').querySelectorAll('.agent-card').length === 2 && !!$('#panelBody [data-add]')`));
     check('the sidebar lists the workspace with its session', await js(`!!$('#workspaces .ws') && $('#workspaces .ws-session.on')?.textContent.trim() === 's1'`), await js(`$('#workspaces').textContent.replace(/\\s+/g, ' ')`));
-    check('live git diff shows on your lane', await until(`!!terms.get(${JSON.stringify(mine)}).bar.querySelector('.diff')`, 12000));
+    // Its git report reaches the hub, and when the checkout has changes the bar shows them (a clean one equal to main has none).
+    check('live git status shows on your lane', await until(`(() => { const g = hubLanes.find(l => l.id === ${JSON.stringify(mine)})?.git;
+      return !!g && (!(g.added || g.removed || g.files) || !!terms.get(${JSON.stringify(mine)}).bar.querySelector('.diff')); })()`, 12000));
     await js(`$('#panelBody [data-focus="${theirs}"]').click()`);
     check('clicking a teammate\'s agent shows it full size', await until(`focus === ${JSON.stringify(theirs)} && terms.get(${JSON.stringify(mine)}).el.hidden && !terms.get(${JSON.stringify(theirs)}).el.hidden && $('#roomWho').textContent === "Max's agent" && !$('#myAgent').hidden`));
     const large = await js(`terms.get(${JSON.stringify(theirs)}).term.options.fontSize`);

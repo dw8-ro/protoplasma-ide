@@ -129,6 +129,64 @@ test('an edit counts from its PreToolUse, which also shows the agent working aga
   await closed(l.ws);
 });
 
+// An agent's status as the hub has it, waited for (each look is a round trip).
+const statusOf = async id => (await state()).lanes.find(x => x.id === id)?.status;
+const reaches = async (id, want) => { for (let i = 0; i < 50; i++) if (await statusOf(id) === want) return want; return statusOf(id); };
+// Once the hub has handled everything this agent sent before: a size change is handled in order, and shows in the state.
+const handled = async (l, cols) => {
+  l.ws.send(JSON.stringify({ t: 'size', cols, rows: 30 }));
+  for (let i = 0; i < 50 && (await state()).lanes.find(x => x.id === l.id)?.cols !== cols; i++);
+};
+
+test('a question from the agent, or a plan to approve, shows as needing you', async () => {
+  const l = await lane({});
+  for (const tool of ['AskUserQuestion', 'ExitPlanMode', 'request_user_input']) {
+    await hook(l.id, { hook_event_name: 'PreToolUse', tool_name: 'Read', tool_input: { file_path: '/r/a.ts' } });
+    assert.equal(await reaches(l.id, 'working'), 'working');
+    await hook(l.id, { hook_event_name: 'PreToolUse', tool_name: tool });
+    assert.equal(await reaches(l.id, 'needs you'), 'needs you', tool);
+  }
+  await closed(l.ws);
+});
+
+test('what the screen did after a person\'s key ends a stale status, only for an agent with hooks', async () => {
+  const l = await lane({});
+  const key = moving => l.ws.send(JSON.stringify({ t: 'key', moving }));
+  l.ws.send(JSON.stringify({ t: 'status', status: 'working' })); // no hooks yet: its own word counts
+  assert.equal(await reaches(l.id, 'working'), 'working');
+  key(false);
+  await handled(l, 101);
+  assert.equal(await statusOf(l.id), 'working', 'nothing without hooks');
+  await hook(l.id, { hook_event_name: 'PermissionRequest' });
+  assert.equal(await reaches(l.id, 'needs you'), 'needs you');
+  key(true); // approved, and the command prints on: no hook says so until it ends
+  assert.equal(await reaches(l.id, 'working'), 'working');
+  key(false); // Esc, then a quiet screen: interrupted, which runs no Stop hook
+  assert.equal(await reaches(l.id, 'idle'), 'idle');
+  key(true);
+  await handled(l, 102);
+  assert.equal(await statusOf(l.id), 'idle', 'printing alone doesn\'t make an idle agent work');
+  await hook(l.id, { hook_event_name: 'PermissionRequest' });
+  key(false); // Esc at the question
+  assert.equal(await reaches(l.id, 'idle'), 'idle');
+  await hook(l.id, { hook_event_name: 'UserPromptSubmit', prompt: 'go' });
+  await hook(l.id, { hook_event_name: 'Interrupt' }); // Codex says so itself
+  assert.equal(await reaches(l.id, 'idle'), 'idle');
+  await closed(l.ws);
+});
+
+test('an agent that comes back after the hub saw it go still has its status from its hooks', async () => {
+  const first = await lane({ id: 'sleepy', cmd: 'codex' });
+  await hook('sleepy', { hook_event_name: 'PermissionRequest' });
+  await closed(first.ws);
+  for (let i = 0; i < 50 && !(await state()).stopped.some(s => s.id === 'sleepy'); i++);
+  const back = await lane({ id: 'sleepy', cmd: 'codex' }); // a Mac waking up
+  back.ws.send(JSON.stringify({ t: 'status', status: 'idle' })); // its guess from a quiet screen
+  await handled(back, 101);
+  assert.equal(await statusOf('sleepy'), 'needs you', 'still waiting on the person');
+  await closed(back.ws);
+});
+
 test('only the session creator\'s (or the owner\'s) agent sets a session\'s repo', async () => {
   await api('tok-alice', 'POST', `/teams/${team.id}/sessions`, { name: 'alices-work', task: 'x' });
   const theirs = await lane({ session: 'alices-work', repo: 'bob/evil' }, 'tok-bob');

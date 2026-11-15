@@ -8,7 +8,7 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const { WebSocketServer } = require('ws');
-const { SCROLLBACK, EDIT_TOOLS, appendScrollback, slug, fingerprint, laneIdOf } = require('./shared');
+const { SCROLLBACK, EDIT_TOOLS, ASK_TOOLS, appendScrollback, slug, fingerprint, laneIdOf } = require('./shared');
 
 const HEARTBEAT_MS = 15_000;
 const IDENTITY_TTL_MS = 2 * 60_000; // how long a verified GitHub token is trusted before GitHub is asked again
@@ -509,6 +509,8 @@ function startHub({ port = 7681, host = '0.0.0.0', dataDir, owners, tls, passIss
       }
       case 'PreToolUse': {
         lane.status = 'working'; // also after a permission was answered: the agent has gone on to its next tool
+        // A question for the person, or a plan to approve: the agent waits on them, though it asks no permission.
+        if (ASK_TOOLS.includes(ev.tool_name)) { lane.status = 'needs you'; return null; }
         if (ev.tool_name === 'Bash' || ev.tool_name === 'exec_command') {
           const command = shellOf(ev.tool_input?.command ?? ev.tool_input?.cmd);
           const reason = pushRisk(lane, command) || shellWriteRisk(lane, command, ev.cwd);
@@ -538,7 +540,7 @@ function startHub({ port = 7681, host = '0.0.0.0', dataDir, owners, tls, passIss
         if (editing) rels.forEach(rel => recordEdit(lane, rel));
         return null;
       case 'PermissionRequest': lane.status = 'needs you'; return null;
-      case 'Stop': lane.status = 'idle'; return null;
+      case 'Stop': case 'Interrupt': lane.status = 'idle'; return null; // Interrupt: Codex's, when the person stops a turn
       default: return null;
     }
   }
@@ -887,15 +889,25 @@ function startHub({ port = 7681, host = '0.0.0.0', dataDir, owners, tls, passIss
         lane.status = m.status;
         lane.lastActive = new Date().toISOString();
         broadcastState(team.id);
+      } else if (m?.t === 'key' && lane.hooked) {
+        // What the screen did after a person's deciding key (lane.js `decided`), which no hook reports. It kept printing:
+        // a permission or question was answered and the agent is back at work. It went quiet after Esc or Ctrl-C: the
+        // turn was interrupted, and no Stop hook follows that. The next hook corrects either.
+        const next = m.moving ? lane.status === 'needs you' && 'working' : ['working', 'needs you'].includes(lane.status) && 'idle';
+        if (!next) return;
+        lane.status = next;
+        lane.lastActive = new Date().toISOString();
+        broadcastState(team.id);
       }
     });
     // A stopped agent's last screen stays viewable for a while, so teammates can see what it did.
     ws.on('close', () => {
       if (lanes.get(lane.id) !== lane) return;
       lanes.delete(lane.id);
-      const { id, session, login, name, avatar, cmd, cols, rows, history, startedAt, status, prompt, typedBy, typedAt, files } = lane;
-      // touched and local: what it changed and hadn't pushed, for whoever continues its work.
-      const list = [{ id, session, login, name, avatar, cmd, cols, rows, history, endedAt: new Date().toISOString(), startedAt, status, prompt, typedBy, typedAt, files: [...files],
+      const { id, session, login, name, avatar, cmd, cols, rows, history, startedAt, status, prompt, typedBy, typedAt, files, hooked } = lane;
+      // touched and local: what it changed and hadn't pushed, for whoever continues its work. hooked: so one that comes
+      // back (a dropped connection, a Mac waking up) still has its status from its hooks, not from its own guesses.
+      const list = [{ id, session, login, name, avatar, cmd, cols, rows, history, endedAt: new Date().toISOString(), startedAt, status, prompt, typedBy, typedAt, hooked, files: [...files],
         touched: [...filesOf(lane)], local: [...lane.local] },
         ...(stopped.get(team.id) || []).filter(s => s.id !== id)];
       stopped.set(team.id, list.slice(0, MAX_STOPPED));

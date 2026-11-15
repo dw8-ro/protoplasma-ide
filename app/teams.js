@@ -190,10 +190,36 @@ function codexReply(id, reply, now = Date.now()) {
 }
 
 /**
- * Where Claude Code and Codex send their hooks: an http address on 127.0.0.1 that passes each hook on to the agent's hub and only
- * a safe part of the answer back (safeHookReply). A hub on a Mac is pinned to the certificate it presented, which Claude
- * Code couldn't check itself; the online hub's is checked as usual. `hubFor(laneId)` resolves to { url, ca? } for one
- * of this Mac's agents, or to nothing. The relay adds no credentials: a hook still carries only its own agent's secret.
+ * What the hub reads from a hook, and no more: the event, and then for a tool call the tool, the file it names or the
+ * command it runs and the folder, or for a prompt its first 300 characters. The text a tool is about to write, both
+ * sides of an edit and the rest of a prompt stay on this Mac. A Codex patch is cut down to the lines naming its files.
+ * Null for anything that isn't a hook. Keep in step with onHook in src/hub.js, which is all that reads these.
+ */
+const MAX_HOOK = 20 * 1024 * 1024; // read here, so a large write still gets its overlap check; little of it goes on
+const PATCH_FILES = /^\*\*\* (?:(?:Update|Add|Delete) File|Move to): .+$/gm; // as patchFiles in src/hub.js reads them
+function slimHook(body) {
+  let ev;
+  try { ev = JSON.parse(body); } catch { return null; }
+  if (!ev || typeof ev !== 'object' || Array.isArray(ev)) return null;
+  const text = (v, max) => (typeof v === 'string' ? v.slice(0, max) : undefined);
+  const shell = v => text(Array.isArray(v) ? v.filter(w => typeof w === 'string').join(' ') : v, 20_000); // all the hub reads of one
+  const slim = { hook_event_name: text(ev.hook_event_name, 40), cwd: text(ev.cwd, 1000) };
+  if (slim.hook_event_name === 'UserPromptSubmit') slim.prompt = text(ev.prompt, 300);
+  if (slim.hook_event_name === 'PreToolUse') {
+    const input = ev.tool_input && typeof ev.tool_input === 'object' ? ev.tool_input : {};
+    slim.tool_name = text(ev.tool_name, 100);
+    slim.tool_input = { file_path: text(input.file_path, 1000), notebook_path: text(input.notebook_path, 1000), cmd: shell(input.cmd),
+      command: slim.tool_name === 'apply_patch' ? text((String(input.command ?? '').match(PATCH_FILES) || []).join('\n'), 20_000) : shell(input.command) };
+  }
+  return JSON.stringify(slim);
+}
+
+/**
+ * Where Claude Code and Codex send their hooks: an http address on 127.0.0.1 that passes each hook on to the agent's hub
+ * (only the part the hub reads: slimHook) and only a safe part of the answer back (safeHookReply). A hub on a Mac is
+ * pinned to the certificate it presented, which Claude Code couldn't check itself; the online hub's is checked as usual.
+ * `hubFor(laneId)` resolves to { url, ca? } for one of this Mac's agents, or to nothing. The relay adds no credentials:
+ * a hook still carries only its own agent's secret.
  */
 let relaying = null, relayTo = () => null;
 function hookRelay(hubFor) {
@@ -204,6 +230,13 @@ function hookRelay(hubFor) {
       const to = id && req.method === 'POST' ? await Promise.resolve(relayTo(id)).catch(() => null) : null;
       if (!to) return res.writeHead(404).end();
       const fail = () => (res.headersSent ? res.destroy() : res.writeHead(502).end());
+      const chunks = [];
+      let size = 0;
+      try {
+        for await (const chunk of req) { if ((size += chunk.length) > MAX_HOOK) return res.writeHead(413).end(); chunks.push(chunk); }
+      } catch { return fail(); } // the agent hung up
+      const slim = slimHook(Buffer.concat(chunks).toString('utf8'));
+      if (!slim) return res.writeHead(200).end(); // not a hook: nothing for the hub, and the agent carries on
       const target = new URL(`${to.url}/hooks/${id}`);
       // Claude Code waits 3 s for a hook (Codex's curl too), so the hub gets a little less.
       const out = (target.protocol === 'https:' ? https : http).request(target, { method: 'POST', signal: AbortSignal.timeout(2500),
@@ -219,7 +252,7 @@ function hookRelay(hubFor) {
           });
       });
       out.on('error', fail);
-      req.pipe(out);
+      out.end(slim);
     });
     server.on('error', reject).listen(0, '127.0.0.1', () => resolve(`http://127.0.0.1:${server.address().port}`));
     server.unref();

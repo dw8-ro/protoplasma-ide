@@ -7,7 +7,7 @@ const crypto = require('crypto');
 const { execFile, execFileSync } = require('child_process');
 const pty = require('node-pty');
 const WebSocket = require('ws');
-const { EDIT_TOOLS, appendScrollback, laneIdOf } = require('./shared');
+const { EDIT_TOOLS, ASK_TOOLS, appendScrollback, laneIdOf } = require('./shared');
 
 const RECONNECT_MS = 3000;
 const REJOIN_MS = 30_000; // after being removed from a team: an invite back lets the agent rejoin
@@ -22,6 +22,10 @@ const MAX_CHANGED = 200; // uncommitted paths reported to the hub
 const NO_HOOKS = ['opencode'];
 const QUIET_MS = 3000;
 const ECHO_MS = 400;
+// After a person's deciding key, how long the screen is watched, and how soon after the key output stops being the
+// redraw that key caused (see `decided`).
+const WATCH_MS = 2500;
+const REDRAW_MS = 1000;
 // A CLI asking whether to trust its folder (Claude Code and Codex do in every new session folder), or Codex asking
 // whether to trust Protoplasma's hooks (the first time). No hook fires for either. The question and its answers on
 // screen together, so output that only mentions the phrase doesn't count: Yes and No (Claude Code), or Codex's
@@ -39,7 +43,8 @@ function claudeHookSettings(url) {
     UserPromptSubmit: [{ hooks: [hook] }],
     // Read: deliver a file's notes before any edit. Bash: confirm risky pushes. Edits are recorded here too: there's no
     // PostToolUse, which would send the hub every tool's whole output (files read, command output, MCP results).
-    PreToolUse: [{ matcher: ['Read', 'Bash', ...EDIT_TOOLS].join('|'), hooks: [hook] }],
+    // The asking tools: a question or a plan to approve shows as "needs you".
+    PreToolUse: [{ matcher: ['Read', 'Bash', ...EDIT_TOOLS, ...ASK_TOOLS].join('|'), hooks: [hook] }],
     PermissionRequest: [{ hooks: [hook] }],
     Stop: [{ hooks: [hook] }],
   } });
@@ -262,6 +267,7 @@ function startLane({ hub, hookBase, team, token, credentials = () => ({ token })
     unsent += d;
     flushTimer ??= setTimeout(flush, FLUSH_MS);
     recent = (recent + stripAnsi(d)).slice(-400);
+    if (watching && Date.now() - keyAt > REDRAW_MS && Date.now() - lastInput > ECHO_MS) moved = true;
     if (!asking && TRUST_PROMPT.test(recent) && ANSWERS.test(recent)) { asking = true; recent = ''; clearTimeout(quiet); report('needs you'); }
     if (byActivity && !asking && Date.now() - lastInput > ECHO_MS) {
       report('working');
@@ -274,7 +280,24 @@ function startLane({ hub, hookBase, team, token, credentials = () => ({ token })
   function write(d) {
     lastInput = Date.now();
     if (asking && (d === '\r' || d === '\x1b' || !d.includes('\x1b'))) { asking = false; recent = ''; report('idle'); }
+    decided(d);
     term.write(d);
+  }
+  // What the screen does after a person's deciding key says what no hook does. Still printing a moment later: the agent
+  // went back to work (a permission or a question was answered, and no hook fires until that tool ends). Quiet after Esc
+  // or Ctrl-C: the turn was interrupted, which runs no Stop hook. The hub uses it only for agents with hooks, and only
+  // to move "needs you" to working or a stale working to idle (`key` in hub.js).
+  // Deciding keys: Enter, Esc on its own, Ctrl-C, and for Claude Code a digit, which picks an option in its dialogs.
+  // ponytail: it rests on a working agent repainting its screen (a spinner, a timer). One that works in silence right
+  // after Esc reads as interrupted until its next hook; a headless terminal reading the screen would be the way up.
+  let watching = null, keyAt = 0, moved = false;
+  function decided(d) {
+    const stop = d === '\x1b' || d === '\x03';
+    if (!stop && d !== '\r' && !(kind === 'claude' && /^[1-9]$/.test(d))) return;
+    clearTimeout(watching);
+    keyAt = Date.now();
+    moved = false;
+    watching = setTimeout(() => { watching = null; if (moved || stop) send({ t: 'key', moving: moved }); }, WATCH_MS);
   }
   // Report git progress (and branch switches) as the agent works, only when something changed.
   let polls = 0, polling = false, fetching = false;
@@ -299,6 +322,7 @@ function startLane({ hub, hookBase, team, token, credentials = () => ({ token })
     clearInterval(beat);
     clearTimeout(quiet);
     clearTimeout(retry);
+    clearTimeout(watching);
     flush();
     if (ws?.readyState === WebSocket.OPEN) return ws.close();
     // Offline when it ended: one last try, so teammates see how it finished rather than an older screen.

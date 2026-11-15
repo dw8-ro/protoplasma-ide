@@ -84,8 +84,9 @@ The order David likes: a review page first, then code.
 in, say what to do, pick the repo), and e2e plus the customer simulation pass on the new screens.
 
 ### 4. Lighter
-**Partly built on 15 Nov 2026:** R8 (output only for sessions on screen) and R10 are in, with tests. R9 (fewer git
-processes) isn't: it needs care with how quickly changes made outside the agent show up.
+**Partly built on 15 Nov 2026:** R8 (output only for sessions on screen) and R10 are in, with tests. Of R9, agents in
+one folder share a git poll; polling less often when nothing changes isn't built: it needs care with how quickly
+changes made outside the agent show up.
 
 - R8: output only for sessions someone is showing, and terminals made when first shown. Measure before and after
   with `node scripts/memory.js --agents 6`, and the hub's outbound traffic on Railway.

@@ -14,7 +14,8 @@ shared.js changed) and a tag releases to installed copies: both are David's call
   while David was away: [docs/sessions/2026-11-15.md](docs/sessions/2026-11-15.md). **The findings behind it:**
   [docs/research/](docs/research/). **Notes for the release:** [docs/release-notes/0.7.0.md](docs/release-notes/0.7.0.md)
   (a minor version: `npm version minor`, not `npm run release`).
-- **Checks:** `npm test` 119 of 119. `npm run e2e` 143 of 143 at the last full run (before the conflict chips; rerun it).
+- **Checks:** `npm test` 120 of 120. `npm run e2e` 143 of 143 (one later run: 142, failing only "Comment on this points
+  the next comment at those lines", which needs the window to have focus). The customer simulation: 91 of 91.
 
 What's in, by phase:
 1. **Status you can trust.** A question from the agent is Needs you (`ASK_TOOLS`); an interrupt is Idle and an answered
@@ -36,11 +37,12 @@ What it still needs, in order:
   Codex shows "Hooks need review" once for the two new hooks.
 - **OpenCode's hooks have never run against a live model:** no provider is signed in on this Mac. OpenCode 1.19.5 is
   installed (`npm install -g opencode-ai`), and Codex was updated to 0.169.0.
-- **The README pictures** are from before the new New session form. Run `npm run screenshot`, `npm run readme-art` and
-  `npm run demo`, look at them, commit them.
+- **The README pictures** are regenerated for the new New session form (`npm run screenshot`, `npm run readme-art`).
+  The demo gif isn't (`npm run demo`).
 - **No independent review** of this work was run (the usage limit). hub.js, teams.js `slimHook` and main.js's "Other
   command" are the parts to read first.
-- **Not built:** R9 (fewer git processes), the rest of phase 3 (the team picker, one "beside", Plan and Memory in the
+- **Not built:** most of R9 (agents in one folder now share a git poll; polling less often when nothing changes
+  isn't done), the rest of phase 3 (the team picker, one "beside", Plan and Memory in the
   side panel, a shorter bar, what to do about an overlap), and the rest of phase 5.
 - **Two things seen once and not explained** (details in the log): on the first launch of a freshly downloaded
   Electron, e2e's "creates a This Mac team…" step failed and a terminal drew its text at half size. The second has a

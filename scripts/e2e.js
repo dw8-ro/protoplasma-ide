@@ -458,7 +458,7 @@ async function run(win, hub) {
     check('⌘K finds pages by name', await js(`$('#switcher').open && /People/.test($('#switcherList').textContent)`));
     await js(`$('#switcherInput').onkeydown(new KeyboardEvent('keydown', { key: 'Enter' }))`);
     check('and goes there', await until(`!$('#switcher').open && view === 'people'`));
-    await js(`go('sessions'); renderSetup([{ cmd: 'claude', installed: false }], { ok: false, detail: 'Not installed. Run "brew install gh", then "gh auth login".' })`);
+    await js(`go('sessions'); renderSetup(agents.map(a => ({ ...a, installed: false })), { ok: false, detail: 'Not installed. Run "brew install gh", then "gh auth login".' })`);
     check('the setup checklist lists what is missing', await js(`!$('#setup').hidden && $('#setup').querySelectorAll('.setup-item').length === 2`));
     await js(`checkSetup(); 0`);
     check('and disappears once this Mac is set up', await until(`$('#setup').hidden`, 15000));

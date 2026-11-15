@@ -100,7 +100,7 @@ The [GitHub CLI](https://cli.github.com) (`brew install gh`, then `gh auth login
 
 ### The real CLI
 
-Each agent is the actual `claude`, `codex` or `opencode` process, under your own account, in a real terminal, and you type straight into it. The only thing Protoplasma adds is hooks for Claude Code and Codex, for that run only, which give the agent the team's context and ask you before a conflicting edit or a risky push. Codex asks you to trust them the first time.
+Each agent is the actual `claude`, `codex` or `opencode` process, under your own account, in a real terminal, and you type straight into it. The only thing Protoplasma adds is hooks for Claude Code and Codex (and for OpenCode a plugin that does the same, not yet tried against a live model), for that run only, which give the agent the team's context and ask you before a conflicting edit or a risky push. Codex asks you to trust them the first time.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/readme/agents-dark.png">
@@ -141,6 +141,8 @@ Work can move between people. **Continue** on a teammate's agent, running or sto
 ### Any repo, any agent
 
 Pick one of your GitHub repos or a folder on your Mac, and the agent to run. A session started from a repo gets its own branch and folder.
+
+Any other agent CLI works too: put its command in Settings → Agents → **Other command** (for example `gemini`). It gets a shared terminal, overlap warnings from git and the push guard. It has none of Protoplasma's hooks, so its status is a guess from its output and it isn't told what teammates' agents are doing.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/readme/start-dark.png">
@@ -253,7 +255,7 @@ A hub on someone's Mac serves https/wss with its own self-signed certificate. Te
 
 - [ ] Notarised builds, so browser downloads open without the first-launch prompt
 - [ ] Coordination tools over MCP, so agents can leave notes and message each other
-- [ ] Hooks for OpenCode (a plugin), like Claude Code's and Codex's
+- [ ] OpenCode's hooks tried against a live model (they're in, as a plugin, written from its plugin types), and a plugin for OpenCode 2
 - [ ] Viewer role
 
 ## Licence

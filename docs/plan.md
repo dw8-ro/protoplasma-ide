@@ -46,6 +46,11 @@ Ctrl-C or digit the agent's Mac watches its screen for 2.5 s and tells the hub w
 [first-install.md](first-install.md), which needs real agents. hub.js changes, so push `main` to redeploy the hub.
 
 ### 2. One place for agents, and every current CLI working
+**Built on 15 Nov 2026, not released.** `src/agents.js` is the table, "Other command" is in Settings → Agents, and
+OpenCode 1.19.5 has hooks through a plugin (`src/opencode-plugin.mjs`). Open: OpenCode's hooks haven't run against a
+live model (no provider is signed in on David's Mac), and OpenCode 2 needs its own plugin. What was checked is in
+[research/2026-11-15-opencode-facts.md](research/2026-11-15-opencode-facts.md).
+
 - `src/agents.js`: one entry per CLI (name, install command, resume and first-prompt arguments, hook settings,
   whether it can ask, its trust-prompt text). main.js, lane.js, teams.js, hub.js, renderer.js and index.html read
   it; the lists and `'claude'`/`'codex'` tests they hold today go. The app's pickers are drawn from it.

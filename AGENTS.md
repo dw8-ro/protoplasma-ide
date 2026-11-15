@@ -20,7 +20,7 @@ Function names below are stable. Line numbers drift, so search by name.
 |---|---|---|
 | `npm install` | Installs dependencies (postinstall makes node-pty's `spawn-helper` executable) | Node 24 |
 | `npm start` | Runs the app from source. Updates are off in source runs. | |
-| `npm test` | 112 integration tests in `test/*.test.js`: real hub, real lanes, real git. About a minute. | git ≥ 2.28, macOS. No network or Electron needed. |
+| `npm test` | 116 integration tests in `test/*.test.js`: real hub, real lanes, real git. About a minute. | git ≥ 2.28, macOS. No network or Electron needed. |
 | `npm run e2e` | Drives the real Electron app through every main flow and prints `PASS`/`FAIL` per step, ending with `N/M passed`. 15-minute cap. | The `claude` CLI on the login-shell PATH and a GUI session. One step needs `gh auth status` to succeed (online). |
 | `npm run dist` | Packages `dist.noindex/Protoplasma-darwin-arm64/Protoplasma.app`, unsigned. | |
 | `npm run playground` | Two app copies (David on port 7801, Max on 7802) on a local hub and repo, each with an HTTP control API | |
@@ -53,6 +53,8 @@ Syntax checks: `node --check <file>` and `sh -n install.sh scripts/sign.sh`.
 src/hub.js        the hub: REST, /lane and /watch WebSockets, Claude hook answers, push guard, overlaps (~800 lines)
 src/lane.js       runs one agent CLI in a PTY and connects it to the hub; git status polling (~290)
 src/workspace.js  per-session git worktrees and the pre-push guard hook (~130)
+src/agents.js     the agent table: what the app knows about each CLI, and their hook settings (~90)
+src/opencode-plugin.mjs  OpenCode's hooks, as a plugin OpenCode loads itself (~55)
 src/shared.js     slug(), scrollback limit, EDIT_TOOLS, ASK_TOOLS; shared by hub, lane, workspace (~30)
 app/main.js       Electron main: single-instance lock, login-shell env, every IPC handler, menu, window, quit (~330)
 app/preload.js    window.proto: the whole renderer API over IPC (~80)
@@ -68,7 +70,7 @@ app/config.json   githubClientId (OAuth app, device flow), onlineHub (the Railwa
 scripts/          e2e.js, playground.js + playground-app.js, stage.js, screenshot.js, demo.js + gif.js, readme-art.js +
                   readme-art/ (the README image pages and diagram), sign.sh, icon.js
 test/             hub.test.js (44), hub-live.test.js (16), workspace.test.js (13), files.test.js (13), lan.test.js (16),
-                  identity.test.js (4), updates.test.js (6)
+                  identity.test.js (4), updates.test.js (6), agents.test.js (4)
 .github/workflows ci.yml (npm test on every push to main and PR), package.yml (dist check), release.yml (tag → release)
 Dockerfile        the hosted hub image (only src/hub.js + src/shared.js + ws)
 install.sh        the one-line installer
@@ -239,6 +241,8 @@ docs/             screenshots (sources), readme/ (the README's images, dark and 
     missing command, so `installed()` checks first.
   - Makes a 48-hex `hookSecret` and the id from it (`laneIdOf` in shared.js: `h-` and 32 hex), so only whoever holds
     the secret can connect under that id. `changed()` returns its last git report's files, which `code:readLane` checks.
+  - What a CLI is started with comes from the agent table (`src/agents.js`, below): its `hooks({url, env})` gives the
+    arguments and environment that make its hooks reach `hookBase`. If that fails, it starts without hooks.
   - For `claude`, adds `--settings` with HTTP hooks (`claudeHookSettings`: UserPromptSubmit, PreToolUse
     `Read|Bash|EDIT_TOOLS|ASK_TOOLS`, PermissionRequest and Stop, with a 3 s timeout; never PostToolUse). They go to `hookBase` when
     given, else to the hub.
@@ -258,7 +262,14 @@ docs/             screenshots (sources), readme/ (the README's images, dark and 
     deny, a block or a rewritten tool input from a hook, so a hub's operator (a team owner's Mac, or whoever took over
     the online hub) could run commands through it. A hub on a Mac is pinned to its certificate, which Claude Code
     couldn't check itself; the online hub's certificate is checked as usual. It adds no credentials.
-  - Sets `PROTO_HOOK_SECRET` in the agent's env, except for `NO_HOOKS` CLIs (opencode).
+  - For `opencode`, sets `OPENCODE_CONFIG_CONTENT` naming a copy of `src/opencode-plugin.mjs` in the temp folder
+    (OpenCode can't read a file inside the packaged app), beside whatever settings the person already passes that way.
+    The plugin posts the same events in the same shape to `$PROTO_HOOK_URL`, turns a refusal into an error the model
+    sees, and adds the team's context to the model's requests. It was written from OpenCode 1.19.5's plugin types and
+    run against a stand-in relay (agents.test.js), not yet against a live model
+    (docs/research/2026-11-15-opencode-facts.md). OpenCode 2 has another plugin API and won't load it.
+  - Sets `PROTO_HOOK_SECRET` in the agent's env when it has hooks. A table agent without hooks doesn't get it, nor
+    does the app's "Other command" (`bare`). A command run by hand with this file does (the tests rely on it).
   - Signs in with `token`, or with `credentials()`, asked before each connection: `{token, ca}`, where `ca` pins a hub on a
     Mac to its certificate. The app passes `teams.access`, so a pass is renewed in time. If `credentials` fails, the
     lane reports it through `onRefused` and tries again every 30 s.
@@ -269,7 +280,7 @@ docs/             screenshots (sources), readme/ (the README's images, dark and 
 - **Messages:** `out` is batched every 16 ms; `size`; `git` only when it changed; `status`; `key` (below).
 - **Status:** "needs you" while the folder-trust prompt shows (`TRUST_PROMPT` plus its answers in `ANSWERS`, within the
   last 400 characters: Yes and No for Claude Code, "Trust and continue" for Codex), and while Codex's "Hooks need review"
-  shows ("Trust all and continue"). For codex and opencode, working or idle is guessed from output: output more than
+  shows ("Trust all and continue"). For an agent whose hooks aren't sure to run (every one but Claude Code: `sure` in the table), working or idle is guessed from output: output more than
   400 ms after input means working, and 3 s of quiet means idle. Once a lane's hooks arrive, the hub sets `lane.hooked`
   and ignores the lane's own `status` messages (Codex with trusted hooks). Input clears "needs you", but the terminal's own escape-sequence
   replies don't count.
@@ -339,11 +350,14 @@ docs/             screenshots (sources), readme/ (the README's images, dark and 
   - Captures team and session before any `await`, and refuses on a `teamKey` mismatch or an unknown CLI. The lane
     signs in with `credentials: () => teams.access(…)`.
   - Gets the folder from `github.sessionFolder` (clone, push guard, worktree) or the user's own `cwd`.
-  - Sets `PROTO_SHARED_TEAM=1` for codex/opencode on a team with members.
-  - Returns a `notice` when a codex/opencode agent on a team with members has no pre-push guard: an app-made clone
+  - The agent is one in the table, or `other`: this Mac's "Other command" (Settings → Agents, pref `otherCommand`),
+    split into words by `commandWords` and run with no shell. That command comes from this Mac's settings and is
+    never taken from a session or a teammate.
+  - Sets `PROTO_SHARED_TEAM=1` for an agent whose hooks aren't sure (not `sure`) on a team with members.
+  - Returns a `notice` when such an agent on a team with members has no pre-push guard: an app-made clone
     whose repo has its own hooks, or a folder the user picked (the app never installs the guard there).
-  - With `prompt` (and no `resume`), passes it as the CLI's first message (`firstPrompt`/`FIRST_PROMPT`: an argument, or
-    `--prompt` for OpenCode, never through a shell; capped at 12,000 characters, a leading dash kept from reading as an
+  - With `prompt` (and no `resume`), passes it as the CLI's first message (`firstPrompt`, the table's way for that
+    CLI: an argument, or `--prompt` for OpenCode, never through a shell; capped at 12,000 characters, a leading dash kept from reading as an
     option).
   - Returns `{id, repo, notice}`.
 - **The IPC rule:** every `proto.x` in preload.js has a matching main handler. `invoke` pairs with `ipcMain.handle` and
@@ -510,8 +524,10 @@ docs/             screenshots (sources), readme/ (the README's images, dark and 
   `v<version>`.
 - **Bundle id:** `com.electron.protoplasma` (packager's default). Never change it, because sameSigner and macOS identity
   rely on it.
-- **Agent lists:** `AGENTS`, `RESUME` and `FIRST_PROMPT` in main.js, `NO_HOOKS` in lane.js, and the renderer's agent
-  pickers (`agentMenu`, `continueMenu`, `askMenu`).
+- **Agents:** `src/agents.js` is the one place for what the app knows about a CLI. Two things stay outside it: the
+  hub gives `cmd === 'claude'` the first status idle (it can't read the table: the hosted hub is built from hub.js and
+  shared.js alone), and the tool names the hub reads (`Bash`, `exec_command`, `apply_patch`, `EDIT_TOOLS`, `ASK_TOOLS`)
+  are what a new agent's hooks have to be translated to, as opencode-plugin.mjs does.
 - **Dependencies:** `allowScripts` in package.json records the Electron and node-pty versions whose install scripts the
   app needs (Electron's binary download, node-pty's prebuild; the root `postinstall` then marks `spawn-helper`
   executable). **It is not enforced:** there's no `@lavamoat/allow-scripts` or `.npmrc`, so `npm install`/`npm ci` run
@@ -533,8 +549,10 @@ docs/             screenshots (sources), readme/ (the README's images, dark and 
   hooks go through it, and a hub's answer may only add context or ask the person (`safeHookReply`): never allow, deny,
   block, stop or change a tool call. What goes to the hub is cut to what it reads (`slimHook`): never the text a tool
   writes or a whole prompt. A new hook answer in the hub needs adding there too. Codex can't ask, so the relay
-  itself turns an ask into one refusal, after which the same step within 10 minutes goes through (`codexReply`); the
-  refusal is the app's, from an ask, never a hub's.
+  itself turns an ask into one refusal, after which the same step within 10 minutes goes through; the
+  refusal is the app's, from an ask, never a hub's (`refuseOnce`, for every agent the table doesn't mark `asks`).
+- **Other command:** runs what this Mac's own setting says, as words, with no shell and no hook secret. Never take
+  the command from a session, a hub or a teammate: that would run their text on this Mac.
 - **Typing in:** remote input only goes to lanes started with `open`, on the watcher's own team. lane.js also drops
   `in` itself unless it was started open, whatever a hub sends.
 - **Lane ids:** an id held by one login, live or stopped, can't be claimed by another. An `h-` id is made from its
@@ -611,14 +629,16 @@ docs/             screenshots (sources), readme/ (the README's images, dark and 
      stopped record in `onLane`'s close handler and to `stoppedViews()`, which picks a fixed set of fields.
   3. Send it from lane.js.
 - **Add an agent CLI:**
-  - Add it to `AGENTS`, `RESUME` and `FIRST_PROMPT` (main.js), to `NO_HOOKS` (lane.js), to renderer.js `agentName`, and to the Settings
-    agent radios in index.html.
-  - Hooks are wired only for the commands named `claude` and `codex`. A CLI left out of `NO_HOOKS` gets
-    `PROTO_HOOK_SECRET`; keep it in `NO_HOOKS` unless you also add hook settings like `claudeHookSettings` or
-    `codexHookSettings`. A CLI whose hooks might not run (Codex, until trusted) should keep guessing its status from
-    output (`byActivity`); the hub ignores those guesses once a hook arrives.
-  - Check the hard-coded `'claude'`/`'codex'` tests in main.js `startLane` (shared-team push guard, `hookBase`), lane.js
-    `startLane` (hook settings, `byActivity`), teams.js `hookRelay` (`codexReply`) and hub.js `onLane` (initial status).
+  - Add an entry to `AGENTS` in `src/agents.js`: `name`, `install`, and what it has of `resume` and `firstPrompt`. That
+    is all a CLI without hooks needs: the pickers, menus and Settings list are drawn from the table, and it gets a
+    shared terminal, a guessed status, overlaps from git and the pre-push guard.
+  - With hooks: add `hooks({url, env})`, returning the `args` and `env` that make the CLI post its hooks to `url` (the
+    relay) with `$PROTO_HOOK_SECRET` as a Bearer token, in the shape `onHook` reads (`hook_event_name`, `tool_name`,
+    `tool_input.file_path` or `.command`, `cwd`, `prompt`). Translate its own event and tool names on the Mac, as
+    `opencode-plugin.mjs` does. Leave `asks` out unless a hook's answer can make it ask the person (the relay then
+    refuses once instead), and `sure` out unless its hooks run from the first prompt with nothing to approve.
+  - If its dialogs have their own trust question, add it to `TRUST_PROMPT` and `ANSWERS` in lane.js.
+  - Add it to the checks in `test/agents.test.js`, and try it for real: hooks are only as good as their last live run.
 - **Add an IPC call:** add it to preload.js (`invoke` or `send`), add the matching main handler (`signedIn`, `inFolder`,
   coerced arguments), and call it as `proto.x(...)` with failures shown via `errorText(e)`.
 - **Add a preference:** add a default to `DEFAULT_PREFS`, and an input with `data-pref="key"` in the Settings markup. It

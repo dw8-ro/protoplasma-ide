@@ -7,7 +7,8 @@ const crypto = require('crypto');
 const { execFile, execFileSync } = require('child_process');
 const pty = require('node-pty');
 const WebSocket = require('ws');
-const { EDIT_TOOLS, ASK_TOOLS, appendScrollback, laneIdOf } = require('./shared');
+const { appendScrollback, laneIdOf } = require('./shared');
+const { AGENTS, CODEX_HOOK, codexHookSettings } = require('./agents');
 
 const RECONNECT_MS = 3000;
 const REJOIN_MS = 30_000; // after being removed from a team: an invite back lets the agent rejoin
@@ -16,10 +17,9 @@ const FLUSH_MS = 16; // TUIs redraw in many tiny writes; batch them into one mes
 const GIT_POLL_MS = 5000;
 const FETCH_EVERY = 12; // polls, so about once a minute
 const MAX_CHANGED = 200; // uncommitted paths reported to the hub
-// OpenCode has no hooks the hub can use. It, and Codex until its hooks are trusted, report status from activity:
-// output streaming means working, and this long without output means idle. Output just after a keystroke is the echo,
-// not work. Once Codex's hooks arrive, the hub goes by them instead.
-const NO_HOOKS = ['opencode'];
+// An agent whose hooks aren't sure to run (Codex until they're trusted, OpenCode, any other command: see agents.js)
+// reports status from activity: output streaming means working, and this long without output means idle. Output just
+// after a keystroke is the echo, not work. Once its hooks arrive, the hub goes by them instead.
 const QUIET_MS = 3000;
 const ECHO_MS = 400;
 // After a person's deciding key, how long the screen is watched, and how soon after the key output stops being the
@@ -33,37 +33,6 @@ const REDRAW_MS = 1000;
 const TRUST_PROMPT = /trust\s*(?:this\s*folder|the\s*files\s*in\s*this\s*folder|the\s*contents\s*of\s*this\s*directory)|hooks\s*need\s*review/i;
 const ANSWERS = /\bYes\b[\s\S]*\bNo\b|\bNo\b[\s\S]*\bYes\b|Trust\s*(?:all\s*)?and\s*continue/;
 const stripAnsi = s => s.replace(/\x1b\[[0-?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b[@-Z\\-_]/g, '');
-
-// Per-run HTTP hooks for Claude Code. --settings merges with the user's own settings rather than replacing them.
-// Hooks authenticate with a per-lane secret, so no GitHub or team credential enters Claude's environment.
-// If the hub is down the hooks fail open and the agent keeps working.
-function claudeHookSettings(url) {
-  const hook = { type: 'http', url, timeout: 3, headers: { Authorization: 'Bearer $PROTO_HOOK_SECRET' }, allowedEnvVars: ['PROTO_HOOK_SECRET'] };
-  return JSON.stringify({ hooks: {
-    UserPromptSubmit: [{ hooks: [hook] }],
-    // Read: deliver a file's notes before any edit. Bash: confirm risky pushes. Edits are recorded here too: there's no
-    // PostToolUse, which would send the hub every tool's whole output (files read, command output, MCP results).
-    // The asking tools: a question or a plan to approve shows as "needs you".
-    PreToolUse: [{ matcher: ['Read', 'Bash', ...EDIT_TOOLS, ...ASK_TOOLS].join('|'), hooks: [hook] }],
-    PermissionRequest: [{ hooks: [hook] }],
-    Stop: [{ hooks: [hook] }],
-  } });
-}
-
-// Codex's hooks for one run (`-c`, its "session flags" layer). Codex runs a command instead of calling an address, so
-// the command posts the hook to $PROTO_HOOK_URL with the lane's secret. The command never changes: Codex trusts a hook
-// by its hash, so the person approves it once. Outside Protoplasma, with no URL set, it does nothing.
-const CODEX_HOOK = '[ -z "$PROTO_HOOK_URL" ] || curl -s --max-time 3 -H "Authorization: Bearer $PROTO_HOOK_SECRET"'
-  + ' -H "content-type: application/json" --data-binary @- "$PROTO_HOOK_URL" || true';
-function codexHookSettings() {
-  // JSON strings are valid TOML strings. apply_patch is Codex's edit tool; exec_command is its other shell.
-  // Codex trusts each hook by its place (event, group) and its text (matcher, timeout, command): changing one of the
-  // first four would have everyone review it again, and a new one is reviewed once on its own. So those four stay
-  // exactly as they are, and later ones go after them: its question tool as a second PreToolUse group, and Interrupt
-  // (3 s is the most Codex gives it). Check a change with `node scripts/codex-hooks.js`.
-  const group = (matcher, timeout = 5) => `{${matcher ? `matcher=${JSON.stringify(matcher)},` : ''}hooks=[{type="command",command=${JSON.stringify(CODEX_HOOK)},timeout=${timeout}}]}`;
-  return `hooks={UserPromptSubmit=[${group()}],PreToolUse=[${group('Bash|exec_command|apply_patch')},${group('request_user_input')}],PermissionRequest=[${group()}],Stop=[${group()}],Interrupt=[${group('', 3)}]}`;
-}
 
 // Git run in the background doesn't run a folder's core.fsmonitor command, and only uses a bare repository it's pointed
 // at, not one it finds (a committed bare repo brings its own config): the agent may still be asking whether to trust
@@ -174,25 +143,28 @@ const MACHINE = crypto.createHash('sha256').update(os.hostname()).digest('hex').
  * @param {(reason: string) => void} [o.onRefused] called when the hub turns it away (a 4xxx close)
  * @param {boolean} [o.picked] the folder is one a person picked (not a clone the app made, whose git config is the
  *   app's own): no git runs there while the agent asks whether to trust it
+ * @param {boolean} [o.bare] an "Other command" from the app: it gets no hook secret
  * @returns {{ id: string, term: import('node-pty').IPty, repo: string, write: (data: string) => void, rejoin: () => void,
  *   resize: (cols: number, rows: number) => void }}
  */
-function startLane({ hub, hookBase, team, token, credentials = () => ({ token }), session, cmd = 'claude', args = [], cwd = process.cwd(), open = false, cols = 120, rows = 36, env = process.env, onRefused, picked = false }) {
+function startLane({ hub, hookBase, team, token, credentials = () => ({ token }), session, cmd = 'claude', args = [], cwd = process.cwd(), open = false, cols = 120, rows = 36, env = process.env, onRefused, picked = false, bare = false }) {
   hub = new URL(hub).origin;
   if (!fs.statSync(cwd, { throwIfNoEntry: false })?.isDirectory()) throw new Error(`Folder not found: ${cwd}`);
   if (!installed(cmd, env)) throw new Error(`The "${cmd}" command isn't installed on this Mac. Install it, then start the agent again.`);
   const hookSecret = crypto.randomBytes(24).toString('hex');
   const id = laneIdOf(hookSecret);
-  const kind = path.basename(cmd), hookUrl = `${hookBase || hub}/hooks/${id}`;
-  if (kind === 'claude') args = ['--settings', claudeHookSettings(hookUrl), ...args];
-  if (kind === 'codex') args = ['-c', codexHookSettings(), ...args];
-  // TODO: hooks for OpenCode (a plugin). Its lanes get terminal sharing but no overlap warnings yet.
+  const kind = path.basename(cmd), agent = AGENTS[kind] || {}, hookUrl = `${hookBase || hub}/hooks/${id}`;
+  // What this CLI needs to send its hooks (agents.js). If that can't be set up, it runs without them.
+  let hooked = null;
+  try { hooked = agent.hooks?.({ url: hookUrl, env }) || null; } catch {}
+  if (hooked?.args) args = [...hooked.args, ...args];
 
   let term;
   try {
     // The app's terminal (xterm.js) does 24-bit colour; saying so lets CLIs use their real colours.
-    // OpenCode has no hooks, so it (and whatever it runs) doesn't get the hook secret.
-    const secret = NO_HOOKS.includes(kind) ? {} : { PROTO_HOOK_SECRET: hookSecret, ...(kind === 'codex' && { PROTO_HOOK_URL: hookUrl }) };
+    // An agent without hooks (and whatever it runs) doesn't get the hook secret: one in the table that has none, or the
+    // app's "Other command" (`bare`). A command run by hand does (this file on its own, the tests), to post its own hooks.
+    const secret = hooked || (!AGENTS[kind] && !bare) ? { PROTO_HOOK_SECRET: hookSecret, ...hooked?.env } : {};
     term = pty.spawn(cmd, args, { name: 'xterm-256color', cols, rows, cwd, env: { ...env, COLORTERM: 'truecolor', ...secret } });
   } catch {
     throw new Error(`Couldn't start "${cmd}". Is it installed and on your PATH?`);
@@ -201,7 +173,7 @@ function startLane({ hub, hookBase, team, token, credentials = () => ({ token })
   // Local scrollback, sent with every hello so a (re)started hub still gets the current screen.
   let ws, history = '', unsent = '', flushTimer = null, exited = false;
   let asking = false, recent = ''; // waiting on the trust prompt, and the latest output (plain text) to spot it in
-  const byActivity = kind !== 'claude'; // Codex too, until its hooks are trusted (the hub then ignores these)
+  const byActivity = !agent.sure; // Codex too, until its hooks are trusted (the hub then ignores these)
   let activity = null, quiet = null, lastInput = 0;
   const report = status => { if (activity !== status) { activity = status; send({ t: 'status', status }); } };
   const root = git(cwd, 'rev-parse', '--show-toplevel') || cwd;
@@ -297,7 +269,7 @@ function startLane({ hub, hookBase, team, token, credentials = () => ({ token })
   let watching = null, keyAt = 0, moved = false;
   function decided(d) {
     const stop = d === '\x1b' || d === '\x03';
-    if (!stop && d !== '\r' && !(kind === 'claude' && /^[1-9]$/.test(d))) return;
+    if (!stop && d !== '\r' && !(agent.digits && /^[1-9]$/.test(d))) return;
     clearTimeout(watching);
     keyAt = Date.now();
     moved = false;

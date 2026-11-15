@@ -935,11 +935,7 @@
       <div class="row"><input id="cwd" readonly placeholder="Choose the folder it works in" aria-labelledby="cwdLabel"><button type="button" id="pick" class="btn">Choose…</button></div>
     </div>
     <fieldset class="field"><legend>Agent</legend>
-      <div class="segmented">
-        <label><input type="radio" name="cmd" value="claude" checked><span>Claude Code</span></label>
-        <label><input type="radio" name="cmd" value="codex"><span>Codex</span></label>
-        <label><input type="radio" name="cmd" value="opencode"><span>OpenCode</span></label>
-      </div>
+      <div id="agentPick" class="segmented"></div>
       <p id="agentHint" class="fine" hidden></p>
     </fieldset>
     <label class="toggle"><input id="open" type="checkbox">Let teammates type into it</label>
@@ -993,11 +989,9 @@
       <div id="providers" class="group" style="margin-bottom: 14px"></div>
       <div class="group">
         <div class="setting"><div><b>Default agent</b><p>Preselected when you start a session or add an agent.</p></div>
-          <div class="segmented" style="min-width: min(330px, 100%)">
-            <label><input type="radio" name="prefAgent" data-pref="agent" value="claude"><span>Claude Code</span></label>
-            <label><input type="radio" name="prefAgent" data-pref="agent" value="codex"><span>Codex</span></label>
-            <label><input type="radio" name="prefAgent" data-pref="agent" value="opencode"><span>OpenCode</span></label>
-          </div></div>
+          <div id="prefAgentPick" class="segmented" style="min-width: min(330px, 100%)"></div></div>
+        <div class="setting"><div><b>Other command</b><p>Any other agent CLI, written as you'd type it in Terminal, like <kbd>gemini</kbd>. It gets a shared terminal, overlap warnings from git and the push guard, but none of Protoplasma's hooks, so its status is a guess.</p></div>
+          <input data-pref="otherCommand" maxlength="200" placeholder="None" aria-label="Other command" autocomplete="off" spellcheck="false" style="min-width: min(220px, 100%)"></div>
         <div class="setting"><div><b>Let teammates type by default</b><p>They can run commands on this Mac through your agent. Off is safer; you can still allow it per agent.</p></div>
           <input type="checkbox" class="switch" data-pref="open" aria-label="Let teammates type by default"></div>
         <div class="setting"><div><b>A branch for every session</b><p>Sessions started from a GitHub repo get their own branch (session/…) and folder, so main only changes through a push or pull request. Off works on the repo's current branch.</p></div>

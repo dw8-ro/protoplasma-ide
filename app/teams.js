@@ -17,6 +17,7 @@ const { execFileSync } = require('child_process');
 const { Bonjour } = require('bonjour-service');
 const { startHub } = require('../src/hub');
 const { fingerprint } = require('../src/shared');
+const { AGENTS } = require('../src/agents');
 const config = require('./config.json');
 
 const onlineHub = process.env.PROTO_ONLINE_HUB ?? config.onlineHub;
@@ -178,7 +179,7 @@ function safeHookReply(text) {
  */
 const RETRY_MS = 10 * 60 * 1000;
 const refused = new Map(); // `${lane}|${reason}` -> when Codex was first refused it
-function codexReply(id, reply, now = Date.now()) {
+function refuseOnce(id, reply, now = Date.now()) {
   const out = reply && JSON.parse(reply).hookSpecificOutput;
   if (out?.permissionDecision !== 'ask') return reply;
   for (const [key, at] of refused) if (now - at > RETRY_MS || refused.size > 500) refused.delete(key);
@@ -248,7 +249,8 @@ function hookRelay(hubFor) {
           .on('end', () => {
             if (r.statusCode !== 200) return res.writeHead(r.statusCode).end();
             const reply = safeHookReply(text);
-            res.writeHead(200, { 'content-type': 'application/json' }).end(to.cmd === 'codex' ? codexReply(id, reply) : reply);
+            // An agent that a hook can't make ask (agents.js `asks`) is refused once instead.
+            res.writeHead(200, { 'content-type': 'application/json' }).end(to.cmd && !AGENTS[to.cmd]?.asks ? refuseOnce(id, reply) : reply);
           });
       });
       out.on('error', fail);

@@ -9,6 +9,7 @@ const fs = require('fs');
 const path = require('path');
 const { execFile } = require('child_process');
 const { startLane, installed } = require('../src/lane');
+const { AGENTS, commandWords } = require('../src/agents');
 const github = require('./github');
 const teams = require('./teams');
 const config = require('./config.json');
@@ -16,13 +17,9 @@ const updates = require('./updates');
 const files = require('./files');
 const pty = require('node-pty');
 
-const AGENTS = ['claude', 'codex', 'opencode'];
-// How each agent CLI picks up its most recent conversation in the folder it starts in.
-const RESUME = { claude: ['--continue'], codex: ['resume', '--last'], opencode: ['--continue'] };
-// How each CLI takes a first message: its own argument, never through a shell. A leading space keeps a message that
-// starts with a dash from being read as an option.
-const FIRST_PROMPT = { claude: p => [p], codex: p => [p], opencode: p => ['--prompt', p] };
-const firstPrompt = (cmd, text) => FIRST_PROMPT[cmd](String(text).slice(0, 12000).replace(/^-/, ' -'));
+// A first message for an agent that takes one (agents.js): its own argument, never through a shell. A leading space
+// keeps a message that starts with a dash from being read as an option.
+const firstPrompt = (agent, text) => agent.firstPrompt(String(text).slice(0, 12000).replace(/^-/, ' -'));
 const REPO_URL = 'https://github.com/dw8-ro/protoplasma-ide';
 const { onlineHub } = teams;
 
@@ -112,7 +109,7 @@ ipcMain.handle('teams:invite', signedIn(async (key, login) => {
   // The push guard is switched on when an agent starts (PROTO_SHARED_TEAM), so Codex and OpenCode agents started while
   // the team was just you don't have it. Said here, where it starts to matter.
   const n = [...lanes.values()].filter(l => l.teamKey === key && l.unguarded).length;
-  const notice = n ? `${n === 1 ? 'A Codex or OpenCode agent' : `${n} Codex or OpenCode agents`} you started while the team was just you ${n === 1 ? 'isn\'t' : 'aren\'t'} push-guarded, so ${n === 1 ? 'it' : 'they'} can still push to main. Restart ${n === 1 ? 'it' : 'them'} to turn the guard on.` : '';
+  const notice = n ? `${n === 1 ? 'An agent other than Claude Code' : `${n} agents other than Claude Code`} you started while the team was just you ${n === 1 ? 'isn\'t' : 'aren\'t'} push-guarded, so ${n === 1 ? 'it' : 'they'} can still push to main. Restart ${n === 1 ? 'it' : 'them'} to turn the guard on.` : '';
   return { ...next, notice };
 }));
 ipcMain.handle('memories:add', signedIn((key, note) => teams.addMemory(session, teamFor(key), { text: String(note.text), file: String(note.file || ''), repo: String(note.repo || ''), hash: String(note.hash || '') })));
@@ -180,34 +177,44 @@ ipcMain.handle('pickFolder', async (_, from) => (await dialog.showOpenDialog(win
 
 // ---- Agents ----
 // Which agent CLIs this Mac can run, so the app only offers the ones that will start.
-ipcMain.handle('agents:status', async () => { const env = await agentEnv; return AGENTS.map(cmd => ({ cmd, installed: installed(cmd, env) })); });
+// `other` is this Mac's own "Other command" (Settings), if there is one: any CLI, run as it's written.
+ipcMain.handle('agents:status', async (_, other) => {
+  const env = await agentEnv, words = commandWords(other);
+  return [...Object.entries(AGENTS).map(([cmd, a]) => ({ cmd, name: a.name, install: a.install, installed: installed(cmd, env), resumes: !!a.resume, prompts: !!a.firstPrompt })),
+    ...(words.length ? [{ cmd: 'other', name: path.basename(words[0]), installed: installed(words[0], env), resumes: false, prompts: false }] : [])];
+});
 ipcMain.handle('startLane', signedIn(async o => {
   const team = openTeam(), signedInAs = session; // as they are now: another team may be opened while the repo is fetched
   if (!team) throw new Error('Open a team first.');
   if (o.teamKey && keyOf(team) !== o.teamKey) throw new Error('Another team was opened while this agent was starting. Start it again.');
-  if (!AGENTS.includes(o.cmd)) throw new Error(`Unknown agent: ${o.cmd}`);
+  // One of the agents in the table, or this Mac's own "Other command": its words, never a shell's. That command comes
+  // from this Mac's settings, never from a session or a teammate.
+  const words = o.cmd === 'other' ? commandWords(o.command) : Object.hasOwn(AGENTS, o.cmd) ? [o.cmd] : [];
+  if (!words.length) throw new Error(`Unknown agent: ${o.cmd}`);
+  const agent = o.cmd === 'other' ? {} : AGENTS[o.cmd];
   const env = await agentEnv;
   // A renamed session keeps its original folder and branch, which `folderKey` names.
   const folder = o.repo ? await github.sessionFolder(String(o.repo), String(o.folderKey || o.session), env, { worktree: o.worktree !== false }) : { dir: String(o.cwd), guarded: false };
   const cwd = folder.dir;
-  // OpenCode has no hooks to ask with, and Codex's only work once the person has trusted them, so on a shared team the
-  // push guard in app-made clones stops both as well.
-  const shared = o.cmd !== 'claude' && team.members?.length > 0;
+  // An agent whose hooks aren't sure to run (Codex's only work once the person has trusted them; another command has
+  // none) is also stopped by the push guard in app-made clones, on a shared team.
+  const shared = !agent.sure && team.members?.length > 0;
   const why = o.repo ? 'This repo has its own Git hooks, so Protoplasma\'s push guard isn\'t installed' : 'Protoplasma only installs its push guard in folders it makes, not in one you pick';
   const notice = shared && !folder.guarded ? `${why}: this agent can push to main or force-push without being stopped.` : '';
   // Claude Code's and Codex's hooks go through a relay on this Mac (teams.hookRelay), which pins a Mac hub's self-signed
   // certificate and lets only context and "ask first" back from any hub, never an approval or a changed command.
   const credentials = () => teams.access(signedInAs, team.hub, team.owner);
-  const hookBase = ['claude', 'codex'].includes(o.cmd) ? await teams.hookRelay(hookTarget) : undefined;
-  const lane = startLane({ hub: team.hub, hookBase, team: team.id, credentials, session: String(o.session), cmd: o.cmd, cwd, args: o.resume ? RESUME[o.cmd] : o.prompt ? firstPrompt(o.cmd, o.prompt) : [],
-    open: !!o.open, env: shared ? { ...env, PROTO_SHARED_TEAM: '1' } : env, onRefused: reason => toWindow('lane:refused', lane.id, reason), picked: !o.repo });
+  const hookBase = agent.hooks ? await teams.hookRelay(hookTarget) : undefined;
+  const extra = o.resume ? agent.resume || [] : o.prompt && agent.firstPrompt ? firstPrompt(agent, o.prompt) : [];
+  const lane = startLane({ hub: team.hub, hookBase, team: team.id, credentials, session: String(o.session), cmd: words[0], cwd, args: [...words.slice(1), ...extra],
+    open: !!o.open, env: shared ? { ...env, PROTO_SHARED_TEAM: '1' } : env, onRefused: reason => toWindow('lane:refused', lane.id, reason), picked: !o.repo, bare: o.cmd === 'other' });
   lane.hub = { url: team.hub, credentials };
   lane.cmd = o.cmd;
   lanes.set(lane.id, lane);
   folders.add(cwd);
   lane.cwd = cwd;
   lane.teamKey = keyOf(team);
-  lane.unguarded = o.cmd !== 'claude' && !shared; // started while the team was just you (D7, see teams:invite)
+  lane.unguarded = !agent.sure && !shared; // started while the team was just you (D7, see teams:invite)
   lane.term.onData(d => toWindow('lane:data', lane.id, d));
   lane.term.onExit(() => { lanes.delete(lane.id); toWindow('lane:exit', lane.id); });
   return { id: lane.id, repo: lane.repo, notice };

@@ -13,7 +13,7 @@ const REPO = /^[a-z\d][a-z\d-]*\/(?!\.\.?$)[\w.-]+$/i; // owner/name (an owner n
 
 // ---- Preferences (Settings) ----
 
-const DEFAULT_PREFS = { theme: 'dark', fontSize: 12.5, fontFamily: 'SF Mono', lineHeight: 1.2, notifyNeeds: true, notifyDone: true, badge: true, agent: 'claude', open: false, sessionBranches: true, shareFiles: false, findNearby: false };
+const DEFAULT_PREFS = { theme: 'dark', fontSize: 12.5, fontFamily: 'SF Mono', lineHeight: 1.2, notifyNeeds: true, notifyDone: true, badge: true, agent: 'claude', open: false, sessionBranches: true, shareFiles: false, findNearby: false, otherCommand: '' };
 const prefs = { ...DEFAULT_PREFS, ...(() => { try { return JSON.parse(store.get('prefs') || '{}'); } catch { return {}; } })() };
 const effectiveTheme = () => (prefs.theme === 'system' ? (matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark') : prefs.theme);
 
@@ -50,7 +50,8 @@ document.addEventListener('error', e => {
   failedAvatars.add(e.target.getAttribute('src'));
   e.target.replaceWith(e.target.parentElement.dataset.initial);
 }, true);
-const agentName = cmd => ({ claude: 'Claude Code', codex: 'Codex', opencode: 'OpenCode' })[cmd] || cmd;
+// An agent's name as this Mac knows it (main.js agents:status, from src/agents.js). A teammate's own command shows as it is.
+const agentName = cmd => agents.find(a => a.cmd === cmd)?.name || cmd;
 // No prototype: a status a hub on a Mac sends ("constructor") must miss, not find a function render() then throws on.
 const STATUS = Object.assign(Object.create(null), { working: ['working', 'Working'], 'needs you': ['needs', 'Needs you'], idle: ['idle', 'Idle'],
   'not synced': ['idle', 'Not synced'], overlap: ['overlap', 'Overlap'], done: ['done', 'Done'], running: ['idle', 'Running'], stopping: ['idle', 'Stopping'] });
@@ -587,7 +588,8 @@ async function startAgent({ session, cmd, open, source, task, resume = false, pr
     const records = await proto.saveSession(team.key, { name: session, task });
     if (currentTeam?.key === team.key) sessionRecords = records;
   }
-  const opts = { session, cmd, open, resume, prompt, folderKey: recordFor(session)?.key, teamKey: team.key, ...source };
+  // "Other command" is this Mac's own setting, passed here and nowhere else: never a session's or a teammate's.
+  const opts = { session, cmd, open, resume, prompt, folderKey: recordFor(session)?.key, teamKey: team.key, ...source, ...(cmd === 'other' && { command: prefs.otherCommand }) };
   let started;
   try { started = await proto.startLane(opts); } catch (e) {
     if (created && task) proto.deleteSession(team.key, session).catch(() => {}); // don't leave an empty session behind
@@ -604,8 +606,10 @@ async function startAgent({ session, cmd, open, source, task, resume = false, pr
 }
 // The agent this Mac last ran in a session, if it can pick that conversation back up.
 // Your agent that stopped most recently in this session, or else the last kind you started here.
-const resumable = session => (sourceFor(session) && (stoppedAgents.find(s => s.session === session && same(s.login, me.login))?.cmd
-  || store.get(lastAgentKey(session)))) || '';
+const resumable = session => {
+  const last = (sourceFor(session) && (stoppedAgents.find(s => s.session === session && same(s.login, me.login))?.cmd || store.get(lastAgentKey(session)))) || '';
+  return agents.find(a => a.cmd === last)?.resumes ? last : ''; // only a CLI that can pick its conversation back up
+};
 async function resumeAgent() {
   const cmd = resumable(current);
   if (!cmd) return openNewAgent(current);
@@ -614,11 +618,19 @@ async function resumeAgent() {
 }
 
 // Only agents this Mac can run are offered; the rest are shown as not installed.
-const refreshAgents = () => proto.agents().then(list => { agents = list; syncAgents(); });
+const refreshAgents = () => proto.agents(prefs.otherCommand).then(list => { agents = list; syncAgents(); if (currentTeam) render(); });
 const isInstalled = cmd => agents.find(a => a.cmd === cmd)?.installed !== false;
 // The agent Settings names, or one this Mac has when it hasn't got that one (someone with only Codex, say).
 const defaultAgent = () => (isInstalled(prefs.agent) ? prefs.agent : agents.find(a => a.installed)?.cmd || prefs.agent);
 function syncAgents() {
+  // The pickers are drawn from the list, so a new agent in src/agents.js (or an "Other command") shows up by itself.
+  const was = $('input[name=cmd]:checked')?.value;
+  const radios = extra => agents.map(a => `<label><input type="radio" ${extra} value="${esc(a.cmd)}"><span>${esc(a.name)}</span></label>`).join('');
+  setHTML($('#agentPick'), radios('name="cmd"'));
+  setHTML($('#prefAgentPick'), radios('name="prefAgent" data-pref="agent"'));
+  for (const input of $('#prefAgentPick').querySelectorAll('input')) input.checked = input.value === prefs.agent;
+  const again = [...document.querySelectorAll('input[name=cmd]')].find(i => i.value === (was || defaultAgent()));
+  if (again) again.checked = true;
   for (const input of document.querySelectorAll('input[name=cmd]')) {
     input.disabled = !isInstalled(input.value);
     input.nextElementSibling.title = input.disabled ? 'Not installed on this Mac' : '';
@@ -648,7 +660,8 @@ async function openNewAgent(session) {
   sourcePicked = false;
   const known = session && showSource(session); // an existing session keeps the source it already uses
   $('#agentErr').textContent = '';
-  $(`input[name=cmd][value=${defaultAgent()}]`).checked = true;
+  const preferred = $(`input[name=cmd][value=${defaultAgent()}]`);
+  if (preferred) preferred.checked = true;
   $('#open').checked = prefs.open;
   $('#repoHint').textContent = prefs.sessionBranches
     ? 'The session gets its own branch (session/…) and folder under ~/Protoplasma, so main only changes through a push or pull request.'
@@ -808,8 +821,8 @@ function agentMenu(anchor) {
   refreshAgents();
   const last = resumable(current);
   showMenu(anchor, [...(last ? [{ text: `Resume ${agentName(last)}`, hint: isInstalled(last) ? 'last conversation' : 'Not installed', disabled: !isInstalled(last), run: resumeAgent }] : []),
-    { label: 'Add an agent' }, ...['claude', 'codex', 'opencode'].map(cmd =>
-    ({ text: agentName(cmd), disabled: !isInstalled(cmd), hint: isInstalled(cmd) ? '' : 'Not installed', run: () => addAgent(cmd) }))]);
+    { label: 'Add an agent' }, ...agents.map(a =>
+    ({ text: a.name, disabled: !a.installed, hint: a.installed ? '' : 'Not installed', run: () => addAgent(a.cmd) }))]);
 }
 
 // Continuing a teammate's work: your own agent, in this session, starting from what theirs was doing. `agent` is a
@@ -837,9 +850,10 @@ function continueMenu(anchor, id) {
   const t = terms.get(id), screen = t ? screenText(t.term) : replaying === id && replayTerm ? screenText(replayTerm) : '';
   const session = agent.session, source = sourceFor(session); // its session: in pane mode that needn't be the open one
   if (!source) return alert('Add an agent to this session first, so it has a folder on this Mac. Then continue from here.');
-  showMenu(anchor, [{ label: 'Continue this work with' }, ...['claude', 'codex', 'opencode'].map(cmd => ({
-    text: agentName(cmd), disabled: !isInstalled(cmd), hint: isInstalled(cmd) ? '' : 'Not installed',
-    run: () => startAgent({ session, cmd, open: prefs.open, source, prompt: briefFrom(agent, screen) }).catch(err => alert(errorText(err))) }))]);
+  // Only a CLI that takes a first message can be started with one.
+  showMenu(anchor, [{ label: 'Continue this work with' }, ...agents.filter(a => a.prompts).map(a => ({
+    text: a.name, disabled: !a.installed, hint: a.installed ? '' : 'Not installed',
+    run: () => startAgent({ session, cmd: a.cmd, open: prefs.open, source, prompt: briefFrom(agent, screen) }).catch(err => alert(errorText(err))) }))]);
 }
 // Handing your agent's work in this session to a teammate: it shows in their alerts until they continue it.
 function handOffMenu(anchor, id) {
@@ -1394,9 +1408,9 @@ function askMenu(anchor, c) {
   const waiting = l => statusOf(l) === 'needs you';
   showMenu(anchor, [...(mine.length ? [{ label: 'Send it to' }, ...mine.map(l => ({ text: `Your ${agentLabel(l, mine)}`, disabled: waiting(l),
     hint: waiting(l) ? 'Answer it first' : (STATUS[statusOf(l)] || [])[1] || '', run: () => send(l.id) }))] : []),
-    { label: 'Start an agent with it' }, ...['claude', 'codex', 'opencode'].map(cmd => ({ text: agentName(cmd), disabled: !isInstalled(cmd) || !source,
-      hint: !isInstalled(cmd) ? 'Not installed' : !source ? 'Add an agent here first' : '',
-      run: () => startAgent({ session: current, cmd, open: prefs.open, source, prompt }).catch(err => alert(errorText(err))) }))]);
+    { label: 'Start an agent with it' }, ...agents.filter(a => a.prompts).map(a => ({ text: a.name, disabled: !a.installed || !source,
+      hint: !a.installed ? 'Not installed' : !source ? 'Add an agent here first' : '',
+      run: () => startAgent({ session: current, cmd: a.cmd, open: prefs.open, source, prompt }).catch(err => alert(errorText(err))) }))]);
 }
 function agentCard(l, name) {
   const mine = local.has(l.id), [cls, label] = STATUS[statusOf(l)] || ['idle', l.status];
@@ -1737,7 +1751,8 @@ function applyPrefs() {
   for (const input of document.querySelectorAll('[data-pref]')) {
     if (input.tagName === 'SELECT') input.value = prefs[input.dataset.pref];
     else if (input.type === 'checkbox') input.checked = !!prefs[input.dataset.pref];
-    else input.checked = input.value === String(prefs[input.dataset.pref]);
+    else if (input.type === 'radio') input.checked = input.value === String(prefs[input.dataset.pref]);
+    else input.value = prefs[input.dataset.pref] ?? '';
   }
   $('#fontSize').textContent = `${prefs.fontSize}px`;
   $('#lineHeight').textContent = prefs.lineHeight.toFixed(1);
@@ -1779,9 +1794,10 @@ async function openSettings(pane = 'general') {
     $('.sidebar').inert = $('.main').inert = true; // a page over the main area, not a modal: what's under it can't be reached
     $('#settings').show(); $('#settings').focus(); render();
   }
-  proto.agents().then(list => {
+  proto.agents(prefs.otherCommand).then(list => {
     agents = list;
-    $('#providers').innerHTML = list.map(a => `<div class="setting"><div><b>${esc(agentName(a.cmd))}</b><p>The <kbd>${esc(a.cmd)}</kbd> command on this Mac.</p></div>
+    syncAgents();
+    $('#providers').innerHTML = list.filter(a => a.cmd !== 'other').map(a => `<div class="setting"><div><b>${esc(a.name)}</b><p>The <kbd>${esc(a.cmd)}</kbd> command on this Mac.${a.installed || !a.install ? '' : ` Get it with <kbd>${esc(a.install)}</kbd>.`}</p></div>
       <span class="where">${a.installed ? 'Installed' : 'Not installed'}</span></div>`).join('');
   });
   proto.ghStatus().then(s => { if ($('#ghStatus')) $('#ghStatus').textContent = s.detail; });
@@ -1815,8 +1831,9 @@ $('#settings').addEventListener('close', () => {
 $('#settings').onchange = e => {
   const key = e.target.dataset.pref;
   if (!key) return;
-  prefs[key] = e.target.type === 'checkbox' ? e.target.checked : e.target.value;
+  prefs[key] = e.target.type === 'checkbox' ? e.target.checked : e.target.type === 'radio' || e.target.tagName === 'SELECT' ? e.target.value : e.target.value.trim();
   savePrefs();
+  if (key === 'otherCommand') refreshAgents();
 };
 $('#settings').onclick = e => {
   const { pane, step, line, open, url } = e.target.dataset;
@@ -1926,11 +1943,11 @@ $('#switcher').onclick = e => { if (e.target === $('#switcher')) $('#switcher').
 
 // ---- First-run checklist: what this Mac still needs before agents can run ----
 
-const INSTALL_CLAUDE = 'npm install -g @anthropic-ai/claude-code';
 function renderSetup(agentList, gh) {
   const items = [];
   if (!agentList.some(a => a.installed)) {
-    items.push(`<div class="setup-item"><div><b>Install an agent</b><p>Claude Code is the one Protoplasma knows best: <code>${INSTALL_CLAUDE}</code>. Codex and OpenCode work too.</p></div><button class="btn small" data-copy="${esc(INSTALL_CLAUDE)}">Copy</button></div>`);
+    const [first, ...rest] = agentList.filter(a => a.install); // the table's first is the one with the surest hooks
+    if (first) items.push(`<div class="setup-item"><div><b>Install an agent</b><p>${esc(first.name)} is the one Protoplasma knows best: <code>${esc(first.install)}</code>. ${esc(rest.map(a => a.name).join(' and '))} work too.</p></div><button class="btn small" data-copy="${esc(first.install)}">Copy</button></div>`);
   }
   if (!gh.ok) {
     const cmd = /Not installed/.test(gh.detail) ? 'brew install gh && gh auth login' : 'gh auth login';
@@ -1944,7 +1961,7 @@ function renderSetup(agentList, gh) {
   setHTML($('#setup'), shown ? `<h2>Finish setting up this Mac</h2><p>Run these in Terminal, then check again.</p>${items.join('')}
     <div class="actions"><button class="btn small ghost" data-dismiss>Not now</button><button class="btn small" data-recheck>Check again</button></div>` : '');
 }
-const checkSetup = () => Promise.all([proto.agents(), proto.ghStatus()]).then(([list, gh]) => { agents = list; renderSetup(list, gh); });
+const checkSetup = () => Promise.all([proto.agents(prefs.otherCommand), proto.ghStatus()]).then(([list, gh]) => { agents = list; renderSetup(list, gh); });
 $('#setup').onclick = e => {
   if (e.target.dataset.copy) { proto.copy(e.target.dataset.copy); e.target.textContent = 'Copied'; }
   if ('recheck' in e.target.dataset) checkSetup();

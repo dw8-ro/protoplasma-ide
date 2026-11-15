@@ -283,8 +283,11 @@ function startHub({ port = 7681, host = '0.0.0.0', dataDir, owners, tls, passIss
   function views(teamId) {
     const ls = teamLanes(teamId);
     // An overlap is a file both of two checkouts of the same repo have changed, as each sees the other (touchedBy).
-    const overlaps = l => [...filesOf(l)].filter(f => ls.some(o => o.tree !== l.tree && repoKey(o) === repoKey(l)
-      && touchedBy(o, l).has(f) && touchedBy(l, o).has(f)));
+    // Each pair's two sets are built once, not once for every file: this runs for every lane at every change of state.
+    const overlaps = l => {
+      const pairs = ls.filter(o => o.tree !== l.tree && repoKey(o) === repoKey(l)).map(o => [touchedBy(o, l), touchedBy(l, o)]);
+      return pairs.length ? [...filesOf(l)].filter(f => pairs.some(([theirs, mine]) => theirs.has(f) && mine.has(f))) : [];
+    };
     return ls.map(l => ({ id: l.id, login: l.login, name: l.name, avatar: l.avatar, session: l.session, cmd: l.cmd, repo: l.repo, branch: l.branch,
       git: l.git, tree: l.tree, cols: l.cols, rows: l.rows, open: l.open, status: l.status, lastActive: l.lastActive, prompt: l.prompt || '',
       typedBy: l.typedBy || '', typedAt: l.typedAt || null, startedAt: l.startedAt, local: [...l.local],

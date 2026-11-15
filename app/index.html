@@ -604,6 +604,11 @@
   .segmented input:focus-visible + span { outline: 2px solid color-mix(in srgb, var(--text) 55%, transparent); }
   .toggle { display: flex; align-items: center; gap: 10px; color: var(--muted); cursor: pointer; }
   .toggle input { width: 16px; height: 16px; accent-color: var(--primary); }
+  .more { margin: 0 0 4px; }
+  .more summary { color: var(--muted); font-size: 12px; font-weight: 500; cursor: pointer; width: fit-content; border-radius: 6px; }
+  .more summary:focus-visible { outline: 2px solid var(--focus, currentColor); outline-offset: 3px; }
+  .more[open] summary { margin-bottom: 12px; }
+  .more .toggle + .toggle { margin-top: 10px; }
   .actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 22px; }
   .members { list-style: none; margin: 18px 0 0; padding: 0; display: grid; gap: 2px; }
   .members li { display: flex; align-items: center; gap: 10px; padding: 6px 0; }
@@ -763,7 +768,7 @@
       <button id="codeToggle" class="btn small" title="Show the code (⇧⌘E)"><svg><use href="#icon-code"/></svg>Code</button>
       <button id="newPane" class="btn small">New pane</button>
       <button id="panelToggle" class="icon-btn" aria-label="Hide the session panel" title="Session panel"><svg><use href="#sidepanel"/></svg></button>
-      <button id="shareBtn" class="btn small primary">Share</button>
+      <button id="shareBtn" class="btn small primary">Invite</button>
     </div>
     <div class="room-body">
       <!-- The code: shown when you open a file, the way Amoeba does, with the agents moving to a panel underneath. -->
@@ -917,9 +922,9 @@
   <form id="agentForm">
     <h2 id="agentTitle">New session</h2>
     <p id="agentLede" class="lede"></p>
-    <label class="field"><span>What are you working on?</span><input id="session" list="sessionList" maxlength="60" placeholder="fix-login-bug" autocomplete="off"></label>
+    <label class="field"><span id="taskLabel">What should the agent do?</span><input id="task" maxlength="300" placeholder="Fix the double-booking race in the lobby" autocomplete="off"></label>
+    <label class="field"><span>Session name <span class="where">Optional</span></span><input id="session" list="sessionList" maxlength="60" placeholder="Named after what you typed above" autocomplete="off"></label>
     <datalist id="sessionList"></datalist>
-    <label class="field"><span>Goal for its agents <span class="where">Optional</span></span><input id="task" maxlength="300" placeholder="Fix the double-booking race in the lobby" autocomplete="off"></label>
     <fieldset class="field"><legend>Code</legend>
       <div class="segmented">
         <label><input type="radio" name="source" value="repo" checked><span>GitHub repo</span></label>
@@ -934,11 +939,15 @@
     <div id="folderField" class="field" hidden><span id="cwdLabel">Folder</span>
       <div class="row"><input id="cwd" readonly placeholder="Choose the folder it works in" aria-labelledby="cwdLabel"><button type="button" id="pick" class="btn">Choose…</button></div>
     </div>
-    <fieldset class="field"><legend>Agent</legend>
+    <fieldset id="agentField" class="field"><legend>Agent</legend>
       <div id="agentPick" class="segmented"></div>
       <p id="agentHint" class="fine" hidden></p>
     </fieldset>
-    <label class="toggle"><input id="open" type="checkbox">Let teammates type into it</label>
+    <details id="agentMore" class="more">
+      <summary>More options</summary>
+      <label class="toggle"><input id="sendTask" type="checkbox" checked>Give what you typed to the agent as its first message</label>
+      <label class="toggle"><input id="open" type="checkbox">Let teammates type into it</label>
+    </details>
     <div class="foot">
       <p id="agentErr" class="error" role="alert"></p>
       <div class="actions"><button type="button" id="cancel" class="btn ghost">Cancel</button><button id="startAgent" class="btn primary">Start the session</button></div>

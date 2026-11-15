@@ -140,13 +140,15 @@ async function run(win, hub) {
     check('clicking a repo selects it', await js(`$('#repo').value === 'max/engine' && $('#repoPicker .repo-row.on')?.dataset.repo === 'max/engine' && $('#repoPicker').querySelectorAll('.repo-row').length === 3`));
     const height = await js(`$('#agent').getBoundingClientRect().height`);
     await js(`$('#session').value = ''; $('#agentForm').requestSubmit()`);
-    check('a form error shows without moving the dialog', await js(`$('#agentErr').textContent === 'Name the session.' && $('#agent').getBoundingClientRect().height === ${height}`));
+    check('a form error shows without moving the dialog', await js(`$('#agentErr').textContent === 'Say what the agent should do, or name the session.' && $('#agent').getBoundingClientRect().height === ${height}`));
     await js(`$('#session').value = 's1'`);
 
     // ---- an agent in a folder
-    await js(`$('input[name=source][value=folder]').checked = true; syncSource(); $('#cwd').value = ${JSON.stringify(root)}; $('#task').value = 'E2E goal'; $('#agentForm').requestSubmit()`);
+    await js(`$('input[name=source][value=folder]').checked = true; syncSource(); $('#cwd').value = ${JSON.stringify(root)}; $('#task').value = 'E2E goal'; $('#sendTask').checked = false; $('#agentForm').requestSubmit()`); // a real Claude Code is never sent a prompt
     check('starts a real Claude Code agent', await until('local.size === 1 && hubLanes.length === 2', 15000));
     const mine = await js('[...local.keys()][0]');
+    check('a session left without a name is named after what was typed, and never joins another by accident',
+      await js(`sessionNameFrom('Fix the double booking race in the lobby, please.') === 'Fix the double booking race' && sessionNameFrom('s1') === 's1 2' && sessionNameFrom('  ') === ''`));
     const theirs = await js(`hubLanes.find(l => l.id !== ${JSON.stringify(mine)}).id`);
     check('teammate output reaches the window', await until(`(terms.get(${JSON.stringify(theirs)})?.term.buffer.active.getLine(0)?.translateToString() || '').includes('teammate ready')`));
     check('the session opens on your own agent, with its goal', await until(`view === 'session' && current === 's1' && focus === ${JSON.stringify(mine)} && !terms.get(${JSON.stringify(mine)}).el.hidden && terms.get(${JSON.stringify(theirs)}).el.hidden && $('#roomTask').textContent === 'E2E goal' && $('#roomWho').textContent === 'Your agent'`));

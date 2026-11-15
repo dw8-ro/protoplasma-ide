@@ -13,7 +13,7 @@ run('5. Typing into agents, sharing files, stopping, panes, switcher', async () 
   // David starts a second agent that teammates may type into.
   await js('david', `openNewAgent(current); return 1`);
   await until('david', `$('#agent').open`, 3000);
-  if (!(await js('david', `return $('#open').checked`))) await click('david', 'label:has(#open)');
+  if (!(await js('david', `return $('#open').checked`))) { await click('david', '#agentMore summary'); await click('david', 'label:has(#open)'); }
   await click('david', '#startAgent');
   check('David adds an open agent', await until('david', `local.size === 2`, 15000), await js('david', `return $('#agentErr').textContent`));
   const openLane = await js('david', `return [...local.keys()].find(id => id !== ${JSON.stringify(davidLane)})`);

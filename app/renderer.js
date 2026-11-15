@@ -54,7 +54,7 @@ document.addEventListener('error', e => {
 const agentName = cmd => agents.find(a => a.cmd === cmd)?.name || cmd;
 // No prototype: a status a hub on a Mac sends ("constructor") must miss, not find a function render() then throws on.
 const STATUS = Object.assign(Object.create(null), { working: ['working', 'Working'], 'needs you': ['needs', 'Needs you'], idle: ['idle', 'Idle'],
-  'not synced': ['idle', 'Not synced'], overlap: ['overlap', 'Overlap'], done: ['done', 'Done'], running: ['idle', 'Running'], stopping: ['idle', 'Stopping'] });
+  'not synced': ['idle', 'Not synced'], overlap: ['overlap', 'Overlap'], done: ['done', 'Done'], running: ['idle', 'Idle'], stopping: ['idle', 'Stopping'] });
 const pill = status => {
   const [cls, label] = STATUS[status] || ['idle', status];
   return `<span class="pill ${cls}"><span class="dot"></span>${esc(label)}</span>`;
@@ -357,7 +357,15 @@ $('#createTeam').onsubmit = async e => {
     $('#teamName').value = '';
     $('#createErr').textContent = '';
     openTeam(team);
-  } catch (err) { $('#createErr').textContent = errorText(err); }
+  } catch (err) {
+    const text = errorText(err);
+    // The hosted hub may keep new teams to the people who run it. Say what works instead of leaving a dead end.
+    if (/only lets its owners/i.test(text) && whereValue() === 'online') {
+      $('input[name=where][value=mac]').checked = true;
+      syncWhere();
+      $('#createErr').textContent = 'New online teams are made by the people who run this hub for now, so This Mac is picked instead: press Create again. Teammates on your Wi-Fi can join it, and anyone can invite you to their online team.';
+    } else $('#createErr').textContent = text;
+  }
   finally { button.disabled = false; }
 };
 
@@ -636,6 +644,7 @@ function syncAgents() {
     input.nextElementSibling.title = input.disabled ? 'Not installed on this Mac' : '';
   }
   if ($('input[name=cmd]:checked')?.disabled) (document.querySelector('input[name=cmd]:not(:disabled)') || {}).checked = true;
+  $('#agentField').hidden = agents.length > 0 && agents.filter(a => a.installed).length === 1 && !document.querySelector('input[name=cmd]:checked:disabled'); // nothing to choose
   const missing = [...document.querySelectorAll('input[name=cmd]:disabled')].map(i => agentName(i.value));
   $('#agentHint').hidden = !missing.length;
   const names = missing.length > 1 ? `${missing.slice(0, -1).join(', ')} and ${missing.at(-1)}` : missing[0];
@@ -660,6 +669,9 @@ async function openNewAgent(session) {
   sourcePicked = false;
   const known = session && showSource(session); // an existing session keeps the source it already uses
   $('#agentErr').textContent = '';
+  $('#sendTask').checked = true;
+  $('#agentMore').open = false;
+  $('#taskLabel').textContent = adding ? 'This session\'s goal' : 'What should the agent do?';
   const preferred = $(`input[name=cmd][value=${defaultAgent()}]`);
   if (preferred) preferred.checked = true;
   $('#open').checked = prefs.open;
@@ -760,6 +772,12 @@ $('#pick').onclick = async () => {
   const dir = await proto.pickFolder($('#cwd').value);
   if (dir) { showFolder(dir); store.set('cwd', dir); }
 };
+// A session's name from what was typed for its agent: its first words, and a number if that name is taken.
+function sessionNameFrom(text) {
+  const name = String(text).trim().split(/\s+/).slice(0, 5).join(' ').slice(0, 40).replace(/[\s.,;:!?-]+$/, '');
+  if (!name) return '';
+  for (let n = 1; ; n++) { const tried = n === 1 ? name : `${name} ${n}`; if (!existingSession(tried)) return tried; }
+}
 // A name that matches an existing session apart from case and punctuation joins it, since both would get the same
 // branch and folder. Same rule as slug() in src/shared.js.
 // Letters of any script stay; a name with none (all emoji) gets a short code of its own instead of a shared one.
@@ -780,8 +798,10 @@ const existingSession = name => {
 $('#agentForm').onsubmit = async e => {
   e.preventDefault();
   const fromRepo = $('input[name=source]:checked').value === 'repo';
-  const typed = $('#session').value.trim();
-  const session = typed && (existingSession(typed) ?? typed);
+  // A name you give joins the session of that name. Left empty, the session is named after what you typed for the
+  // agent, and never joins another by accident: a name already taken gets a number.
+  const typed = $('#session').value.trim(), made = typed ? '' : sessionNameFrom($('#task').value);
+  const session = typed ? existingSession(typed) ?? typed : made;
   const known = session && sourceFor(session), repo = $('#repo').value.trim();
   // An existing session keeps whether it has its own branch; a new one follows the setting.
   const source = fromRepo ? { repo, worktree: known?.repo && same(known.repo, repo) ? known.worktree !== false : prefs.sessionBranches } : { cwd: $('#cwd').value };
@@ -789,13 +809,17 @@ $('#agentForm').onsubmit = async e => {
   const button = $('#startAgent'), label = button.textContent;
   $('#agentErr').textContent = '';
   try {
-    if (!session) throw new Error('Name the session.');
+    if (!session) throw new Error('Say what the agent should do, or name the session.');
     if (fromRepo && !REPO.test(source.repo)) throw new Error('Pick a repo, like owner/name.');
     if (!fromRepo && !source.cwd) throw new Error('Choose a folder.');
     if (rec && task !== (rec.task || '') && !canManage(rec)) throw new Error(`Only ${rec.createdBy} or the team's owner can change this session's goal.`);
     button.disabled = $('#cancel').disabled = true;
     button.textContent = fromRepo ? 'Getting the repo…' : 'Starting…';
-    await startAgent({ session, cmd: $('input[name=cmd]:checked').value, open: $('#open').checked, source, task });
+    // What you typed is the session's goal, and the agent's first message too, unless it was already the goal of a
+    // session you're adding an agent to, or the CLI can't be started with one.
+    const cmd = $('input[name=cmd]:checked').value;
+    const first = $('#sendTask').checked && !$('#task').dataset.from && agents.find(a => a.cmd === cmd)?.prompts ? task : '';
+    await startAgent({ session, cmd, open: $('#open').checked, source, task, prompt: first });
     if (fromRepo) store.set('repo', source.repo);
     store.set('sourceKind', fromRepo ? 'repo' : 'folder');
     $('#agent').close();

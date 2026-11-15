@@ -266,6 +266,19 @@ test('Codex\'s first four hooks keep their exact text, and newer ones come after
   assert.ok(setting.endsWith(`,Interrupt=[{hooks=[{type="command",command=${JSON.stringify(CODEX_HOOK)},timeout=3}]}]}`), 'and an interrupt');
 });
 
+test('an "Other command" runs as it is written, even when it is called claude: no hooks and no hook secret', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'protoplasma-other-'));
+  const claude = path.join(dir, 'claude'); // prints what it was started with
+  fs.writeFileSync(claude, '#!/bin/sh\necho "args:[$*] secret:[$PROTO_HOOK_SECRET]"; exec cat\n', { mode: 0o755 });
+  const lane = startLane({ hub: 'http://127.0.0.1:9', team: 't', token: 'tok-bob', session: 's', cmd: claude, args: ['--model', 'x'], bare: true });
+  let out = '';
+  lane.term.onData(d => { out += d; });
+  try {
+    for (let i = 0; i < 250 && !/secret:\[/.test(out); i++) await sleep(20);
+    assert.match(out, /args:\[--model x\] secret:\[\]/, 'were it given hooks, they would go straight to the hub, past the relay');
+  } finally { lane.term.kill(); fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
 test('the hook relay sends the hub only what it reads: no file contents, and only the start of a prompt', async () => {
   const seen = [];
   const fake = http.createServer((req, res) => {

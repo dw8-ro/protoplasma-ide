@@ -1270,7 +1270,9 @@ function renderRoom(lanes) {
     t.el.hidden = !onStage.includes(l.id);
     gpu(t, !t.el.hidden);
     if (scaleOff(t)) { gpu(t, false); gpu(t, true); }
-    if (!t.el.hidden && !t.shown) requestAnimationFrame(() => t.term.scrollToBottom()); // output while hidden can leave it scrolled up
+    // Output while hidden can leave it scrolled up. By the next frame the terminal may be gone (its session left the
+    // screen, and frames wait while the window is hidden): scrolling a disposed one throws inside xterm.
+    if (!t.el.hidden && !t.shown) requestAnimationFrame(() => { if (terms.get(l.id) === t) t.term.scrollToBottom(); });
     t.shown = !t.el.hidden;
     t.el.style.setProperty('--c', colorFor(l.login));
     if (!mine) { const cols = laneCols(l.cols), rows = laneRows(l.rows); if (t.term.cols !== cols || t.term.rows !== rows) t.term.resize(cols, rows); }

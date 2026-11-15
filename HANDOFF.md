@@ -79,6 +79,10 @@ report, then decide on Tauri only if memory still matters.
   six busy teammate terminals that saves 30–40 MB in the page process. Measure with the new `scripts/memory.js`; the
   playground now starts with `--expose-gc`, so it measures after a collection. The GPU process can't be trimmed from
   the app: mostly the compositor and Skia's cache. Details in the research report, option A.
+- **Explained and fixed on 15 Nov:** the page error "Cannot read properties of undefined (reading 'dimensions')" was
+  `renderRoom`'s `requestAnimationFrame(() => t.term.scrollToBottom())` running on a terminal disposed before that
+  frame came (frames wait while the window is hidden). It now checks the terminal is still the lane's. The notes
+  below are what was tried before the stack was known.
 - **An unexplained page error, seen once:** "Cannot read properties of undefined (reading 'dimensions')".
   - When: one e2e run, the first launch of a freshly downloaded Electron 44.10.2, while a second agent's terminal was
     laid out (between "the clone gets the push guard" and "shows when the branch falls behind").

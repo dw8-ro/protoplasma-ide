@@ -1087,7 +1087,7 @@ function renderAlerts(lanes) {
   const codebase = l => l.repo || l.tree;
   const clashes = [...new Set(lanes.flatMap(l => l.overlaps.map(f => `${codebase(l)}|${f}`)))].map(key => {
     const file = key.slice(key.indexOf('|') + 1), who = lanes.filter(l => l.overlaps.includes(file) && `${codebase(l)}|${file}` === key);
-    return `<button class="alert overlap" data-session="${esc(who[0].session)}" data-file="${esc(file)}"><b>${esc(whoEdited(who.map(l => l.name)))} edited</b><span>${esc(file)}</span></button>`;
+    return `<button class="alert overlap" data-session="${esc(who[0].session)}" data-file="${esc(file)}" title="Opens the file in its session. The Conflicts tab beside it shows each person's version."><b>${esc(whoEdited(who.map(l => l.name)))} edited</b><span>${esc(file)}</span></button>`;
   });
   // Work a teammate handed you, for a day or until you start an agent in that session (the hub clears it then).
   const handed = sessionRecords.filter(r => r.handoff && same(r.handoff.to, me.login) && Date.now() - Date.parse(r.handoff.at) < 86_400_000)

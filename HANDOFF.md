@@ -7,8 +7,8 @@ did: [docs/sessions/2026-10-29.md](docs/sessions/2026-10-29.md) (the second secu
 
 ## Built on 15 Nov 2026, not released: most of the plan
 
-Everything below is committed on the worktree branch `claude/protoplasma-research-market-84c834` (11 commits on top
-of `bc9d448`, which is `origin/main`). **Nothing is pushed.** Pushing `main` redeploys the hosted hub (hub.js and
+Everything below is committed on the worktree branch `claude/protoplasma-research-market-84c834` (on top of `bc9d448`, which is
+`origin/main`: see `git log bc9d448..`). **Nothing is pushed.** Pushing `main` redeploys the hosted hub (hub.js and
 shared.js changed) and a tag releases to installed copies: both are David's call, after he has tried it.
 - **The plan and what's left of it:** [docs/plan.md](docs/plan.md). **The log of this work,** with every decision taken
   while David was away: [docs/sessions/2026-11-15.md](docs/sessions/2026-11-15.md). **The findings behind it:**
@@ -38,7 +38,7 @@ What it still needs, in order:
 - **OpenCode's hooks have never run against a live model:** no provider is signed in on this Mac. OpenCode 1.19.5 is
   installed (`npm install -g opencode-ai`), and Codex was updated to 0.169.0.
 - **The README pictures** are regenerated for the new New session form (`npm run screenshot`, `npm run readme-art`).
-  The demo gif isn't (`npm run demo`).
+  The demo gif too (`npm run demo`).
 - **No independent review** of this work was run (the usage limit). hub.js, teams.js `slimHook` and main.js's "Other
   command" are the parts to read first.
 - **Not built:** most of R9 (agents in one folder now share a git poll; polling less often when nothing changes

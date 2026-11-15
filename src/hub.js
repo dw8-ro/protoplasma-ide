@@ -293,10 +293,12 @@ function startHub({ port = 7681, host = '0.0.0.0', dataDir, owners, tls, passIss
       typedBy: l.typedBy || '', typedAt: l.typedAt || null, startedAt: l.startedAt, local: [...l.local],
       files: [...filesOf(l)], overlaps: overlaps(l) }));
   }
-  const toTeam = (teamId, msg) => {
+  // With `session`: only to windows showing that session (ws.sees), and to every window that never said which it shows.
+  const toTeam = (teamId, msg, session) => {
     const data = JSON.stringify(msg);
     for (const w of watchers) {
       if (w.team !== teamId || w.readyState !== w.OPEN) continue;
+      if (session !== undefined && w.sees && !w.sees.has(session)) continue;
       if (w.bufferedAmount > MAX_BUFFERED) w.terminate();
       else w.send(data);
     }
@@ -759,6 +761,7 @@ function startHub({ port = 7681, host = '0.0.0.0', dataDir, owners, tls, passIss
           if (clash) return json(409, { error: `There's already a session called ${clash.name}.` });
           for (const s of stopped.get(team.id) || []) if (s.session === session.name) s.session = name;
           for (const l of teamLanes(team.id)) if (l.session === session.name) l.session = name;
+          for (const w of watchers) if (w.team === team.id && w.sees?.delete(session.name)) w.sees.add(name); // windows showing it keep getting its output
           session.aliases = [...new Set([...(session.aliases || []), session.name])].slice(-50);
           session.key = keyOf(session); // its branch and folders keep the original name
           session.name = name;
@@ -868,13 +871,13 @@ function startHub({ port = 7681, host = '0.0.0.0', dataDir, owners, tls, passIss
     if (lane.repo && (same(session.createdBy, user.login) || same(team.owner, user.login))) Object.assign(session, { repo: lane.repo, repoBy: user.login });
     saveTeams();
     broadcastState(team.id);
-    toTeam(team.id, { t: 'out', lane: lane.id, d: `\x1bc${lane.history}` }); // a reset first: watchers may hold its screen already
+    toTeam(team.id, { t: 'out', lane: lane.id, d: `\x1bc${lane.history}` }, lane.session); // a reset first: watchers may hold its screen already
 
     ws.on('message', raw => {
       const m = parse(raw);
       if (m?.t === 'out' && typeof m.d === 'string') {
         lane.history = appendScrollback(lane.history, m.d);
-        toTeam(team.id, { t: 'out', lane: lane.id, d: m.d });
+        toTeam(team.id, { t: 'out', lane: lane.id, d: m.d }, lane.session);
       } else if (m?.t === 'size') {
         const was = `${lane.cols}x${lane.rows}`;
         lane.cols = size(m.cols, 20, 500, lane.cols);
@@ -952,11 +955,13 @@ function startHub({ port = 7681, host = '0.0.0.0', dataDir, owners, tls, passIss
     send(ask.from, { t: 'file:put', ask: ask.ask, text, error: text === undefined ? str(m.error || 'That file is too big to share.', 300) : undefined });
   }
 
-  function onWatcher(ws, user, team) {
-    Object.assign(ws, { team: team.id, login: user.login, user, session: null });
+  function onWatcher(ws, user, team, hello) {
+    // sees: the sessions whose terminals this window shows. It gets agents' output only for those, and each agent's
+    // screen as its session comes into view (`look`). A window that doesn't say (apps before this) gets everything.
+    Object.assign(ws, { team: team.id, login: user.login, user, session: null, sees: Array.isArray(hello?.sees) ? new Set() : null });
     watchers.add(ws);
     broadcastState(team.id); // doubles as the newcomer's first message
-    for (const l of teamLanes(team.id)) send(ws, { t: 'out', lane: l.id, d: l.history });
+    if (!ws.sees) for (const l of teamLanes(team.id)) send(ws, { t: 'out', lane: l.id, d: l.history });
     // A window drives look (switching session) and replay (opening a stopped agent) from clicks, so a handful a second is
     // plenty. Each look that changes session runs broadcastState (rebuild + a fan-out to every teammate), so a tight loop
     // of them would peg the single-threaded hub: they get a per-socket budget. file:get has its own (fileRate).
@@ -966,6 +971,11 @@ function startHub({ port = 7681, host = '0.0.0.0', dataDir, owners, tls, passIss
       const m = parse(raw);
       if (m?.t === 'look') {
         if (flooding()) return;
+        if (ws.sees && Array.isArray(m.sees)) {
+          const sees = new Set(m.sees.slice(0, 8).map(s => str(s, 60)));
+          for (const l of teamLanes(team.id)) if (sees.has(l.session) && !ws.sees.has(l.session)) send(ws, { t: 'out', lane: l.id, d: `\x1bc${l.history}` });
+          ws.sees = sees;
+        }
         const session = typeof m.session === 'string' ? str(m.session, 60) : null;
         if (session !== ws.session) { ws.session = session; broadcastState(team.id); }
         return;

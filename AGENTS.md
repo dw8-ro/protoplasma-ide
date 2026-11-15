@@ -20,7 +20,7 @@ Function names below are stable. Line numbers drift, so search by name.
 |---|---|---|
 | `npm install` | Installs dependencies (postinstall makes node-pty's `spawn-helper` executable) | Node 24 |
 | `npm start` | Runs the app from source. Updates are off in source runs. | |
-| `npm test` | 116 integration tests in `test/*.test.js`: real hub, real lanes, real git. About a minute. | git ≥ 2.28, macOS. No network or Electron needed. |
+| `npm test` | 117 integration tests in `test/*.test.js`: real hub, real lanes, real git. About a minute. | git ≥ 2.28, macOS. No network or Electron needed. |
 | `npm run e2e` | Drives the real Electron app through every main flow and prints `PASS`/`FAIL` per step, ending with `N/M passed`. 15-minute cap. | The `claude` CLI on the login-shell PATH and a GUI session. One step needs `gh auth status` to succeed (online). |
 | `npm run dist` | Packages `dist.noindex/Protoplasma-darwin-arm64/Protoplasma.app`, unsigned. | |
 | `npm run playground` | Two app copies (David on port 7801, Max on 7802) on a local hub and repo, each with an HTTP control API | |
@@ -69,7 +69,7 @@ app/index.html    CSP, all CSS (tokens and themes), icon sprite, all markup and 
 app/config.json   githubClientId (OAuth app, device flow), onlineHub (the Railway URL)
 scripts/          e2e.js, playground.js + playground-app.js, stage.js, screenshot.js, demo.js + gif.js, readme-art.js +
                   readme-art/ (the README image pages and diagram), sign.sh, icon.js
-test/             hub.test.js (44), hub-live.test.js (16), workspace.test.js (13), files.test.js (13), lan.test.js (16),
+test/             hub.test.js (44), hub-live.test.js (17), workspace.test.js (13), files.test.js (13), lan.test.js (16),
                   identity.test.js (4), updates.test.js (6), agents.test.js (4)
 .github/workflows ci.yml (npm test on every push to main and PR), package.yml (dist check), release.yml (tag → release)
 Dockerfile        the hosted hub image (only src/hub.js + src/shared.js + ws)
@@ -153,16 +153,21 @@ docs/             screenshots (sources), readme/ (the README's images, dark and 
     so another teammate's agent can't pick what the one-click "Add an agent" clones and runs. Renderer `sourceFor` uses
     it only when `repoBy` is the creator or owner (older records have none), else a running agent of theirs, else asks.
     A hello's `repo` must look like `owner/name`.
-  - One person runs at most `MAX_LANES` (30) live agents per team: every teammate's app keeps a terminal for each.
+  - One person runs at most `MAX_LANES` (30) live agents per team: every teammate's app lists each, and holds a
+    terminal for each one in a session it shows.
   - Builds the lane record. `tree` is a hash of login, machine and root, and identifies one checkout.
   - On a reconnect, carries over status, prompt, files and `hooked` (also from a stopped agent's record, so one that
     comes back after a dropped connection keeps its status from its hooks).
-  - Relays `out` to every watcher on the team, and handles `size`, `git`, `status` and `key`.
+  - Relays `out` to the windows showing the lane's session (`ws.sees`), and to every window that never said which it
+    shows (apps before 0.6.2). Handles `size`, `git`, `status` and `key`.
   - `key {moving}` is what the screen did after a person's deciding key (lane.js `decided`). Only for a lane with
     hooks: still printing moves "needs you" to working (an answered permission, which no hook reports until the
     tool ends), and a quiet screen after Esc or Ctrl-C moves working or "needs you" to idle (an interrupt runs no
     Stop hook). The next hook corrects either.
-- **`onWatcher`:** handles `look` (presence), `replay` (a stopped agent's last screen), `in` (typing, only into lanes
+- **`onWatcher`:** a window whose hello has `sees` (an array) is selective: it starts with no output at all, and each
+  `look {session, sees}` says which sessions' terminals it shows now (at most 8). It then gets `out` only for those,
+  and the current screen (`\x1bc` and the history) of every agent in a session that just came into view. A rename
+  renames inside `ws.sees` too. Also handles `look` (presence), `replay` (a stopped agent's last screen), `in` (typing, only into lanes
   started with `open`), and the `file:get`/`file:put` relay through `relayFile`. Only the lane owner's login may answer
   a file request.
 - **`broadcastState`:** sends everything to every watcher of the team: lanes (via `views`, which never includes root,
@@ -460,8 +465,11 @@ docs/             screenshots (sources), readme/ (the README's images, dark and 
   hub on someone's Mac could send anything. The CSP allows no inline scripts, as a second line.
 - **The hub socket:** `watch(conn)` asks main for a token (`proto.hubToken`, which renews passes) before each
   connection, connects to `${hub}/watch`, and handles `state`, `out`, `replay`, `file:get` and `file:put`.
-- **Terminals:** `createTerminal` makes one per lane, and the element is moved between `#lanes` and pane columns, never
-  recreated.
+- **Terminals:** `createTerminal` makes one per lane of your own, and one per teammate's lane while its session is on
+  screen (`onScreen`: the open session, or the sessions in panes; `render()` tells the hub with `look`). A teammate's
+  terminal is dropped when its session leaves the screen and filled again from the hub's replay when it returns. With
+  a hub from before this, output for agents that aren't on screen waits in `pending` (1 MB each at most). The element
+  is moved between `#lanes` and pane columns, never recreated while it lives.
   - Only on-screen terminals get WebGL; a page gets about 16 contexts.
   - Teammates' terminals keep the owner's columns and rows, and `fitFont` scales the font, down to 6 px.
   - Scrollback is 5,000 lines for your own agents and 2,000 for teammates' (about what the hub replays to a late

@@ -106,7 +106,8 @@ let board = [];            // every agent on screen: the hub's, plus local ones 
 let agents = [];           // agent CLIs and whether this Mac has them: { cmd, installed }
 let stoppedAgents = [];    // recently stopped agents; the hub keeps their last screen
 let replaying = null;      // the stopped agent whose last screen is on the stage
-let lookedAt;              // last session reported to the hub via `look`
+let lookedAt;              // what the hub was last told this window is looking at (`look`)
+let onScreen = [];         // the sessions whose terminals are on screen: the hub sends agents' output only for those
 const lastStatus = new Map(); // lane id -> previous status, for notifications
 const local = new Map();   // agents running in this app: id -> { teamKey, session, cmd, open, repo, login, name, avatar, refused? }
 const terms = new Map();   // id -> { term, el, bar }
@@ -465,7 +466,7 @@ function watch(conn) {
     if (generation !== watchGeneration) return;
     const socket = ws = new WebSocket(`${conn.hub.replace(/^http/, 'ws')}/watch`);
     let first = true;
-    socket.onopen = () => socket.send(JSON.stringify({ t: 'watch', token, team: conn.id }));
+    socket.onopen = () => socket.send(JSON.stringify({ t: 'watch', token, team: conn.id, sees: [] }));
     socket.onmessage = e => {
       let m;
       try { m = JSON.parse(e.data); } catch { return; } // a hub on a Mac could send anything; a bad frame mustn't wedge the socket
@@ -1051,7 +1052,11 @@ function render() {
   const lanes = board = [...hubLanes, ...mine.map(([id, o]) => ({ id, ...o, status: o.refused ? `Not shared: ${o.refused}` : 'not synced', files: [], overlaps: [] }))];
   assignColors([currentTeam.owner, ...currentTeam.members, ...lanes.map(l => l.login)]); // the whole team, so nobody's colour moves
   const looking = view === 'session' ? current : null;
-  if (lookedAt !== looking && ws?.readyState === WebSocket.OPEN) { ws.send(JSON.stringify({ t: 'look', session: looking })); lookedAt = looking; }
+  // Which sessions' terminals are on screen. The hub sends output only for those, and each agent's screen when its
+  // session comes into view. (A hub from before this sends everything, as it always did: see `pending`.)
+  onScreen = view === 'session' && current ? [current] : view === 'panes' ? panes.filter(Boolean) : [];
+  const told = JSON.stringify([looking, onScreen]);
+  if (lookedAt !== told && ws?.readyState === WebSocket.OPEN) { ws.send(JSON.stringify({ t: 'look', session: looking, sees: onScreen })); lookedAt = told; }
   const inSettings = $('#settings').open;
   $('#navSessions').classList.toggle('on', !inSettings && view === 'sessions' && filterRepo === null);
   $('#navPeople').classList.toggle('on', !inSettings && view === 'people');
@@ -1250,10 +1255,14 @@ function renderRoom(lanes) {
   if (!here(split) || split === focus) split = null;
   const onStage = view === 'panes' ? paneLaneIds() : tab === 'agents' ? [focus, split] : [];
 
-  for (const id of terms.keys()) if (!lanes.some(l => l.id === id) && !local.has(id)) dropTerminal(id);
+  // A teammate's agent has a terminal here only while its session is on screen: that's when the hub sends its output.
+  const inView = l => local.has(l.id) || onScreen.includes(l.session);
+  for (const id of terms.keys()) if (!local.has(id) && !lanes.some(l => l.id === id && inView(l))) dropTerminal(id);
+  for (const id of pending.keys()) if (!local.has(id) && !lanes.some(l => l.id === id)) pending.delete(id); // kept from an older hub, for an agent that's gone
   for (const t of terms.values()) t.el.hidden = true; // local lanes on other teams stay alive, just hidden
   if (replayGpu) gpu(replayGpu, view === 'session' && tab === 'replay');
   for (const l of lanes) {
+    if (!inView(l)) continue;
     const t = terms.get(l.id) || createTerminal(l);
     const mine = local.has(l.id);
     t.el.hidden = !onStage.includes(l.id);

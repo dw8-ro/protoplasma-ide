@@ -241,7 +241,7 @@ The first message on every WebSocket carries a team id and a GitHub token, or, f
 | --- | --- | --- |
 | `/lane` | lane → hub | `hello {token, team, id, hookSecret, session, cmd, root, roots, repo, branch, git, cols, rows, open, history, machine}`, `out {d}`, `size {cols, rows}`, `git {branch, mainBranch, added, removed, files, behind, ahead, unpushed, changed, local}`, `status {status}`, `key {moving}` (after a person's Enter, Esc or Ctrl-C: whether the screen kept printing) |
 | | hub → lane | `in {d}` (only for agents teammates may type into) |
-| `/watch` | app → hub | `watch {token, team}`, `look {session}`, `in {lane, d}`, `replay {id}`, `file:get {lane, path, ask}` (a teammate's file), `file:put {req, text, error}` (answering for your own agent) |
+| `/watch` | app → hub | `watch {token, team, sees}`, `look {session, sees}` (`sees`: the sessions whose terminals the window shows; it gets `out` only for those, and a window that never sends it gets everything), `in {lane, d}`, `replay {id}`, `file:get {lane, path, ask}` (a teammate's file), `file:put {req, text, error}` (answering for your own agent) |
 | | hub → app | `state {lanes, watchers, members, memories, sessions, stopped}`, `out {lane, d}`, `replay {id, d}`, `file:get {req, lane, path, from}`, `file:put {ask, text, error}` |
 | `/teams` | app → hub | REST for teams, members, notes, sessions (renaming, goals, plan steps, hand-offs) and comments |
 | `/hooks/:lane` | Claude Code, Codex → hub | Hook events, cut down by the app to what the hub reads (`hook_event_name`, `cwd`, and for a tool call `tool_name` with its `file_path`, `notebook_path`, `command` or `cmd`; for a prompt its first 300 characters), authenticated with a per-lane secret |

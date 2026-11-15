@@ -219,6 +219,36 @@ const watcher = token => new Promise((resolve, reject) => {
   ws.on('error', reject);
 });
 
+test('a window gets agents\' output only for the sessions it shows, and their screens as one comes into view', async () => {
+  const a = await lane({ session: 'in-view' }), b = await lane({ session: 'elsewhere' });
+  a.ws.send(JSON.stringify({ t: 'out', d: 'A-before ' }));
+  b.ws.send(JSON.stringify({ t: 'out', d: 'B-before ' }));
+  // A window that says which sessions it shows (none yet), and one that doesn't say, as apps before this.
+  const open = hello => new Promise((resolve, reject) => {
+    const ws = new WebSocket(`${url.replace('http', 'ws')}/watch`), got = [];
+    ws.on('open', () => ws.send(JSON.stringify({ t: 'watch', token: 'tok-bob', team: team.id, ...hello })));
+    ws.on('message', raw => { const m = JSON.parse(raw); if (m.t === 'out' && [a.id, b.id].includes(m.lane)) got.push(`${m.lane === a.id ? 'A' : 'B'}:${m.d}`); if (m.t === 'state') resolve({ ws, got }); });
+    ws.on('error', reject);
+  });
+  const picky = await open({ sees: [] }), plain = await open({});
+  await handled(a, 101);
+  await handled(b, 101);
+  assert.deepEqual(picky.got, [], 'nothing until it shows a session');
+  assert.ok(plain.got.some(x => x.startsWith('A:')) && plain.got.some(x => x.startsWith('B:')), 'a window that doesn\'t say gets everything, as before');
+  picky.ws.send(JSON.stringify({ t: 'look', session: 'in-view', sees: ['in-view'] }));
+  a.ws.send(JSON.stringify({ t: 'out', d: 'A-live' }));
+  b.ws.send(JSON.stringify({ t: 'out', d: 'B-live' }));
+  for (let i = 0; i < 100 && !picky.got.includes('A:A-live'); i++) await new Promise(r => setTimeout(r, 20));
+  await handled(b, 102);
+  assert.match(picky.got[0], /^A:\x1bc[\s\S]*A-before /, 'the agent\'s screen so far, when its session comes into view');
+  assert.ok(picky.got.includes('A:A-live') && !picky.got.some(x => x.startsWith('B:')), 'then its output, and none from the session it doesn\'t show');
+  await api('tok-alice', 'POST', `/teams/${team.id}/sessions/in-view`, { rename: 'renamed-in-view' });
+  a.ws.send(JSON.stringify({ t: 'out', d: 'A-renamed' }));
+  for (let i = 0; i < 100 && !picky.got.includes('A:A-renamed'); i++) await new Promise(r => setTimeout(r, 20));
+  assert.ok(picky.got.includes('A:A-renamed'), 'a renamed session stays in view');
+  await Promise.all([closed(picky.ws), closed(plain.ws), closed(a.ws), closed(b.ws)]);
+});
+
 test('a file request the agent\'s app never answers fails after 10 s', { timeout: 20_000 }, async () => {
   const agent = await lane({});
   const alice = await watcher('tok-alice'), bob = await watcher('tok-bob');

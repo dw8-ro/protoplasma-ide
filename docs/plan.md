@@ -25,7 +25,7 @@ be easy. Phases 1 and 3 are those.
 **Built on 15 Nov 2026, not released.** Everything below is in, with tests (`npm test` 112 of 112). What it still
 needs: the live checks in [first-install.md](first-install.md) ("Status tells the truth"), then a push of `main`
 (the hub changed) and a release, both David's call. Notes for the release are in
-[release-notes/0.6.2.md](release-notes/0.6.2.md).
+[release-notes/0.7.0.md](release-notes/0.7.0.md).
 
 How R2 and R4 were done: no hook reports an interrupt or an answered permission, so after a person's Enter, Esc,
 Ctrl-C or digit the agent's Mac watches its screen for 2.5 s and tells the hub whether it kept printing (lane.js
@@ -66,6 +66,11 @@ live model (no provider is signed in on David's Mac), and OpenCode 2 needs its o
 tests cover the table (every entry has what the code reads) and the OpenCode plugin's messages.
 
 ### 3. Simpler to use (the redesign)
+**Partly built on 15 Nov 2026**, without the review page, because David was away and said to go on: U1 (one
+question, given to the agent), U3, U5, U9 and the Online-team message (R16). Each is its own small change, easy to
+take back. Not built: U2, U4, U6, U7, U10. Those change where things are on screen, so they're better shown to David
+first.
+
 The order David likes: a review page first, then code.
 1. A review page (an artifact) with before and after for U1 (one-box New session), U2 (no team picker in the way),
    U6 (Plan and Memory in the side panel) and U7 (a shorter bar under each terminal). Black and white, as now:

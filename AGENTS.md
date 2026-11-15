@@ -159,7 +159,7 @@ docs/             screenshots (sources), readme/ (the README's images, dark and 
   - On a reconnect, carries over status, prompt, files and `hooked` (also from a stopped agent's record, so one that
     comes back after a dropped connection keeps its status from its hooks).
   - Relays `out` to the windows showing the lane's session (`ws.sees`), and to every window that never said which it
-    shows (apps before 0.6.2). Handles `size`, `git`, `status` and `key`.
+    shows (older apps). Handles `size`, `git`, `status` and `key`.
   - `key {moving}` is what the screen did after a person's deciding key (lane.js `decided`). Only for a lane with
     hooks: still printing moves "needs you" to working (an answered permission, which no hook reports until the
     tool ends), and a quiet screen after Esc or Ctrl-C moves working or "needs you" to idle (an interrupt runs no

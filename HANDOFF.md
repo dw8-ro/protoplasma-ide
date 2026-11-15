@@ -1,34 +1,50 @@
-# Handoff: Protoplasma IDE, 14 November 2026
+# Handoff: Protoplasma IDE, 15 November 2026
 
 Read this first in a new session, then [AGENTS.md](AGENTS.md) for how the code fits together. What the last sessions
 did: [docs/sessions/2026-10-29.md](docs/sessions/2026-10-29.md) (the second security audit),
 [docs/sessions/2026-10-26.md](docs/sessions/2026-10-26.md) (19–26 Oct) and
 [docs/sessions/2026-10-18.md](docs/sessions/2026-10-18.md) (the first security audit).
 
-## Where it's heading (14 Nov 2026): research done, nothing built yet
+## Built on 15 Nov 2026, not released: most of the plan
 
-A research session looked at the market, the agent CLIs, open problems and the UI. It changed no code.
-- **The findings:** [docs/research/2026-11-14-market-agents-and-ux.md](docs/research/2026-11-14-market-agents-and-ux.md).
-- **The plan, in order:** [docs/plan.md](docs/plan.md). Start there.
+Everything below is committed on the worktree branch `claude/protoplasma-research-market-84c834` (11 commits on top
+of `bc9d448`, which is `origin/main`). **Nothing is pushed.** Pushing `main` redeploys the hosted hub (hub.js and
+shared.js changed) and a tag releases to installed copies: both are David's call, after he has tried it.
+- **The plan and what's left of it:** [docs/plan.md](docs/plan.md). **The log of this work,** with every decision taken
+  while David was away: [docs/sessions/2026-11-15.md](docs/sessions/2026-11-15.md). **The findings behind it:**
+  [docs/research/](docs/research/). **Notes for the release:** [docs/release-notes/0.7.0.md](docs/release-notes/0.7.0.md)
+  (a minor version: `npm version minor`, not `npm run release`).
+- **Checks:** `npm test` 119 of 119. `npm run e2e` 143 of 143 at the last full run (before the conflict chips; rerun it).
 
-In short:
-- **The market:** Meta bought Conductor and is shutting it down, Zed's Delta is in public beta, and Amoeba is
-  becoming its own agent and model router. Nobody else found tells each agent what teammates' agents changed and asks
-  a person before two edit one file, across Claude Code and Codex. Protoplasma stays the thin layer over real CLIs.
-- **Phase 1, status you can trust:** five cases where an agent's status is wrong (R1 to R5: after an interrupt, on a
-  question, after approving a permission, after a reconnect), and the hook relay sending the hub more than it reads
-  (R7). Small fixes.
-- **Phase 2, one place for agents:** an agent table (`src/agents.js`) in place of the lists in six files, an "Other
-  command" agent for any CLI, and OpenCode checked and given hooks. OpenCode isn't installed on David's Mac, and
-  OpenCode 2's docs don't list the flags the app passes.
-- **Phase 3, simpler to use:** a review page first, then a one-box New session whose text goes to the agent, no team
-  picker in the way, and less in each bar and panel.
-- **Phase 4, lighter:** terminal output only for sessions someone is showing (R8), fewer git processes (R9).
-- **Phase 5, later:** telling teams which branches will conflict, before a pull request.
-- **Checks on 14 Nov:** `npm test` 106 of 106; `npm run e2e` 138 of 138 (Electron 44.10.2, Claude Code 2.1.289),
-  after a first run of 137 whose one failure was the test's own (R12: it needs a checkout that differs from main).
-- **Waiting on David:** a go-ahead for phase 1, and the five decisions at the end of the plan (who may create Online
-  teams, whether New session's text goes to the agent, installing OpenCode, updating Codex, the order).
+What's in, by phase:
+1. **Status you can trust.** A question from the agent is Needs you (`ASK_TOOLS`); an interrupt is Idle and an answered
+   permission is Working at once (lane.js `decided` sends `key {moving}`, hub.js applies it to agents with hooks);
+   `hooked` survives a reconnect; Codex gets `Interrupt` and a hook for its question tool, added after its four
+   trusted hooks so only the new two need a review. The relay sends the hub only what it reads (teams.js `slimHook`).
+2. **One table for agents** (`src/agents.js`), **"Other command"** for any CLI (Settings → Agents), and **hooks for
+   OpenCode** as a plugin (`src/opencode-plugin.mjs`).
+3. **Simpler:** New session asks what the agent should do, names the session from it and gives it to the agent as its
+   first message; fewer words elsewhere (see the plan for the list).
+4. **Lighter:** an agent's output goes only to windows showing its session (`sees`), and a teammate's terminal exists
+   only while its session is on screen.
+5. **Conflicts with main** are worked out per agent (`git merge-tree`), shown on its card and told to it.
+
+What it still needs, in order:
+- **David, live** (none of it could be done for him): the "Status tells the truth" block in
+  [docs/first-install.md](docs/first-install.md) with real Claude Code and Codex. The interrupt and answered-permission
+  rules rest on what the screen does after a key, which was tested with stand-ins, never with a real agent mid-turn.
+  Codex shows "Hooks need review" once for the two new hooks.
+- **OpenCode's hooks have never run against a live model:** no provider is signed in on this Mac. OpenCode 1.19.5 is
+  installed (`npm install -g opencode-ai`), and Codex was updated to 0.169.0.
+- **The README pictures** are from before the new New session form. Run `npm run screenshot`, `npm run readme-art` and
+  `npm run demo`, look at them, commit them.
+- **No independent review** of this work was run (the usage limit). hub.js, teams.js `slimHook` and main.js's "Other
+  command" are the parts to read first.
+- **Not built:** R9 (fewer git processes), the rest of phase 3 (the team picker, one "beside", Plan and Memory in the
+  side panel, a shorter bar, what to do about an overlap), and the rest of phase 5.
+- **Two things seen once and not explained** (details in the log): on the first launch of a freshly downloaded
+  Electron, e2e's "creates a This Mac team…" step failed and a terminal drew its text at half size. The second has a
+  guard now (renderer.js `scaleOff`) and e2e provokes and checks it; the first passed on every later run.
 
 ## Latest release: v0.6.1 (8 Nov 2026, `a52368f`): small fixes, lighter teammates' terminals, and research on Rust
 

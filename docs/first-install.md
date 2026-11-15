@@ -36,8 +36,9 @@ Two things you'll see that are expected:
 - [ ] **David:** People → **Invite** → Max's GitHub username. Max shows as a member.
 - [ ] **Max:** "Test" appears in his team list on its own within about 30 seconds. He opens it, and both see each
   other on the People page.
-- [ ] **David:** Sessions → **New**: session "Try it", a goal ("Tidy the README"), repo `dw8-ro/protoplasma-test`,
-  then **Start the session**. Claude Code starts in its own folder
+- [ ] **David:** Sessions → **New**: type what the agent should do ("Tidy the README"), name the session "Try it",
+  pick the repo `dw8-ro/protoplasma-test`, then **Start the session**. What you typed goes to the agent as its first
+  message once you've answered its trust question (untick it under More options to start it empty). Claude Code starts in its own folder
   (`~/Protoplasma/dw8-ro/protoplasma-test@try-it`, branch `session/try-it`). Answer its trust question.
 - [ ] **Max:** the session appears with David's agent. Opening it shows David's terminal live.
 - [ ] **Max:** **Add an agent** in the same session, with Codex. The goal and repo are filled in. Codex shows

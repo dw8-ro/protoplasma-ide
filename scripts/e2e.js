@@ -187,7 +187,7 @@ async function run(win, hub) {
       if (started) { await js(`proto.kill([...local.keys()].find(id => id !== ${JSON.stringify(mine)})); 0`); await until('local.size === 1'); }
     }
     await js(`$('#agent').close(); showTeams(me)`);
-    await until('listedTeams.size > 0');
+    await until('listedTeams.has(currentTeam.key)'); // the list from first launch (only Just me) shows until the new one arrives
     check('team list marks the open team and its size', await js(`/Open/.test($('.team.on .agents').textContent) && /2 people/.test($('.team.on .where').textContent)`), await js(`$('#teamList').textContent.replace(/\\s+/g, ' ')`));
     await js(`openTeam(listedTeams.get(currentTeam.key)); 0`);
     check('opening a team shows its Sessions page', await until(`view === 'sessions' && !$('#sessionsPage').hidden && $('#room').hidden && !!$('#sessions [data-session="s1"]')`));
@@ -504,7 +504,8 @@ async function run(win, hub) {
     await js(`proto.saveSession(currentTeam.key, { name: 'carry-on', task: 'Keep going with a friend' }).then(() => 0)`);
     await until(`!!recordFor('carry-on')`);
     await js(`store.set(sourceKey('carry-on'), JSON.stringify({ cwd: ${JSON.stringify(root)} })); window.confirm = () => true; moveSession('carry-on', listedTeams.get(${JSON.stringify(solo)})); 0`);
-    check('Move to a team carries a session on in the other team, with its folder', await until(`currentTeam?.key === ${JSON.stringify(solo)} && current === 'carry-on' && recordFor('carry-on')?.task === 'Keep going with a friend' && JSON.parse(store.get(sourceKey('carry-on')) || 'null')?.cwd === ${JSON.stringify(root)}`, 15000));
+    check('Move to a team carries a session on in the other team, with its folder', await until(`currentTeam?.key === ${JSON.stringify(solo)} && current === 'carry-on' && recordFor('carry-on')?.task === 'Keep going with a friend' && JSON.parse(store.get(sourceKey('carry-on')) || 'null')?.cwd === ${JSON.stringify(root)}`, 15000),
+      await js(`JSON.stringify({ solo: currentTeam?.key === ${JSON.stringify(solo)}, team: currentTeam?.name, current, view, rec: recordFor('carry-on'), source: store.get(sourceKey('carry-on')), err: $('#err').textContent, alerts: window.__alerts?.slice(-2) })`));
     await js(`openTeam(listedTeams.get(${JSON.stringify(mainTeam)})); 0`);
     await until(`currentTeam?.key === ${JSON.stringify(mainTeam)}`);
     check('and the one it came from is marked done', await until(`recordFor('carry-on')?.done === true`));

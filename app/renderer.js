@@ -295,6 +295,7 @@ function showTeams(user) {
   $('#findNearby').checked = prefs.findNearby;
   showView('teamsView');
   if (!$('#start').open) $('#start').showModal();
+  renderTeamList([...listedTeams.values()]); // the last list, with the team that's open now marked, until the new one arrives
   refreshTeams();
 }
 
@@ -1247,7 +1248,8 @@ async function moveSession(name, target) {
     if (!rec?.done) await proto.setSessionDone(from.key, name, true);
   } catch (e) { return alert(errorText(e)); }
   await openTeam(target);
-  openSession(name);
+  for (let i = 0; i < 100 && currentTeam?.key === target.key && !gotState; i++) await new Promise(r => setTimeout(r, 100)); // opened before its sessions arrive, the room would close again
+  if (currentTeam?.key === target.key) openSession(name);
 }
 
 // Uncommitted changes, as the agents' git status reports them. Agents sharing a checkout are counted once.

@@ -22,7 +22,11 @@ shared.js changed) and a tag releases to installed copies: both are David's call
   stay on screen. Not looked at by eye: no screenshot was taken. David: open each once and say if it reads well.
 - A quiet agent whose folder stopped changing is asked for its git status every 15 s, not 5 (lane.js `SETTLED_MS`,
   `SLOW`). A change made outside such an agent shows up to 15 s later.
-- Checks at `915a9a4`: `npm test` 120 of 120, `npm run e2e` 145 of 145 (one new check).
+- The open file being shown again in the background (a session's folder finishing its load, an agent changing the
+  file) no longer takes focus out of a comment, a commit message or a terminal (code.js `showActive`). This was the
+  cause of e2e's "Comment on this…" step failing now and then; it was put down to window focus before, wrongly.
+- Checks after that: `npm run e2e` 146 of 146 (two new checks since 15 Nov). `npm test` 120 of 120 at `915a9a4`; the
+  focus fix touched only app/code.js and e2e, which `npm test` doesn't load.
 - Not rerun: the customer simulation, since the Electron revert and since Plan and Memory moved.
   `scripts/customer/s3.js` was changed for the new rows and has never been run in that form.
 - The README pictures and the demo gif are from before Plan and Memory moved.
@@ -33,8 +37,7 @@ shared.js changed) and a tag releases to installed copies: both are David's call
    for was never made. Next: a review page (an artifact) with before and after for U2 (team picker), U4 (one
    "beside"), U7 (a shorter bar under each terminal) and U10 (what to do about an overlap), plus a proposal for the
    look, black and white. David marks it up; build after that.
-2. **Cheap, and needing no review:** rerun the customer simulation; make e2e's "Comment on this…" step focus the
-   window first, so it stops failing now and then; regenerate the pictures (`npm run screenshot`,
+2. **Cheap, and needing no review:** rerun the customer simulation; regenerate the pictures (`npm run screenshot`,
    `npm run readme-art`, `npm run demo`).
 3. **Then:** conflicts with teammates' pushed branches (phase 5), the largest item left.
 4. Work inline and commit after each tested step. Two multi-agent workflows died on the usage limit and lost their work.

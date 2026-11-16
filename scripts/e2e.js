@@ -366,12 +366,13 @@ async function run(win, hub) {
     check('a session can be renamed while its agent runs, and the agent moves with it', await until(`hubLanes.find(l => l.id === ${JSON.stringify(second)})?.session === 'Login work' && local.get(${JSON.stringify(second)}).session === 'Login work' && /Login work/.test($('#sessions').textContent)`));
     await js(`proto.renameSession(currentTeam.key, 'Login work', 'Fix Login').then(r => { sessionRecords = r; render(); }); 0`);
     await until(`local.get(${JSON.stringify(second)}).session === 'Fix Login'`);
-    // Waits for openFile itself: it marks the file active before it loads it, then focuses the editor, which used to take
-    // focus from the comment field below now and then.
+    // This step failed now and then until 16 Nov: the session's folder finishing its load showed the open file again,
+    // and that took focus from the comment field (code.js showActive).
     await js(`openSession('Fix Login'); openFile('README.md')`);
     await until(`code.active === 'README.md' && !!editor.getModel()`);
     await js(`editor.setSelection(new monaco.Selection(1, 1, 1, 4)); editor.getAction('protoplasma.comment').run(); 0`);
     check('Comment on this points the next comment at those lines', await until(`commentRef?.file === 'README.md' && commentRef.line === 1 && !$('#commentRef').hidden && document.activeElement === $('#commentText')`));
+    check('and the file being shown again behind it leaves you in the comment', await js(`showActive().then(() => document.activeElement === $('#commentText'))`));
     await js(`$('#commentText').value = 'Say what this repo is for'; $('#commentForm').requestSubmit(); 0`);
     check('the comment shows the line it is about, and the editor marks the line', await until(`recordFor('Fix Login')?.comments?.at(-1)?.line === 1 && /README\.md:1/.test($('#panelBody').textContent) && editor.getModel().getAllDecorations().some(d => d.options.glyphMarginClassName === 'comment-glyph')`));
     check('Ask my agent sends the comment with its lines, to your agent here or a new one', await js(`(() => { const c = recordFor('Fix Login').comments.at(-1), p = commentPrompt(c);

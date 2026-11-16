@@ -309,7 +309,10 @@ async function showActive(line, match, endLine) {
         : new monaco.Selection(line, 1, last, entry.model.getLineMaxColumn(last)));
       editor.revealLinesInCenter(line, last);
     }
-    if (entry?.model) editor.focus();
+    // The open file is shown again behind your back too (a session's folder loading, an agent changing it): that
+    // mustn't pull you out of a comment, a commit message or a terminal you're typing in.
+    const typing = document.activeElement?.matches('input, textarea') && document.activeElement.closest('#panel, .lane, #shellPane, #commitMessage');
+    if (entry?.model && !typing) editor.focus();
   }
   renderBanner();
   marks();

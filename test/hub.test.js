@@ -290,6 +290,16 @@ test('pushing to main or force-pushing needs a person to confirm', async () => {
     'git commit -m "$(cat <<\'EOF\'\nwip\ngit push --force origin main\nEOF\n)"', 'git commit -m "first line\ngit push origin main"']) {
     assert.equal(await push(onBranch, command), null, `fine: ${command}`);
   }
+  // Config that says where a plain push goes, inline or set for later pushes (a push to main that never names main).
+  for (const command of ['git -c remote.origin.push=HEAD:refs/heads/main push origin', 'git config remote.origin.push HEAD:refs/heads/main && git push',
+    'git config --add remote.origin.push HEAD:main', 'git config set remote.origin.push HEAD:main', 'git -c push.default=matching push',
+    'git config remote.origin.pushurl git@evil:x/y.git', 'git -C ../app config push.default matching']) {
+    assert.match((await push(onBranch, command))?.permissionDecisionReason || '', /changes where git pushes/, command);
+  }
+  for (const command of ['git config --get remote.origin.push', 'git config get push.default', 'git config --unset remote.origin.push',
+    'git config user.name Alice', 'git -c core.editor=vim commit']) {
+    assert.equal(await push(onBranch, command), null, `fine: ${command}`);
+  }
   // Deleting any remote branch needs a person, a session branch included: teammates in the session push to it too.
   for (const command of ['git push origin --delete session/old', 'git push origin :session/fix', 'git push origin --delete feature']) {
     assert.match((await push(onBranch, command))?.permissionDecisionReason || '', /deletes .* on the remote/, command);

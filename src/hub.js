@@ -10,6 +10,8 @@ const crypto = require('crypto');
 const { WebSocketServer } = require('ws');
 const { SCROLLBACK, EDIT_TOOLS, ASK_TOOLS, appendScrollback, slug, fingerprint, laneIdOf } = require('./shared');
 
+const MAX_OWNED_TEAMS = 3; // teams one person may own on a hub that lets anyone create them (no `owners`)
+const MAX_TEAMS = 5000; // teams on one hub: all of them live in teams.json
 const HEARTBEAT_MS = 15_000;
 const IDENTITY_TTL_MS = 2 * 60_000; // how long a verified GitHub token is trusted before GitHub is asked again
 const MAX_CHANGED = 200; // uncommitted files a lane reports
@@ -442,6 +444,11 @@ function startHub({ port = 7681, host = '0.0.0.0', dataDir, owners, tls, passIss
     return i;
   };
   const isGit = w => (w === 'git' || w.endsWith('/git')) && !w.includes('='); // not GIT_DIR=/srv/git
+  // Settings that change where a plain `git push` goes: push.default=matching pushes main along with everything else.
+  // ponytail: these names only; a push.default=upstream already in someone's own config, plus a branch tracking main, isn't
+  // caught (the pre-push hook still is, for Codex and OpenCode).
+  const PUSH_CONFIG = /^(remote\..+\.(push|pushurl)|push\.default)$/i;
+  const redirectReason = key => `this sets ${key}, which changes where git pushes, so a later push can reach a branch your team shares without naming it. Confirm it's intended.`;
   // Why a `git push` needs a person's confirmation, or null if it's fine. Only applies when the team has other people.
   // ponytail: a reading of the words, not a shell parser; a script that pushes without saying so isn't caught.
   function pushRisk(lane, command) {
@@ -453,9 +460,16 @@ function startHub({ port = 7681, host = '0.0.0.0', dataDir, owners, tls, passIss
       if (words.some((w, i) => w === '-c' && /^alias\.[^=]+=.*push/i.test(words[i + 1] || ''))) {
         return 'this runs git through an inline alias (-c alias.…), which can slip a push past the usual check. Confirm it\'s intended.';
       }
+      // So does config that says where a plain push goes: `git -c remote.origin.push=HEAD:main push`, or set for later.
+      const redirect = words.find((w, i) => words[i - 1] === '-c' && PUSH_CONFIG.test(w.split('=')[0]));
+      if (redirect) return redirectReason(redirect.split('=')[0]);
       for (let at = 0; at < words.length; at++) { // every git in it: sudo -u git git push, submodule foreach git push
         if (!isGit(words[at])) continue;
         const sub = subcommandAt(words, at), next = words.slice(sub + 1).find(w => !w.startsWith('-'));
+        // Reading or removing it is fine (`git config --get remote.origin.push`, `git config unset …`); setting it isn't.
+        const key = words[sub] === 'config' && !words.some(w => /^(--get(-all|-regexp)?|--list|-l|--unset(-all)?|--show-origin)$/.test(w))
+          && !['get', 'list', 'unset'].includes(next) && words.slice(sub + 1).find(w => PUSH_CONFIG.test(w));
+        if (key) return redirectReason(key);
         if (['checkout', 'switch'].includes(words[sub]) && next && !words.includes('--')) branch = next;
         const reason = words[sub] === 'push' && pushRiskOf(lane, words.slice(sub + 1), branch);
         if (reason) return reason;
@@ -707,6 +721,12 @@ function startHub({ port = 7681, host = '0.0.0.0', dataDir, owners, tls, passIss
     if (!id && req.method === 'GET') return json(200, [...teams.values()].filter(t => onTeam(t, user)).map(teamView));
     if (!id && req.method === 'POST') {
       if (owners && !isOwner(user)) return json(403, { error: 'This hub only lets its owners create teams.' });
+      // On a hub anyone may create teams on, each person owns a few at most, and the hub as a whole has a ceiling:
+      // every team is kept in teams.json, rewritten whole on each change. Its listed owners have no per-person limit.
+      if (!owners && [...teams.values()].filter(t => same(t.owner, user.login)).length >= MAX_OWNED_TEAMS) {
+        return json(403, { error: `You already own ${MAX_OWNED_TEAMS} teams on this hub. Delete one in Settings → Team, or ask to be invited to someone else's.` });
+      }
+      if (teams.size >= MAX_TEAMS) return json(503, { error: 'This hub isn\'t taking new teams right now. Make one on This Mac instead.' });
       const name = str(body.name, 60).trim();
       if (!name) return json(400, { error: 'Give the team a name.' });
       const team = { id: crypto.randomBytes(6).toString('base64url'), name, owner: user.login, members: [], memories: [], sessions: [],

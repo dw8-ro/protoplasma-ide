@@ -113,6 +113,8 @@ docs/             screenshots (sources), readme/ (the README's images, dark and 
 ### The hub (`src/hub.js`)
 - **The server:** `startHub({port, host, dataDir, owners, verifyUser, tls, passIssuer})` → `{port, close, listenOn, fingerprint}`.
   The default host is `0.0.0.0`. With `tls` (`{key, cert}`) it serves https/wss; `fingerprint` is that certificate's.
+  - Without `owners`, anyone may create teams, up to `MAX_OWNED_TEAMS` (3) each, and a hub holds at most `MAX_TEAMS`
+    (5000).
   - `owners` lists the logins allowed to create teams; each one's GitHub id is recorded at its first team
     (`owners.json`, `isOwner`), and the login under another id is refused after that. Leave it out to let anyone create them; an empty array lets
     nobody. The standalone entry point turns a blank `PROTO_OWNERS` into "left out".
@@ -201,7 +203,8 @@ docs/             screenshots (sources), readme/ (the README's images, dark and 
   - `commandsIn` also looks inside `-c`/`eval`/`ssh` quotes, `$(…)` and backticks, reading only the first 20,000
     characters.
   - `subcommandAt` skips git's own options.
-  - It asks on: a force push, `--all`/`--mirror`, deleting any remote branch (naming main/master/the default branch,
+  - It asks on: config that changes where a plain push goes (`PUSH_CONFIG`: `remote.*.push`, `remote.*.pushurl`,
+    `push.default`, set with `-c` or `git config`; the pre-push hook needs no change, since it sees the real refs), a force push, `--all`/`--mirror`, deleting any remote branch (naming main/master/the default branch,
     or a teammate on it, when that's what it is), and pushing to main/master or the lane's `mainBranch` (the branch
     `origin/HEAD` names, reported by lane.js `gitStatus`). It follows `git checkout`/`switch` within the same command.
 - **Shell-write check** (`shellWriteRisk` via `writtenBy`): finds the paths a command writes, then asks if another

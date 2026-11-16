@@ -88,6 +88,12 @@ let me = null;             // your GitHub profile
 let currentTeam = null;    // the open team
 let ws, watchGeneration = 0;
 let hubLanes = [];         // every agent on the team, as the hub reports them
+// An agent from the hub, with its lists made lists of names: a hub on someone's Mac could send anything, and one
+// field that isn't a list would make render() throw for as long as that team is open.
+const nameList = v => (Array.isArray(v) ? v.filter(x => typeof x === 'string') : []);
+const isAgent = l => !!l && typeof l === 'object' && typeof l.id === 'string';
+const cleanAgent = l => ({ ...l, session: String(l.session ?? ''), files: nameList(l.files), overlaps: nameList(l.overlaps), local: nameList(l.local),
+  touched: nameList(l.touched), conflicts: nameList(l.conflicts), branchConflicts: Array.isArray(l.branchConflicts) ? l.branchConflicts.filter(c => c && typeof c.branch === 'string').map(c => ({ branch: c.branch, files: nameList(c.files) })) : [] });
 let current = null;        // session shown in the room
 let tab = 'agents';        // agents | memory | pulls | issues
 let roomRepo = '';         // GitHub repo of the open session
@@ -528,7 +534,7 @@ function watch(conn) {
         gotState = true;
         hubReplays = m.replays === true;
         // A hub on a Mac could send anything; iterated fields default to arrays so a non-array can't throw out of render().
-        hubLanes = Array.isArray(m.lanes) ? m.lanes : [];
+        hubLanes = (Array.isArray(m.lanes) ? m.lanes : []).filter(isAgent).map(cleanAgent);
         const sessions = Array.isArray(m.sessions) ? m.sessions : [];
         followRenames(sessions);
         for (const l of hubLanes) if (local.get(l.id)?.refused) delete local.get(l.id).refused;
@@ -539,7 +545,7 @@ function watch(conn) {
         }
         memories = Array.isArray(m.memories) ? m.memories : [];
         sessionRecords = sessions;
-        stoppedAgents = Array.isArray(m.stopped) ? m.stopped : [];
+        stoppedAgents = (Array.isArray(m.stopped) ? m.stopped : []).filter(isAgent).map(cleanAgent);
         render();
       }
       if (m.t === 'out' && !local.has(m.lane)) write(m.lane, m.d);

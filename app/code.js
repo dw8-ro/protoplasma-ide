@@ -61,6 +61,8 @@ function loadMonaco() {
     }, reject);
   });
 }
+// Text from a teammate in Monaco's hover markdown: its markup characters are shown as typed, the author's too.
+const md = text => String(text).replace(/[\\`*_[\]<>]/g, '\\$&');
 const cssVar = name => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
 function editorTheme() {
   if (!window.monaco) return;
@@ -600,7 +602,7 @@ function marks() {
   commentMarks ||= editor.createDecorationsCollection();
   commentMarks.set(list.map(c => [c, linesOf(c, model)]).filter(([, at]) => at).map(([c, at]) => ({ range: new monaco.Range(at.line, 1, at.endLine, 1),
     options: { isWholeLine: true, className: 'commented-line', glyphMarginClassName: 'comment-glyph',
-      glyphMarginHoverMessage: { value: `**${c.author}:** ${c.text.replace(/[\\`*_[\]<>]/g, '\\$&')}` } } })));
+      glyphMarginHoverMessage: { value: `**${md(c.author)}:** ${md(c.text)}` } } })));
 }
 /** Opens the file a comment is about, with its lines selected where they are now. */
 async function openComment(c) {

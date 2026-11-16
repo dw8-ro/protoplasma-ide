@@ -7,6 +7,15 @@ did: [docs/sessions/2026-10-29.md](docs/sessions/2026-10-29.md) (the second secu
 
 ## 16 Nov 2026: the redesign, on `claude/fable-5-2-redesign-dd3b36`, not released
 
+**Tomorrow, start here (end of 16 Nov, usage limit nearly hit; everything committed, all checks green):**
+1. David on GitHub: `footfungus2` has write access (remove or make read-only); signing secrets behind an approval;
+   a `v*` tag ruleset; delete `main-lsx6e3`.
+2. David: Codex's "Hooks need review" for its two new hooks (Trust all and continue), then the Codex status checks.
+3. Maybe build: "connect to your own hub server" (a hub address in the team window, and a way to register its
+   certificate), so teams that self-host pay their own server. Today only `PROTO_ONLINE_HUB` points elsewhere.
+4. Release 0.7.0 when David says: merge this branch to `main` (redeploys the hub), `npm version minor`, tag, then
+   `node scripts/update-check.js 0.6.1`. After merging, `npm run setup` once in every checkout.
+
 **Start here.** This branch has everything below (it merged the 15 Nov branch, then added the redesign). Nothing is
 pushed; David said not to release yet. The notes for this work: [docs/sessions/2026-11-16-redesign.md](docs/sessions/2026-11-16-redesign.md).
 The review page David approved: claude.ai artifact "Protoplasma Visual Pass" (source in `docs/review/2026-11-16/`).

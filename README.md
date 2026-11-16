@@ -226,7 +226,7 @@ scripts/  end-to-end check, screenshots, README images, demo and icon tooling
 - `githubClientId`: from a GitHub OAuth app with device flow enabled. It's public, not a secret.
 - `onlineHub`: the URL of your hosted hub. Leave it empty to use teams on your own Mac only.
 
-To host a hub, deploy the `Dockerfile` (Railway or any container host) with a volume at `/data`, and set `DATA_DIR=/data` and `PROTO_OWNERS` to the GitHub logins allowed to create teams. The volume also keeps `pass-key.pem`, which signs passes for teams on people's Macs, and `hubs.json`, the hub certificates people registered for their Macs.
+To host a hub, deploy the `Dockerfile` (Railway or any container host) with a volume at `/data`, and set `DATA_DIR=/data` and `PROTO_OWNERS` to the GitHub logins allowed to create teams. A hub only accepts sign-ins from Protoplasma's own GitHub app; set `PROTO_CLIENT_ID` to your own app's client ID (or leave it blank to accept any GitHub token) if you build the app with a different one. The volume also keeps `pass-key.pem`, which signs passes for teams on people's Macs, and `hubs.json`, the hub certificates people registered for their Macs.
 </details>
 
 <details>

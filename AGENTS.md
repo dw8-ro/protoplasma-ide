@@ -19,7 +19,7 @@ Function names below are stable. Line numbers drift, so search by name.
 |---|---|---|
 | `npm install` | Installs dependencies (postinstall makes node-pty's `spawn-helper` executable) | Node 24 |
 | `npm start` | Runs the app from source. Updates are off in source runs. | |
-| `npm test` | 106 integration tests in `test/*.test.js`: real hub, real lanes, real git. About a minute. | git ≥ 2.28, macOS. No network or Electron needed. |
+| `npm test` | 107 integration tests in `test/*.test.js`: real hub, real lanes, real git. About a minute. | git ≥ 2.28, macOS. No network or Electron needed. |
 | `npm run e2e` | Drives the real Electron app through every main flow and prints `PASS`/`FAIL` per step, ending with `N/M passed`. 15-minute cap. | The `claude` CLI on the login-shell PATH and a GUI session. One step needs `gh auth status` to succeed (online). |
 | `npm run dist` | Packages `dist.noindex/Protoplasma-darwin-arm64/Protoplasma.app`, unsigned. | |
 | `npm run playground` | Two app copies (David on port 7801, Max on 7802) on a local hub and repo, each with an HTTP control API | |
@@ -66,7 +66,7 @@ app/config.json   githubClientId (OAuth app, device flow), onlineHub (the Railwa
 scripts/          e2e.js, playground.js + playground-app.js, stage.js, screenshot.js, demo.js + gif.js, readme-art.js +
                   readme-art/ (the README image pages and diagram), sign.sh, icon.js
 test/             hub.test.js (44), hub-live.test.js (13), workspace.test.js (13), files.test.js (13), lan.test.js (13),
-                  identity.test.js (4), updates.test.js (6)
+                  identity.test.js (5), updates.test.js (6)
 .github/workflows ci.yml (npm test on every push to main and PR), package.yml (dist check), release.yml (tag → release)
 Dockerfile        the hosted hub image (only src/hub.js + src/shared.js + ws)
 install.sh        the one-line installer
@@ -209,8 +209,9 @@ docs/             screenshots (sources), readme/ (the README's images, dark and 
   files.
 - **Stopped agents** keep `prompt`, `touched` (`filesOf`) and `local` (not pushed) for **Continue**; `stoppedViews()`
   sends them.
-- **Standalone and Docker:** the env vars are `PORT`, `HOST`, `DATA_DIR` and `PROTO_OWNERS` (comma-separated; blank means
-  anyone). The Dockerfile copies only `src/hub.js` and `src/shared.js` and installs only `ws`.
+- **Standalone and Docker:** the env vars are `PORT`, `HOST`, `DATA_DIR`, `PROTO_OWNERS` (comma-separated; blank means
+  anyone) and `PROTO_CLIENT_ID` (the GitHub sign-in app whose tokens are accepted: Protoplasma's unless set; blank
+  accepts any GitHub token, for a hub of your own). The Dockerfile copies only `src/hub.js` and `src/shared.js` and installs only `ws`.
 
 - **Passes:** how someone signs in to a hub on another Mac without handing it their GitHub token.
   - `signPass`/`readPass`: `p1.<payload>.<signature>`, Ed25519, payload `{login, id, name, avatar, aud, exp}`. `aud` is
@@ -490,6 +491,9 @@ docs/             screenshots (sources), readme/ (the README's images, dark and 
   *every* dependency's install scripts, on dev Macs and in CI. It's a note of intent, not a sandbox. Enforcing it with
   lavamoat (`.npmrc ignore-scripts=true` + a setup that runs only the allowed scripts) is a planned hardening; once it's
   wired, keep these version pins in step with `devDependencies`, or the allowed scripts are skipped and `npm start` fails.
+- **Sign-in app:** `CLIENT_ID` in hub.js and `githubClientId` in app/config.json. The hosted hub (and a Mac's hub,
+  which gets it from config.json) refuses tokens any other GitHub app issued, and personal tokens: `githubUser` compares
+  GitHub's `X-OAuth-Client-Id` answer header. Change one without the other and nobody can sign in.
 - **Hub deploy:** the Dockerfile copies only `src/hub.js` and `src/shared.js`. A new hub dependency or file needs the
   Dockerfile updated, or the hosted hub crashes on start.
 - **Load order:** scripts that fake GitHub or agents (e2e.js, stage.js, playground-app.js) must replace

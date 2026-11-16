@@ -69,7 +69,7 @@ function hostHere(s) {
   hosting ??= Promise.resolve().then(() => {
     const dir = localDataDir(), cert = hubCert(dir);
     // On this Mac alone until a team here has someone else on it (share), unless PROTO_BIND says where.
-    return startHub({ port: 0, host: process.env.PROTO_BIND || '127.0.0.1', dataDir: dir, owners: [s.user.login], tls: cert, passIssuer: onlineHub })
+    return startHub({ port: 0, host: process.env.PROTO_BIND || '127.0.0.1', dataDir: dir, owners: [s.user.login], tls: cert, passIssuer: onlineHub, clientId: config.githubClientId })
       .then(hub => ({ hub, pem: String(cert.cert) }));
   }).then(({ hub, pem }) => {
     local = { url: `https://127.0.0.1:${hub.port}`, name: `${s.user.login} on ${os.hostname()}`, host: s.user.name, hub, pem, fp: hub.fingerprint,

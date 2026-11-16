@@ -152,7 +152,7 @@ const MACHINE = crypto.createHash('sha256').update(os.hostname()).digest('hex').
  * @param {string} [o.hookBase] where Claude Code sends its hooks instead of the hub: the app's relay for a hub on a Mac,
  *   whose self-signed certificate Claude Code can't check (teams.js hookRelay)
  * @param {string} o.team team id
- * @param {string} [o.token] GitHub token proving who you are (read:user is enough)
+ * @param {string} [o.token] GitHub token proving who you are, from the sign-in app the hub accepts (read:user is enough)
  * @param {() => Promise<{token: string, ca?: string}>} [o.credentials] instead of `token`: asked before each connection,
  *   for a hub on someone's Mac (a current pass, and `ca`, the certificate the connection must present)
  * @param {string} o.session session name shown on the Sessions page
@@ -323,7 +323,8 @@ function startLane({ hub, hookBase, team, token, credentials = () => ({ token })
 module.exports = { startLane, repoFromRemote, gitStatus, fetchGit, installed, CODEX_HOOK };
 
 // Standalone: PROTO_TOKEN=<github token> node src/lane.js <hub-url> <team-id> <session> [--open] [cmd...]
-// A classic token with no scopes is enough; it's only used for identity.
+// The token is only used for identity. A hub started with a blank PROTO_CLIENT_ID takes any GitHub token (a classic one
+// with no scopes is enough); Protoplasma's own hubs only take the ones the app's sign-in gets.
 if (require.main === module) {
   const argv = process.argv.slice(2);
   const open = argv.includes('--open');

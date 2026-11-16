@@ -6,7 +6,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const WebSocket = require('ws');
-const { startHub } = require('../src/hub');
+const { startHub, githubUser } = require('../src/hub');
 
 const people = {
   'tok-alice': { login: 'alice', id: 1 },
@@ -92,4 +92,16 @@ test('made-up GitHub tokens get at most a minute\'s budget of GitHub checks, sen
   await Promise.all(Array.from({ length: 61 }, (_, i) => api(madeUp(100 + i), 'GET', '/teams')));
   assert.equal((await api(madeUp(200), 'GET', '/teams')).status, 503, 'the budget is used up again');
   assert.equal((await api(DANA, 'GET', '/teams')).status, 200);
+});
+
+test('only a token Protoplasma\'s own GitHub app issued signs someone in', async () => {
+  const real = globalThis.fetch, token = `gho_${'e'.repeat(36)}`;
+  globalThis.fetch = async () => new Response(JSON.stringify({ login: 'erin', id: 8 }), { headers: { 'x-oauth-client-id': 'ours' } });
+  try {
+    assert.equal((await githubUser(token, 'ours')).login, 'erin');
+    assert.equal(await githubUser(token, 'another-app'), null);
+    assert.equal((await githubUser(token)).login, 'erin'); // no app named (the app checking its own sign-in): any token
+    globalThis.fetch = async () => new Response(JSON.stringify({ login: 'erin', id: 8 })); // a personal token: no app at all
+    assert.equal(await githubUser(token, 'ours'), null);
+  } finally { globalThis.fetch = real; }
 });

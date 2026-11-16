@@ -35,15 +35,23 @@ const MAX_LANES = 30; // live agents per person per team
 const MAX_LOOKUPS = 60; // a minute's GitHub checks of tokens the hub hasn't seen check out (made-up ones)
 const KNOWN_MS = 24 * 60 * 60_000; // how long a token that checked out skips that limit
 const GITHUB_TOKEN = /^(gh[opusr]_|github_pat_)\w{20,255}$|^[0-9a-f]{40}$/;
+const CLIENT_ID = 'Ov23likRClHQUA3jdHEW'; // Protoplasma's GitHub sign-in app: the same as githubClientId in app/config.json
 
-/** Resolves a GitHub token to its user. Only reads the public profile, so a token with no scopes works. */
-async function githubUser(token) {
+/**
+ * Resolves a GitHub token to its user. With `clientId`, only a token that GitHub sign-in app issued counts: a token is
+ * proof of who someone is to the app they gave it to, so one from another app (or a personal token) held by someone
+ * else must not sign them in here. GitHub names the app in the X-OAuth-Client-Id header of its answer.
+ * ponytail: that header isn't in GitHub's docs. If it goes, every sign-in is refused (never let through); the
+ * documented check is POST /applications/<client id>/token, which needs the app's client secret on the hub.
+ */
+async function githubUser(token, clientId) {
   if (!GITHUB_TOKEN.test(token)) return null; // not a GitHub token: no need to ask
   const res = await fetch('https://api.github.com/user', { signal: AbortSignal.timeout(8000),
     headers: { authorization: `Bearer ${token}`, accept: 'application/vnd.github+json', 'user-agent': 'protoplasma' },
   });
   if (res.status === 401) return null;
   if (!res.ok) throw new Error(`GitHub answered ${res.status}.`); // down or rate-limited: not a verdict on the token
+  if (clientId && res.headers.get('x-oauth-client-id') !== clientId) return null; // another app's token, or a personal one
   const u = await res.json();
   return { login: u.login, id: u.id, name: u.name || u.login, avatar: u.avatar_url };
 }
@@ -78,12 +86,13 @@ function readPass(pass, key, aud, now = Date.now()) {
  * @param {number} [o.port] 0 picks a free port
  * @param {string} [o.dataDir] where teams are saved; omit to keep them in memory
  * @param {string[]} [o.owners] GitHub logins allowed to create teams; omit to let anyone signed in
+ * @param {string} [o.clientId] the GitHub sign-in app whose tokens are accepted; omit to accept any GitHub token
  * @param {(token: string) => Promise<{login: string, name: string, avatar: string} | null>} [o.verifyUser]
  * @param {{key: Buffer|string, cert: Buffer|string}} [o.tls] serve https/wss with this certificate (a hub on someone's Mac)
  * @param {string} [o.passIssuer] the online hub whose passes this hub accepts (needs `tls`: a pass names the certificate)
  * @returns {Promise<{ port: number, close: () => Promise<void>, listenOn: (host: string) => Promise<void>, fingerprint?: string }>}
  */
-function startHub({ port = 7681, host = '0.0.0.0', dataDir, owners, tls, passIssuer, verifyUser = token => module.exports.githubUser(token) } = {}) {
+function startHub({ port = 7681, host = '0.0.0.0', dataDir, owners, tls, passIssuer, clientId, verifyUser = token => module.exports.githubUser(token, clientId) } = {}) {
   const same = (a, b) => String(a).toLowerCase() === String(b).toLowerCase();
   const send = (ws, msg) => ws.readyState === ws.OPEN && ws.send(JSON.stringify(msg));
   const parse = raw => { try { return JSON.parse(raw); } catch { return null; } };
@@ -1056,10 +1065,12 @@ function startHub({ port = 7681, host = '0.0.0.0', dataDir, owners, tls, passIss
 
 module.exports = { startHub, githubUser, signPass, readPass };
 
-// Standalone: PORT, DATA_DIR, PROTO_OWNERS (comma-separated GitHub logins allowed to create teams).
+// Standalone: PORT, DATA_DIR, PROTO_OWNERS (comma-separated GitHub logins allowed to create teams), PROTO_CLIENT_ID (the
+// GitHub sign-in app whose tokens are accepted: Protoplasma's unless set; blank accepts any GitHub token).
 if (require.main === module) {
   const owners = process.env.PROTO_OWNERS?.split(',').map(s => s.trim()).filter(Boolean);
-  startHub({ port: +process.env.PORT || 7681, host: process.env.HOST, dataDir: process.env.DATA_DIR, owners: owners?.length ? owners : undefined })
+  startHub({ port: +process.env.PORT || 7681, host: process.env.HOST, dataDir: process.env.DATA_DIR, owners: owners?.length ? owners : undefined,
+    clientId: process.env.PROTO_CLIENT_ID ?? CLIENT_ID })
     .then(({ port }) => {
       console.log(`Protoplasma hub on port ${port}${owners?.length ? `, teams created by ${owners.join(', ')}` : ''}`);
       if (!process.env.DATA_DIR) console.log('No DATA_DIR set: teams are kept in memory only and are lost when the hub restarts.');

@@ -81,7 +81,13 @@
   .btn.primary:hover:not(:disabled) { background: var(--primary-hover); }
   .btn.ghost { background: transparent; border-color: transparent; color: var(--muted); }
   .btn.ghost:hover:not(:disabled) { color: var(--text); background: var(--fill-hover); }
-  .btn.small { height: 26px; padding: 0 10px; font-size: 12px; border-radius: 7px; }
+  /* Anything that signs you out, leaves, deletes or removes someone is red, so it never passes for a neighbour. */
+  .btn.danger { color: var(--overlap); background: color-mix(in srgb, var(--overlap) 12%, transparent); }
+  .btn.danger:hover:not(:disabled) { background: color-mix(in srgb, var(--overlap) 20%, transparent); }
+  .btn.ghost.danger { background: transparent; }
+  .btn.ghost.danger:hover:not(:disabled) { color: var(--overlap); background: color-mix(in srgb, var(--overlap) 12%, transparent); }
+  .menu button.danger:not(:disabled), .panel-row[data-act="delete"] b { color: var(--overlap); }
+  .btn.small { padding: 0 10px; font-size: 12px; border-radius: 7px; }
   .btn.wide { width: 100%; height: 40px; font-size: 14px; }
   .btn svg { width: 16px; height: 16px; }
   .btn.primary svg { width: 13px; height: 13px; margin-left: -3px; }
@@ -914,7 +920,7 @@
       <div class="row"><input id="teamName" maxlength="60" placeholder="Team name" aria-label="Team name" autocomplete="off"><button class="btn primary">Create</button></div>
       <p id="createErr" class="error" role="alert" style="margin-top: 0"></p>
     </form>
-    <div class="actions"><button id="signout" class="btn ghost">Sign out</button><button id="closeStart" class="btn" hidden>Close</button></div>
+    <div class="actions"><button id="signout" class="btn ghost danger">Sign out</button><button id="closeStart" class="btn" hidden>Close</button></div>
   </section>
   <p id="err" class="error" role="alert"></p>
 </dialog>

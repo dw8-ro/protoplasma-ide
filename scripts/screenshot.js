@@ -161,6 +161,10 @@ boot(async (win, hub) => {
   await js(`$('#agent').close(); openSettings('agents')`);
   await sleep(800);
   await shot('settings.png');
+  if (process.env.SHOTS) { // review only: the Team and Account panes, where the red buttons are
+    await js(`showPane('team')`); await sleep(400); await shot('settings-team.png');
+    await js(`showPane('account')`); await sleep(400); await shot('settings-account.png');
+  }
 
   await js(`proto.write(${JSON.stringify(mine.id)}, 'light\\r'); 0`);
   await js(`$('input[data-pref=theme][value=light]').click(); openSession('lobby-fix'); focus = ${JSON.stringify(mine.id)}; split = null; panelTab = 'environment'; render()`);

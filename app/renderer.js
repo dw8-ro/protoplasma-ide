@@ -406,7 +406,7 @@ function renderPeople() {
   setHTML($('#memberList'), [owner, ...members].map(login => `
     <li>${avatar({ login })}<span class="who"><b>${esc(login)}${same(login, me.login) ? ' <span class="where">(you)</span>' : ''}</b></span>
       <span class="role">${login === owner ? 'Owner' : 'Member'}</span>
-      ${mine && login !== owner ? `<button class="btn small" data-remove="${esc(login)}">Remove</button>` : ''}</li>`).join(''));
+      ${mine && login !== owner ? `<button class="btn small danger" data-remove="${esc(login)}">Remove</button>` : ''}</li>`).join(''));
 }
 $('#memberList').onclick = async e => {
   const login = e.target.dataset.remove;
@@ -898,7 +898,7 @@ function handOffMenu(anchor, id) {
   showMenu(anchor, [{ label: 'Hand this work to' }, ...people.map(login => ({ text: login, run: () => to(login) }))]);
 }
 
-// A small pop-up menu under a button. Items are { text, hint, disabled, run }, or { label } for a heading.
+// A small pop-up menu under a button. Items are { text, hint, disabled, danger, run }, or { label } for a heading.
 let menuAnchor = null;
 const closeMenu = () => { document.querySelector('.menu')?.remove(); menuAnchor = null; };
 // Opened from the keyboard it takes the focus, and the arrow keys move through it.
@@ -910,7 +910,7 @@ function showMenu(anchor, items) {
   menu.className = 'menu';
   menu.setAttribute('role', 'menu');
   menu.innerHTML = items.map((it, i) => (it.label ? `<div class="menu-label">${esc(it.label)}</div>`
-    : `<button role="menuitem" data-i="${i}" ${it.disabled ? 'disabled' : ''}>${esc(it.text)}${it.hint ? `<span>${esc(it.hint)}</span>` : ''}</button>`)).join('');
+    : `<button role="menuitem" data-i="${i}" ${it.danger ? 'class="danger"' : ''} ${it.disabled ? 'disabled' : ''}>${esc(it.text)}${it.hint ? `<span>${esc(it.hint)}</span>` : ''}</button>`)).join('');
   menu.onclick = e => { const it = items[e.target.closest('button')?.dataset.i]; if (it && !it.disabled) { closeMenu(); it.run(); } };
   menu.onkeydown = e => {
     const buttons = [...menu.querySelectorAll('button:not(:disabled)')], at = buttons.indexOf(document.activeElement);
@@ -1204,7 +1204,7 @@ function sessionMenu(anchor, name) {
     ...(ownsTeam(currentTeam) ? [{ text: 'Invite to the team…', run: () => $('#inviteBtn').click() }] : []),
     { text: 'Rename…', run: () => openRename(name) },
     { text: done ? 'Reopen' : 'Mark done', run: () => toggleDone(name) },
-    { text: 'Delete session', disabled: running, hint: running ? 'Stop its agents first' : '', run: () => deleteSession(name) }]);
+    { text: 'Delete session', danger: true, disabled: running, hint: running ? 'Stop its agents first' : '', run: () => deleteSession(name) }]);
 }
 
 // Uncommitted changes, as the agents' git status reports them. Agents sharing a checkout are counted once.
@@ -1832,8 +1832,12 @@ function renderTeamPane() {
       <button class="btn" data-open="people">${ownsTeam(team) ? 'Invite or remove people' : 'See everyone'}</button></div></div>
     <h4>People</h4>
     <div class="group"><ul class="members">${[team.owner, ...team.members].map(login => `<li>${avatar({ login })}<span class="login">${esc(login)}</span>${login === team.owner ? '<span class="where">Owner</span>' : ''}</li>`).join('')}</ul></div>
-    <div class="actions" style="justify-content: flex-start; margin-top: 14px"><button class="btn" data-open="teams">Switch team</button>
-      <button class="btn ghost" data-drop-team>${ownsTeam(team) ? 'Delete team' : 'Leave team'}</button></div>`
+    <div class="actions" style="justify-content: flex-start; margin-top: 14px"><button class="btn" data-open="teams">Switch team</button></div>
+    <h4>${ownsTeam(team) ? 'Delete team' : 'Leave team'}</h4>
+    <div class="group"><div class="setting"><div><b>${ownsTeam(team) ? `Delete ${esc(team.name)}` : `Leave ${esc(team.name)}`}</b><p>${ownsTeam(team)
+      ? 'Its sessions, notes and comments go, for everyone on it. This can\'t be undone.'
+      : 'Your agents in it stop, and you\'d need a new invite to come back.'}</p></div>
+      <button class="btn danger" data-drop-team>${ownsTeam(team) ? 'Delete team' : 'Leave team'}</button></div></div>`
     : '<p class="hint">Open a team to see it here.</p>';
 }
 async function openSettings(pane = 'general') {
@@ -1841,7 +1845,7 @@ async function openSettings(pane = 'general') {
   $('#accountPane').innerHTML = me ? `
     <div class="group">
       <div class="setting"><div class="profile">${avatar(me)}<div><b>${esc(me.name)}</b><p>${me.name === me.login ? 'Signed in with GitHub' : `${esc(me.login)} on GitHub`}. Protoplasma only reads your public profile.</p></div></div>
-        <button class="btn" data-open="signout">Sign out</button></div>
+        <button class="btn danger" data-open="signout">Sign out</button></div>
       <div class="setting"><div><b>GitHub CLI</b><p id="ghStatus">Checking…</p></div></div>
     </div>
     <p class="fine" style="margin-top: 12px">The GitHub CLI powers the repo list, pull requests and issues, using its own login on this Mac.</p>`

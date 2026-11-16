@@ -1,9 +1,28 @@
-# Handoff: Protoplasma IDE, 16 November 2026
+# Handoff: Protoplasma IDE, 16 November 2026 (evening)
 
 Read this first in a new session, then [AGENTS.md](AGENTS.md) for how the code fits together. What the last sessions
 did: [docs/sessions/2026-10-29.md](docs/sessions/2026-10-29.md) (the second security audit),
 [docs/sessions/2026-10-26.md](docs/sessions/2026-10-26.md) (19–26 Oct) and
 [docs/sessions/2026-10-18.md](docs/sessions/2026-10-18.md) (the first security audit).
+
+## 16 Nov 2026: the redesign, on `claude/fable-5-2-redesign-dd3b36`, not released
+
+**Start here.** This branch has everything below (it merged the 15 Nov branch, then added the redesign). Nothing is
+pushed; David said not to release yet. The notes for this work: [docs/sessions/2026-11-16-redesign.md](docs/sessions/2026-11-16-redesign.md).
+The review page David approved: claude.ai artifact "Protoplasma Visual Pass" (source in `docs/review/2026-11-16/`).
+- **The look:** flat terminal panes, a flush session panel, soft buttons, quieter alerts; still black and white.
+  The bar under a terminal is status, changes, branch and actions; the CLI's name moved to the label above.
+  **Open beside** replaced New pane. Destructive actions are red (`.btn.danger`).
+- **Just me:** no team needed to start (renderer `isSolo`, `startSolo`); invites show as an alert (`checkInvites`);
+  **Move to a team…** (`moveSession`) carries a session into a team with the same folder and branch.
+- **David's design rule (16 Nov):** minimal but sufficient. Easy for newcomers, every tool still there for experts:
+  simplify by choosing what shows first, never by removing a tool.
+- **Checks:** `npm run e2e` 149 of 149, the customer simulation 93 of 93, `npm test` 123 of 123. README pictures and the demo gif regenerated.
+- **Next:** the code review of everything since 0.6.1 (see the notes file for its outcome), then David's live checks
+  ("Status tells the truth" in [docs/first-install.md](docs/first-install.md), and the first install with Max), then
+  0.7.0 (`npm version minor`; pushing `main` redeploys the hub).
+- **Open decision:** only `dw8-ro` can create Online teams. With Just me, a newcomer who wants to work with someone
+  elsewhere can't make one. Keep it, or open it with a limit per person.
 
 ## Built on 15 Nov 2026, not released: most of the plan
 
@@ -31,8 +50,8 @@ shared.js changed) and a tag releases to installed copies: both are David's call
   `scripts/customer/s3.js` was changed for the new rows and has never been run in that form.
 - The README pictures and the demo gif are from before Plan and Memory moved.
 
-**Start here in a new session:**
-1. **The redesign is half done.** What's built is simpler structure and wording. There has been no visual pass (David
+**Where the 15 Nov work left off (since done on the redesign branch):**
+1. **The redesign was half done.** What's built is simpler structure and wording. There has been no visual pass (David
    asked for sleeker and more modern; colours, spacing and type are as in 0.6.1), and the review page the plan asks
    for was never made. Next: a review page (an artifact) with before and after for U2 (team picker), U4 (one
    "beside"), U7 (a shorter bar under each terminal) and U10 (what to do about an overlap), plus a proposal for the

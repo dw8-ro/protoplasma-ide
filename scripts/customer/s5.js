@@ -60,6 +60,7 @@ run('5. Typing into agents, sharing files, stopping, panes, switcher', async () 
   // Pane mode and the quick switcher.
   await js('david', `tab = 'agents'; render(); return 1`);
   await click('david', '#newPane');
+  await clickText('david', '.menu button', 'Pick a session');
   check('New pane opens pane mode with the session', await until('david', `view === 'panes' && document.querySelectorAll('#paneGrid [data-pane]').length >= 1`, 5000), await js('david', `return { view, panes: document.querySelectorAll('#paneGrid [data-pane]').length }`));
   await menu('david', 'switcher');
   check('⌘K opens the switcher', await until('david', `$('#switcher').open`, 3000));

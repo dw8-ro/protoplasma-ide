@@ -396,8 +396,8 @@ async function run(win, hub) {
     await until(`!memories.some(m => /Keep the intro short|older README/.test(m.text))`);
     await js(`$('[data-explorer="conflicts"]').click(); 0`);
     check('the Explorer has a Conflicts tab', await until(`code.explorer === 'conflicts' && !$('#codeConflicts').hidden && $('#conflictCount').textContent === '0' && /Nothing here/.test($('#codeConflicts').textContent)`));
-    await js(`$('[data-explorer="files"]').click(); showCode(false); $('#newPane').click(); 0`);
-    check('New pane opens pane mode with the session and room for another', await until(`view === 'panes' && panes.length === 2 && $('#panesView').querySelector('[data-pane="0"] .pane-body').contains(terms.get(${JSON.stringify(second)}).el) && !terms.get(${JSON.stringify(second)}).el.hidden && /room for another/.test($('#panesTitle').textContent)`));
+    await js(`$('[data-explorer="files"]').click(); showCode(false); $('#newPane').click(); [...document.querySelectorAll('.menu button')].find(b => /Pick a session/.test(b.textContent)).click(); 0`);
+    check('Open beside → Pick a session opens pane mode with the session and room for another', await until(`view === 'panes' && panes.length === 2 && $('#panesView').querySelector('[data-pane="0"] .pane-body').contains(terms.get(${JSON.stringify(second)}).el) && !terms.get(${JSON.stringify(second)}).el.hidden && /room for another/.test($('#panesTitle').textContent)`));
     await js(`$('#paneGrid [data-pane-pick][data-name="s1"]').click(); 0`);
     check('a second session opens beside it, with its agent', await until(`panes[1] === 's1' && $('#paneGrid [data-pane="1"] .pane-body').contains(terms.get(${JSON.stringify(mine)}).el) && !terms.get(${JSON.stringify(mine)}).el.hidden`));
     check('Continue on an agent in a pane starts yours in that agent\'s session, whichever is open', await js(`(async () => {

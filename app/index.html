@@ -268,6 +268,7 @@
   /* The status colour is only in a dot: a tinted, outlined box was the loudest thing in the window. */
   .alert b { display: flex; align-items: center; gap: 8px; color: var(--text); font-weight: 600; }
   .alert b::before { content: ''; flex: none; width: 6px; height: 6px; border-radius: 50%; background: var(--c); }
+  .alert .do { color: var(--faint); }
   .alert span { padding-left: 14px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
   /* Session view: one agent at a time (or two side by side), with the session panel on the right */
@@ -353,6 +354,7 @@
   .lane-label { display: flex; align-items: center; gap: 7px; padding: 10px 14px 0 16px; color: var(--muted); font-size: 11.5px; font-weight: 600; line-height: 16px; }
   .lane-label::before { content: ''; width: 7px; height: 7px; border-radius: 50%; background: var(--c); }
   .lane-label:empty { display: none; }
+  .lane-label .agent-name { color: var(--faint); font-weight: 500; }
   .screen { margin: 8px 8px 8px 16px; overflow: hidden; } /* margins, not padding: the fit addon sizes to the padded box */
   .lane .screen { flex: 1; min-height: 0; }
   .lane:not(.mine) .screen { overflow-x: auto; } /* a teammate's terminal too wide for a narrow pane even at the smallest font scrolls sideways */
@@ -789,7 +791,7 @@
       <button id="myAgent" class="btn small" hidden>My agent</button>
       <span class="spacer"></span>
       <button id="codeToggle" class="btn small" title="Show the code (⇧⌘E)"><svg><use href="#icon-code"/></svg>Code</button>
-      <button id="newPane" class="btn small">New pane</button>
+      <button id="newPane" class="btn small" aria-haspopup="menu">Open beside</button>
       <button id="panelToggle" class="icon-btn" aria-label="Hide the session panel" title="Session panel"><svg><use href="#sidepanel"/></svg></button>
       <button id="shareBtn" class="btn small primary">Invite</button>
     </div>

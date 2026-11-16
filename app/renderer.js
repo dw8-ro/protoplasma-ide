@@ -98,7 +98,7 @@ let memories = [];         // the team's shared notes
 let sessionRecords = [];   // saved sessions: { name, task, createdBy, createdAt, done, doneAt }
 let view = 'sessions';     // sessions | people | session
 let focus = null;          // agent shown in the session view
-let split = null;          // a second agent shown beside it ("New pane")
+let split = null;          // a second agent shown beside it ("Open beside")
 let panelTab = 'session';  // session | environment, and plan | memory, which open from Session's rows
 let panelHidden = false;
 let filterRepo = null;     // workspace the Sessions page is narrowed to ('' means folders with no GitHub repo)
@@ -1088,7 +1088,7 @@ function renderAlerts(lanes) {
   const codebase = l => l.repo || l.tree;
   const clashes = [...new Set(lanes.flatMap(l => l.overlaps.map(f => `${codebase(l)}|${f}`)))].map(key => {
     const file = key.slice(key.indexOf('|') + 1), who = lanes.filter(l => l.overlaps.includes(file) && `${codebase(l)}|${file}` === key);
-    return `<button class="alert overlap" data-session="${esc(who[0].session)}" data-file="${esc(file)}" title="Opens the file in its session. The Conflicts tab beside it shows each person's version."><b>${esc(whoEdited(who.map(l => l.name)))} edited</b><span>${esc(file)}</span></button>`;
+    return `<button class="alert overlap" data-session="${esc(who[0].session)}" data-file="${esc(file)}"><b>${esc(whoEdited(who.map(l => l.name)))} edited</b><span>${esc(file)}</span><span class="do">Compare versions</span></button>`;
   });
   // Work a teammate handed you, for a day or until you start an agent in that session (the hub clears it then).
   const handed = sessionRecords.filter(r => r.handoff && same(r.handoff.to, me.login) && Date.now() - Date.parse(r.handoff.at) < 86_400_000)
@@ -1100,7 +1100,8 @@ $('#alerts').onclick = e => {
   const a = e.target.closest('[data-session]');
   if (!a) return;
   openSession(a.dataset.session, a.dataset.lane || null);
-  if (a.dataset.file) openFile(a.dataset.file);
+  // An overlap opens the file with the Conflicts list beside it, where each person's version is a click away.
+  if (a.dataset.file) { openFile(a.dataset.file); code.explorer = 'conflicts'; render(); }
 };
 
 // Notify when an agent we can answer needs input, or one of ours finishes, unless that session is already in view.
@@ -1287,8 +1288,9 @@ function renderRoom(lanes) {
     const access = mine ? (l.open ? 'Teammates can type' : 'Only you can type') : (l.open ? 'You can type' : 'View only');
     const agent = agentLabel(l, lanes.filter(o => o.session === l.session));
     const [cls, label] = STATUS[statusOf(l)] || ['idle', l.status];
-    setHTML(t.label, mine ? 'Me' : esc(l.name));
-    setHTML(t.bar, `<span class="tag" title="${esc(agent)}">${esc(agent)}</span><span class="state ${cls}"><span class="dot"></span>${esc(label)}</span>` +
+    // Whose agent and which CLI sit above the terminal, so the bar under it is only how it's doing and what you can do.
+    setHTML(t.label, `${mine ? 'Me' : esc(l.name)}<span class="agent-name">${esc(agent)}</span>`);
+    setHTML(t.bar, `<span class="state ${cls}"><span class="dot"></span>${esc(label)}</span>` +
       `${diffStat([l])}${behindChip(l)}${clashChip(l.conflicts)}${l.branch ? `<span class="branch" title="${esc(l.branch)}">${esc(l.branch)}</span>` : ''}` +
       (mine && l.typedBy && Date.now() - Date.parse(l.typedAt) < 10 * 60_000 ? `<span class="typed" title="${esc(l.typedBy)} typed into this agent">${esc(l.typedBy)} typed, ${ago(l.typedAt)}</span>` : '') +
       (mine && !l.open ? '' : `<span class="access" title="${access}">${access}</span>`) // your own agent that only you type into is the usual case: nothing to say
@@ -1474,7 +1476,7 @@ function agentCard(l, name) {
     ${overlap ? `<span class="sub overlap" title="${esc(overlap)}">${esc(overlap)}</span>` : ''}
     <span class="sub ${l.prompt ? 'prompt' : ''}" title="${esc(detail)}">${esc(detail)}</span>
     ${file ? `<button class="sub link" data-theirs="${esc(l.id)}" data-path="${esc(file)}" title="Open ${esc(l.name)}'s ${esc(file)}">Open ${esc(file.split('/').pop())}</button>` : ''}
-    ${l.id !== focus ? `<button class="beside" data-beside="${esc(l.id)}" aria-label="${split === l.id ? 'Close' : 'Show beside'}" title="${split === l.id ? 'Close the pane' : 'Show beside'}">${split === l.id ? '−' : '⧉'}</button>` : ''}
+    ${l.id !== focus ? `<button class="beside" data-beside="${esc(l.id)}" aria-label="${split === l.id ? 'Close' : 'Open beside'}" title="${split === l.id ? 'Close the pane' : 'Open beside'}">${split === l.id ? '−' : '⧉'}</button>` : ''}
     ${mine && !stopping.has(l.id) ? `<button class="stop" data-stop="${esc(l.id)}" aria-label="Stop this agent" title="Stop this agent">×</button>` : ''}
   </div>`;
 }
@@ -1541,8 +1543,17 @@ $('#panelBody').onkeydown = e => { if ((e.key === 'Enter' || e.key === ' ') && e
 $('#emptyNew').onclick = () => agentMenu($('#emptyNew'));
 $('#resumeBtn').onclick = resumeAgent;
 $('#myAgent').onclick = () => { focus = split = null; tab = 'agents'; code.dock = 'agent'; render(); terms.get(focus)?.term.focus(); };
-// Back to the panes this session was in, if it was in some; otherwise this session beside an empty pane.
-$('#newPane').onclick = () => { let saved = []; try { saved = JSON.parse(store.get(panesKey()) || '[]'); } catch {} openPanes(saved.includes(current) ? saved : [current, null]); };
+// One way to put two things side by side: another agent of this session, or another session (pane mode). For a
+// session: back to the panes this one was in, if it was in some; otherwise this session beside an empty pane.
+$('#newPane').onclick = e => {
+  const others = hubLanes.filter(l => l.session === current && l.id !== (focus || [...local.keys()].find(id => hubLanes.some(o => o.id === id && o.session === current))));
+  const session = () => { let saved = []; try { saved = JSON.parse(store.get(panesKey()) || '[]'); } catch {} openPanes(saved.includes(current) ? saved : [current, null]); };
+  showMenu(e.currentTarget, [
+    ...(others.length ? [{ label: 'An agent in this session' }, ...others.map(l => ({ text: `${local.has(l.id) ? 'Me' : l.name}: ${agentName(l.cmd)}`, hint: split === l.id ? 'Open' : '',
+      run: () => { split = split === l.id ? null : l.id; tab = 'agents'; code.dock = 'agent'; render(); } }))] : []),
+    { label: 'Another session' }, { text: 'Pick a session…', run: session },
+  ]);
+};
 $('#panelToggle').onclick = () => { panelHidden = !panelHidden; render(); };
 $('#backToAgents').onclick = () => { tab = 'agents'; render(); };
 $('#ghPanel').onclick = e => { const item = e.target.closest('[data-url]'); if (item) proto.openExternal(item.dataset.url); };

@@ -1,5 +1,5 @@
 // Amoeba's pane mode: several sessions side by side, each showing its main agent (yours if you have one in it).
-// "New pane" in a session opens it with that session and an empty pane to fill. Uses renderer.js's state and helpers.
+// "Open beside" → "Pick a session…" in a session opens it with that session and an empty pane to fill. Uses renderer.js's state and helpers.
 
 const MAX_PANES = 3;
 let panes = [];            // session names, null for an empty pane

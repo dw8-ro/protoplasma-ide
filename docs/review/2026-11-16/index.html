@@ -1,0 +1,204 @@
+<title>Protoplasma Visual Pass</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<style>
+  /* Layout: one reading column of screens, each a before/after toggle with its notes underneath. Monochrome like the app. */
+  :root {
+    --bg: #f3f3f5; --sheet: #ffffff; --line: #e3e3e8; --text: #17171a; --muted: #5d5d66; --faint: #6b6b74;
+    --fill: rgba(0, 0, 0, .05); --on: #17171a; --on-text: #ffffff;
+    --live: #137a52; --needs: #93600f; --overlap: #b8344c;
+    --ui: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Inter", system-ui, sans-serif;
+    --mono: ui-monospace, "SF Mono", Menlo, monospace;
+  }
+  @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+    --bg: #0e0e10; --sheet: #141416; --line: #2a2a2f; --text: #ececef; --muted: #a0a0a8; --faint: #8a8a93;
+    --fill: rgba(255, 255, 255, .06); --on: #f4f4f5; --on-text: #0b0b0c;
+    --live: #6fd6a8; --needs: #f2b35b; --overlap: #f07a8b; color-scheme: dark } }
+  :root[data-theme="dark"] {
+    --bg: #0e0e10; --sheet: #141416; --line: #2a2a2f; --text: #ececef; --muted: #a0a0a8; --faint: #8a8a93;
+    --fill: rgba(255, 255, 255, .06); --on: #f4f4f5; --on-text: #0b0b0c;
+    --live: #6fd6a8; --needs: #f2b35b; --overlap: #f07a8b; color-scheme: dark }
+  * { box-sizing: border-box; }
+  body { background: var(--bg); color: var(--text); font: 15px/1.55 var(--ui); -webkit-font-smoothing: antialiased; }
+  .wrap { max-width: 1120px; margin: 0 auto; padding-block: 48px 80px;
+    padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
+  header { display: grid; gap: 10px; max-width: 68ch; margin-bottom: 36px; }
+  .eyebrow { font: 12px var(--mono); color: var(--faint); letter-spacing: .02em; }
+  h1 { margin: 0; font-size: 32px; font-weight: 650; letter-spacing: -0.025em; text-wrap: balance; }
+  h2 { margin: 0; font-size: 20px; font-weight: 620; letter-spacing: -0.015em; text-wrap: balance; }
+  h3 { margin: 0 0 8px; font-size: 13px; font-weight: 600; color: var(--muted); }
+  p { margin: 0; }
+  .lede { color: var(--muted); }
+  code { font: 13px var(--mono); padding: 1px 6px; border-radius: 6px; background: var(--fill); }
+
+  .summary { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px; margin-bottom: 48px; }
+  .summary div { padding: 16px 18px; border-radius: 12px; background: var(--sheet); border: 1px solid var(--line); display: grid; gap: 4px; min-width: 0; }
+  .summary b { font-weight: 600; }
+  .summary span { color: var(--muted); font-size: 14px; }
+  .tag { justify-self: start; font: 11.5px var(--mono); color: var(--faint); }
+
+  .controls { position: sticky; top: env(safe-area-inset-top, 0px); z-index: 5; display: flex; flex-wrap: wrap; align-items: center; gap: 12px;
+    padding: 10px 0; margin-bottom: 20px; background: var(--bg); }
+  body::before { content: ""; position: fixed; inset: 0 0 auto; height: env(safe-area-inset-top, 0px); z-index: 10; background: var(--bg); }
+  .controls p { color: var(--faint); font-size: 13px; }
+  .seg { display: inline-flex; padding: 3px; border-radius: 9px; background: var(--fill); }
+  .seg button { height: 30px; padding: 0 14px; border: 0; border-radius: 7px; background: none; color: var(--muted); font: 500 13px var(--ui); cursor: pointer; }
+  .seg button[aria-pressed="true"] { background: var(--on); color: var(--on-text); }
+  .seg button:focus-visible { outline: 2px solid var(--text); outline-offset: 2px; }
+
+  .screen { display: grid; gap: 16px; padding-block: 28px; border-top: 1px solid var(--line); }
+  .screen-head { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 8px 16px; }
+  figure { margin: 0; position: relative; }
+  figure img { display: block; width: 100%; height: auto; border-radius: 12px; }
+  figure img[hidden] { display: none; }
+  .which { position: absolute; top: 12px; right: 12px; font: 600 11px var(--mono); padding: 3px 8px; border-radius: 6px; background: var(--on); color: var(--on-text); }
+  .notes { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 24px; }
+  .notes > div { min-width: 0; }
+  ul { margin: 0; padding-left: 18px; display: grid; gap: 6px; }
+  li { color: var(--text); }
+  li em { font-style: normal; color: var(--muted); }
+
+  .ask { display: grid; gap: 14px; padding: 24px; margin-top: 28px; border-radius: 14px; background: var(--sheet); border: 1px solid var(--line); }
+  .ask ol { margin: 0; padding-left: 20px; display: grid; gap: 10px; }
+  .ask li b { font-weight: 600; }
+  .dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; margin-right: 6px; vertical-align: 1px; }
+  footer { margin-top: 40px; color: var(--faint); font-size: 13px; }
+  @media (prefers-reduced-motion: no-preference) { figure img { transition: opacity .12s; } }
+</style>
+
+<div class="wrap">
+  <header>
+    <span class="eyebrow">Branch claude/fable-5-2-redesign-dd3b36 · 16 Nov 2026 · not merged</span>
+    <h1>Protoplasma visual pass</h1>
+    <p class="lede">Simpler and quieter, still black and white. Fewer boxes inside boxes, so the agents' terminals get the room and the only colour left is status. Nothing here is merged or released: pin notes on anything you want changed.</p>
+  </header>
+
+  <section class="summary" aria-label="What changed">
+    <div><span class="tag">look</span><b>Flat terminal panes</b><span>Terminals sit edge to edge, split by a hairline, instead of each in its own rounded card.</span></div>
+    <div><span class="tag">look</span><b>A flush session panel</b><span>The panel on the right is a column of the window, not a floating card.</span></div>
+    <div><span class="tag">look</span><b>Soft buttons and fields</b><span>No outlines, a light fill. The white primary button stays.</span></div>
+    <div><span class="tag">look</span><b>Quieter alerts and title bar</b><span>Status colour only in a small dot. The team switch has no box until you hover it.</span></div>
+    <div><span class="tag">simpler · U7</span><b>A shorter bar under each terminal</b><span>Whose agent and which CLI move up into the label ("Me · Claude Code"). The bar is just status, changes, branch and actions.</span></div>
+    <div><span class="tag">simpler · U4</span><b>One "Open beside"</b><span>"New pane" becomes Open beside: another agent of this session, or another session, from one menu.</span></div>
+    <div><span class="tag">more useful · U10</span><b>Overlaps say what to do</b><span>An overlap alert reads "Compare versions" and opens the file with the Conflicts list beside it.</span></div>
+  </section>
+
+  <div class="controls">
+    <div class="seg" role="group" aria-label="Show all screens">
+      <button id="allBefore" type="button" aria-pressed="false">Before</button>
+      <button id="allAfter" type="button" aria-pressed="true">After</button>
+    </div>
+    <p>Switches every screen. Each screen also has its own switch.</p>
+  </div>
+
+  <section class="screen" data-shot="session">
+    <div class="screen-head"><h2>A session, two agents beside each other</h2></div>
+    <figure></figure>
+    <div class="notes">
+      <div><h3>What changed</h3><ul>
+        <li>Both terminals and the panel share one sheet, split by hairlines. About 30 px more terminal each way.</li>
+        <li>"Me · Claude Code" above the terminal; the bar under it starts with the status.</li>
+        <li>Hand off and Stop sit at the right end of the bar.</li>
+        <li>"New pane" is now <b>Open beside</b>.</li>
+      </ul></div>
+      <div><h3>Look at</h3><ul>
+        <li>Does the focused terminal stand out enough? It shows as a brighter name, not a brighter border.</li>
+        <li>Is the hairline between the two agents enough of a split?</li>
+      </ul></div>
+    </div>
+  </section>
+
+  <section class="screen" data-shot="sessions">
+    <div class="screen-head"><h2>Sessions page</h2></div>
+    <figure></figure>
+    <div class="notes">
+      <div><h3>What changed</h3><ul>
+        <li>The overlap alert in the sidebar is a grey block with a red dot, not a red box.</li>
+        <li>Sort and Search are soft fields; the page title is a little larger.</li>
+        <li>Sidebar rows get a light fill on hover.</li>
+        <li>The cards keep their hairline: in light mode they are white on white without it.</li>
+      </ul></div>
+      <div><h3>Look at</h3><ul>
+        <li>Is the alert still loud enough to notice? It's the one thing on this page someone has to act on.</li>
+      </ul></div>
+    </div>
+  </section>
+
+  <section class="screen" data-shot="code">
+    <div class="screen-head"><h2>Code view, agents underneath</h2></div>
+    <figure></figure>
+    <div class="notes">
+      <div><h3>What changed</h3><ul>
+        <li>The agent and the session panel under the editor are flush with it: no inset cards, no gap.</li>
+        <li>The editor, file tree and tabs are unchanged.</li>
+      </ul></div>
+    </div>
+  </section>
+
+  <section class="screen" data-shot="light">
+    <div class="screen-head"><h2>Light theme</h2></div>
+    <figure></figure>
+    <div class="notes">
+      <div><h3>What changed</h3><ul>
+        <li>The same changes, with the soft fills tuned for white (black at 5 to 8%).</li>
+        <li>The primary button stays black.</li>
+      </ul></div>
+    </div>
+  </section>
+
+  <section class="screen" data-shot="new-session">
+    <div class="screen-head"><h2>New session</h2></div>
+    <figure></figure>
+    <div class="notes">
+      <div><h3>What changed</h3><ul>
+        <li>Only the buttons (Cancel is softer). The one-box form from 15 Nov stays as it is.</li>
+      </ul></div>
+    </div>
+  </section>
+
+  <section class="screen" data-shot="settings">
+    <div class="screen-head"><h2>Settings</h2></div>
+    <figure></figure>
+    <div class="notes">
+      <div><h3>What changed</h3><ul>
+        <li>Soft Done button and hover fills on the section list. The groups keep their outline.</li>
+      </ul></div>
+    </div>
+  </section>
+
+  <section class="ask" aria-labelledby="askTitle">
+    <h2 id="askTitle">Still to decide</h2>
+    <ol>
+      <li><b>The team picker (U2).</b> Proposed: open your last team, or your only one, straight away. Someone brand new gets a team made for them, and This Mac and nearby teams move under "More". Not built yet, because it changes the first thing new people see.</li>
+      <li><b>Hand off and Continue.</b> Keep them as a word on the bar (as now), or move them into a "⋯" menu with who-can-type? A menu with one item didn't seem simpler, so they stayed.</li>
+      <li><b>Session cards.</b> Keep the hairline, or go borderless on a soft fill like the buttons?</li>
+    </ol>
+  </section>
+
+  <footer>Screens from <code>npm run screenshot</code> with the staged team (User 1 to User 3). e2e 146 of 146 with every change on this page. Before = commit 6182f5f, after = this branch.</footer>
+</div>
+
+<script>
+  const alts = { session: 'A session with two agents side by side and the session panel', sessions: 'The Sessions page with five session cards',
+    code: 'The code view with the agent and session panel underneath', light: 'A session in the light theme',
+    'new-session': 'The New session form', settings: 'Settings, Agents section' };
+  const figures = [...document.querySelectorAll('[data-shot]')].map(section => {
+    const name = section.dataset.shot, fig = section.querySelector('figure'), head = section.querySelector('.screen-head');
+    const imgs = ['before', 'after'].map(w => Object.assign(document.createElement('img'),
+      { src: `img/${w}-${name}.jpg`, alt: `${alts[name]}, ${w}`, loading: 'lazy', width: 1600, height: 1049 }));
+    const label = Object.assign(document.createElement('span'), { className: 'which' });
+    fig.append(...imgs, label);
+    const seg = document.createElement('div');
+    seg.className = 'seg'; seg.setAttribute('role', 'group'); seg.setAttribute('aria-label', `${alts[name]}: before or after`);
+    seg.innerHTML = '<button type="button">Before</button><button type="button">After</button>';
+    head.append(seg);
+    const show = w => {
+      imgs[0].hidden = w !== 'before'; imgs[1].hidden = w !== 'after'; label.textContent = w === 'before' ? 'Before' : 'After';
+      seg.children[0].setAttribute('aria-pressed', w === 'before'); seg.children[1].setAttribute('aria-pressed', w === 'after');
+    };
+    seg.children[0].onclick = () => show('before'); seg.children[1].onclick = () => show('after');
+    show('after');
+    return show;
+  });
+  const all = w => { figures.forEach(show => show(w)); allBefore.setAttribute('aria-pressed', w === 'before'); allAfter.setAttribute('aria-pressed', w === 'after'); };
+  allBefore.onclick = () => all('before'); allAfter.onclick = () => all('after');
+</script>

@@ -552,6 +552,27 @@ function startHub({ port = 7681, host = '0.0.0.0', dataDir, owners, tls, passIss
   const patchFiles = text => [...String(text || '').matchAll(/^\*\*\* (?:(?:Update|Add|Delete) File|Move to): (.+)$/gm)].map(m => m[1].trim()).slice(0, 50);
   const shellOf = command => (Array.isArray(command) ? command.join(' ') : String(command ?? ''));
 
+  // Open plan steps of someone else's that name a file, by its path or its file name (a step like "Lock the seat row in
+  // session_store.ts"), not yet told to this agent. ponytail: a name in the text, so a step naming index.js claims
+  // every index.js; steps with a list of files would be exact, at the cost of a field in the step form.
+  const mentions = (text, rel) => {
+    const t = String(text).toLowerCase(), path = rel.toLowerCase(), name = path.split('/').pop().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    return t.includes(path) || new RegExp(`(^|[\\s\`'"(/])${name}($|[\\s\`'"),.:;!?])`).test(t);
+  };
+  function claimsOn(lane, rel) {
+    lane.toldClaims ||= new Set();
+    const found = [];
+    for (const session of teams.get(lane.team)?.sessions || []) {
+      for (const step of session.steps || []) {
+        const key = `${step.id}|${rel}`;
+        if (step.done || !step.owner || same(step.owner, lane.login) || lane.toldClaims.has(key) || !mentions(step.text, rel)) continue;
+        lane.toldClaims.add(key);
+        found.push({ step, session });
+      }
+    }
+    return found.slice(0, 3);
+  }
+
   // A JSON reply steers the agent; an empty one lets it continue. Claude Code and Codex send the same events.
   function onHook(lane, ev) {
     const named = ev.tool_input?.file_path || ev.tool_input?.notebook_path;
@@ -579,6 +600,10 @@ function startHub({ port = 7681, host = '0.0.0.0', dataDir, owners, tls, passIss
         // Attach each file's team notes, and require confirmation if a teammate's agent already edited one.
         const context = [], asks = [];
         for (const rel of rels) {
+          // A file a teammate's open plan step names, in any session: said once per step and file, before the edit.
+          for (const { step, session } of editing ? claimsOn(lane, rel) : []) {
+            context.push(`${rel} is named in ${step.owner}'s plan step "${step.text}" in the session "${session.name}" (from Protoplasma). Check with them before changing it.`);
+          }
           const pinned = notesFor(lane, rel), others = editing ? othersOn(lane, rel) : [];
           // An edit counts from here, so agents needn't send PostToolUse, which carries every tool's whole output. Not
           // when a person is asked first: they may say no (one they allow shows in the agent's next git report, as does

@@ -307,3 +307,15 @@ test('a viewer that stops reading is dropped instead of buffering without limit'
   assert.ok((await state()).lanes.some(l => l.id === agent.id), 'the agent itself is unaffected');
   await closed(agent.ws);
 });
+
+test('an agent about to edit a file a teammate\'s plan step names is told, once', async () => {
+  await api('tok-alice', 'POST', `/teams/${team.id}/sessions`, { name: 'claims', task: 'try claims' });
+  await api('tok-alice', 'POST', `/teams/${team.id}/sessions/claims/steps`, { text: 'Lock the seat row in session_store.ts', owner: 'alice' });
+  await api('tok-alice', 'POST', `/teams/${team.id}/sessions/claims/steps`, { text: 'Rewrite store.ts', owner: 'bob' });
+  const l = await lane({ session: 'other', root: '/r' }, 'tok-bob');
+  const edit = async file => (await hook(l.id, { hook_event_name: 'PreToolUse', tool_name: 'Edit', tool_input: { file_path: `/r/${file}` } }))?.hookSpecificOutput?.additionalContext || '';
+  assert.match(await edit('src/net/session_store.ts'), /src\/net\/session_store\.ts is named in alice's plan step "Lock the seat row in session_store\.ts" in the session "claims"/);
+  assert.equal(await edit('src/net/session_store.ts'), '', 'said once, not at every edit');
+  assert.equal(await edit('src/store.ts'), '', 'a step of your own is yours to work on, and a name inside another name doesn\'t count');
+  await closed(l.ws);
+});

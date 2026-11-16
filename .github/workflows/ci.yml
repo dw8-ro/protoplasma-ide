@@ -14,7 +14,7 @@ jobs:
     steps:
       - uses: actions/checkout@v5
         with:
-          persist-credentials: false # npm ci runs dependencies' install scripts: leave no GitHub token in .git for them
+          persist-credentials: false # an allowed install script still runs (npm run setup): leave no GitHub token in .git for it
       - uses: actions/setup-node@v5
         with:
           node-version: 24
@@ -22,4 +22,5 @@ jobs:
       - run: npm ci
         env:
           ELECTRON_SKIP_BINARY_DOWNLOAD: '1' # tests cover the hub and lanes, not the app window
+      - run: npm run setup # only the install scripts package.json allowScripts names (.npmrc skips all others)
       - run: npm test

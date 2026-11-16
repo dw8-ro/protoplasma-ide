@@ -18,7 +18,7 @@ Function names below are stable. Line numbers drift, so search by name.
 
 | Command | What it does | Needs |
 |---|---|---|
-| `npm install` | Installs dependencies (postinstall makes node-pty's `spawn-helper` executable) | Node 24 |
+| `npm install`, then `npm run setup` | Installs dependencies without running any of their install scripts (`.npmrc` `ignore-scripts=true`), then runs only the ones `allowScripts` in package.json names, at its pinned versions, and the project's postinstall (node-pty's `spawn-helper` made executable). Without `setup`, agents don't start. | Node 24 |
 | `npm start` | Runs the app from source. Updates are off in source runs. | |
 | `npm test` | 123 integration tests in `test/*.test.js`: real hub, real lanes, real git. About a minute. | git ≥ 2.28, macOS. No network or Electron needed. |
 | `npm run e2e` | Drives the real Electron app through every main flow and prints `PASS`/`FAIL` per step, ending with `N/M passed`. 15-minute cap. | The `claude` CLI on the login-shell PATH and a GUI session. One step needs `gh auth status` to succeed (online). |
@@ -573,12 +573,12 @@ docs/             screenshots (sources), readme/ (the README's images, dark and 
   hub gives `cmd === 'claude'` the first status idle (it can't read the table: the hosted hub is built from hub.js and
   shared.js alone), and the tool names the hub reads (`Bash`, `exec_command`, `apply_patch`, `EDIT_TOOLS`, `ASK_TOOLS`)
   are what a new agent's hooks have to be translated to, as opencode-plugin.mjs does.
-- **Dependencies:** `allowScripts` in package.json records the Electron and node-pty versions whose install scripts the
-  app needs (Electron's binary download, node-pty's prebuild; the root `postinstall` then marks `spawn-helper`
-  executable). **It is not enforced:** there's no `@lavamoat/allow-scripts` or `.npmrc`, so `npm install`/`npm ci` run
-  *every* dependency's install scripts, on dev Macs and in CI. It's a note of intent, not a sandbox. Enforcing it with
-  lavamoat (`.npmrc ignore-scripts=true` + a setup that runs only the allowed scripts) is a planned hardening; once it's
-  wired, keep these version pins in step with `devDependencies`, or the allowed scripts are skipped and `npm start` fails.
+- **Dependencies:** `allowScripts` in package.json lists the packages whose install scripts may run, at pinned
+  versions: node-pty (its prebuild check and post-install), and Electron (which has none today: it downloads its binary
+  on first run). It's enforced since 16 Nov: `.npmrc` sets `ignore-scripts=true`, and `npm run setup`
+  (`scripts/allowed-scripts.js`) runs `npm rebuild <name>` for each allowed package, then the root `postinstall`. Every
+  workflow runs `npm run setup` after `npm ci`. When a pinned package's version changes, setup stops and says so:
+  read what its install scripts do in the new version, then update `allowScripts`.
 - **Sign-in app:** `CLIENT_ID` in hub.js and `githubClientId` in app/config.json. The hosted hub (and a Mac's hub,
   which gets it from config.json) refuses tokens any other GitHub app issued, and personal tokens: `githubUser` compares
   GitHub's `X-OAuth-Client-Id` answer header. Change one without the other and nobody can sign in.

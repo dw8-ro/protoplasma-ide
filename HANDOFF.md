@@ -287,7 +287,7 @@ changelog, 2 Nov) found Protoplasma already has most team features; these closed
     each needs `SAFE_FOR_TEMPLATES`, `IN_PLACE` or `PARSER_MEDIA_TYPE`, and Monaco passes only a tag and attribute
     list, `ALLOW_UNKNOWN_PROTOCOLS` and DOM or TrustedType output. The CSP blocks inline script as well. Take a
     Monaco release with a newer DOMPurify when one comes out;
-  - `allowScripts` in package.json isn't enforced (see AGENTS.md).
+  - ~~`allowScripts` in package.json isn't enforced~~: enforced since 16 Nov (`.npmrc`, `npm run setup`; see AGENTS.md).
 - **Playground `--real`** (23 Oct): `npm run playground -- --real` runs the installed Claude Code, Codex and OpenCode
   in `~/Protoplasma-sim`, signed in as David. Each new session stops at its folder-trust prompt, which is his to
   answer. `scripts/customer/act.js` and `observe.js` drive and watch it from a shell.

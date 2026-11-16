@@ -4,7 +4,7 @@ const fs = require('fs');
 const path = require('path');
 const { boot, stageRepo, ownAgent, teammate, hook, sleep, c, light, claudeBanner, accepting } = require('./stage');
 
-const docs = path.join(__dirname, '..', 'docs');
+const docs = process.env.SHOTS || path.join(__dirname, '..', 'docs'); // SHOTS=<folder> tries a look without touching the README's pictures
 const demoRepos = [
   { name: 'user1/lobby-server', description: 'Matchmaking and lobbies for the game', private: true, mine: true },
   { name: 'user1/game-client', description: 'The game itself', private: true, mine: true },
@@ -166,7 +166,7 @@ boot(async (win, hub) => {
   await js(`$('input[data-pref=theme][value=light]').click(); openSession('lobby-fix'); focus = ${JSON.stringify(mine.id)}; split = null; panelTab = 'environment'; render()`);
   await sleep(1500);
   await shot('light.png', { light: true });
-  console.log('saved docs/{session,code,sessions,new-session,settings,light}.png');
+  console.log(`saved ${docs}/{session,code,sessions,new-session,settings,light}.png`);
 });
 
 // Runs in the page: puts the capture in a macOS window (rounded corners, traffic lights, a hairline edge and a soft

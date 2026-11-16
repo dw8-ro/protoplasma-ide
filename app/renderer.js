@@ -195,6 +195,7 @@ $('#reopen').onclick = () => proto.openExternal(signInUrl);
 $('#cancelSignin').onclick = () => { proto.cancelSignIn(); showView('signinView'); };
 proto.onSignedIn(({ user, error }) => {
   if (!user) { showView('signinView'); $('#err').textContent = error; return; }
+  reopenLast = true; // as at launch: back to the last team, or straight into your own space if you have none
   showTeams(user);
 });
 // Forget everything that belonged to the team that was open.
@@ -265,8 +266,8 @@ async function leaveOrDeleteTeam(team) {
   const work = unpushed ? ` Some of your agents' folders have work that isn't pushed; it stays on this Mac.` : '';
   // The hub deletes a team only once no agents run in it: a teammate's have to stop first, and yours are stopped here.
   const theirs = deleting && team.key === currentTeam?.key ? [...new Set(hubLanes.filter(l => !local.has(l.id)).map(l => l.name))] : [];
-  if (theirs.length) return alert(`${theirs.join(' and ')} still ${theirs.length === 1 ? 'has agents' : 'have agents'} running in "${team.name}". It can be deleted once they've stopped them.`);
-  if (!confirm(deleting ? `Delete the team "${team.name}"? Its sessions and notes go with it, for everyone on it, and your agents in it stop.${work}`
+  if (theirs.length) return alert(`${theirs.join(' and ')} still ${theirs.length === 1 ? 'has agents' : 'have agents'} running in "${teamName(team)}". It can be deleted once they've stopped them.`);
+  if (!confirm(deleting ? `Delete "${teamName(team)}"? Its sessions and notes go with it, for everyone on it, and your agents in it stop.${work}`
     : `Leave "${team.name}"? Your agents in it stop, and you'd need a new invite to come back.${work}`)) return;
   leavingTeam = team.key; // the hub then disconnects us, which isn't news
   const mine = [...local].filter(([, o]) => o.teamKey === team.key).map(([id]) => id);
@@ -311,12 +312,28 @@ async function refreshTeams() {
     syncWhere();
     $('#teamsNote').textContent = unreachable.length ? `Couldn't reach ${unreachable.join(', ')} right now.` : '';
     const last = reopenLast && listedTeams.get(store.get('team')); // on launch, go straight back to the last team
+    // Nobody to go back to, and no team at all (with every hub answering, so none is just slow): start on your own.
+    const first = reopenLast && !last && !teams.length && !unreachable.length;
     reopenLast = false;
     teamsTimer = setTimeout(refreshTeams, 4000); // still polling if opening it fails
     if (last) openTeam(last);
+    else if (first) startSolo();
     return;
   } catch (e) { if (me && $('#start').open) $('#err').textContent = errorText(e); }
   teamsTimer = setTimeout(refreshTeams, 4000);
+}
+
+// Someone with no team yet starts in a private space ("Just me"), so the first thing they do is work, not set up a
+// team. Underneath it's a This Mac team only they are on: its hub listens on this Mac alone until they invite someone
+// (teams.js `share`), and nothing goes to the online hub. Making or joining a real team is there whenever they want it.
+const isSolo = t => !!t && t.key === store.get('solo') && !t.members.length;
+const teamName = t => (isSolo(t) ? 'Just me' : t.name);
+async function startSolo() {
+  try {
+    const team = await proto.createTeam({ name: `${me.login}'s team`, online: false });
+    store.set('solo', team.key);
+    await openTeam(team);
+  } catch (e) { $('#createErr').textContent = errorText(e); } // the team window stays, as before
 }
 
 let listedTeams = new Map();
@@ -328,7 +345,7 @@ function renderTeamList(teams) {
     return `
     <button class="team ${open ? 'on' : ''}" data-key="${esc(t.key)}">
       <span class="stack">${[t.owner, ...t.members].slice(0, 5).map(login => avatar({ login })).join('')}</span>
-      <span class="name">${esc(t.name)}<span class="where">${esc(t.where)}, ${size === 1 ? 'just you' : `${size} people`}</span></span>
+      <span class="name">${esc(teamName(t))}<span class="where">${isSolo(t) ? 'Private, on this Mac' : `${esc(t.where)}, ${size === 1 ? 'just you' : `${size} people`}`}</span></span>
       <span class="agents">${[open && 'Open', t.agents && `${t.agents} running`].filter(Boolean).join(', ')}</span>
     </button>`;
   }).join('') || `<p class="hint">No teams yet. Create one below, or ask a teammate to invite ${esc(me.login)}.</p>`;
@@ -383,8 +400,6 @@ async function openTeam(team) {
     clearTeamView();
     $('#settings').close();
     $('#teamSwitch').hidden = false;
-    $('#teamLabel').textContent = team.name;
-    $('#teamWhere').textContent = team.where;
     $('#start').close();
     watch(conn);
     render();
@@ -1064,6 +1079,9 @@ function render() {
   onScreen = view === 'session' && current ? [current] : view === 'panes' ? panes.filter(Boolean) : [];
   const told = JSON.stringify([looking, onScreen]);
   if (lookedAt !== told && ws?.readyState === WebSocket.OPEN) { ws.send(JSON.stringify({ t: 'look', session: looking, sees: onScreen })); lookedAt = told; }
+  // The title bar says "Just me" until someone joins your private space; then it's a team like any other.
+  $('#teamLabel').textContent = teamName(currentTeam);
+  $('#teamWhere').textContent = isSolo(currentTeam) ? '' : currentTeam.where;
   const inSettings = $('#settings').open;
   $('#navSessions').classList.toggle('on', !inSettings && view === 'sessions' && filterRepo === null);
   $('#navPeople').classList.toggle('on', !inSettings && view === 'people');
@@ -1204,7 +1222,32 @@ function sessionMenu(anchor, name) {
     ...(ownsTeam(currentTeam) ? [{ text: 'Invite to the team…', run: () => $('#inviteBtn').click() }] : []),
     { text: 'Rename…', run: () => openRename(name) },
     { text: done ? 'Reopen' : 'Mark done', run: () => toggleDone(name) },
+    { text: 'Move to a team…', disabled: running, hint: running ? 'Stop its agents first' : '', run: () => moveMenu(anchor, name) },
     { text: 'Delete session', danger: true, disabled: running, hint: running ? 'Stop its agents first' : '', run: () => deleteSession(name) }]);
+}
+
+// Carrying a session on in another team: from "Just me" into a real team, or between teams. It's made there with the
+// same name and goal, and agents started in it work in this session's folder and branch (named after the session, not
+// the team), so the work carries on where it was. Its plan, notes and comments stay with the old one, marked done.
+async function moveMenu(anchor, name) {
+  let teams = [];
+  try { teams = (await proto.teams({ nearby: prefs.findNearby })).teams.filter(t => t.key !== currentTeam.key); } catch {}
+  showMenu(anchor, [{ label: 'Move to' }, ...teams.map(t => ({ text: teamName(t), hint: isSolo(t) ? '' : t.where, run: () => moveSession(name, t) })),
+    { text: 'Make a team…', run: () => showTeams(me) }]);
+}
+async function moveSession(name, target) {
+  const from = currentTeam, rec = recordFor(name), source = sourceFor(name);
+  const unpushed = hubLanes.some(l => l.session === name && local.has(l.id) && (l.git?.unpushed || l.local?.length));
+  if (!confirm(`Move "${name}" to ${teamName(target)}?\n\nIt's made there with the same goal, and your agents there work in this session's folder and branch, so nothing is lost.${unpushed ? ' Commit & Push first, so the people there get your work too.' : ''} Here it's marked done.`)) return;
+  try {
+    const key = rec?.key && rec.key !== slug(name) ? rec.key : name; // a renamed session's folder and branch keep its first name
+    await proto.saveSession(target.key, { name: key, task: rec?.task || '' });
+    if (key !== name) await proto.renameSession(target.key, key, name);
+    if (source) store.set(sourceKey(name, target), JSON.stringify(source));
+    if (!rec?.done) await proto.setSessionDone(from.key, name, true);
+  } catch (e) { return alert(errorText(e)); }
+  await openTeam(target);
+  openSession(name);
 }
 
 // Uncommitted changes, as the agents' git status reports them. Agents sharing a checkout are counted once.
@@ -1500,7 +1543,7 @@ function environment(inRoom, rec) {
       + row('Pull requests', '', 'data-tab="pulls"') + row('Issues', '', 'data-tab="issues"')
       + (branches.length === 1 ? row('Compare branch', '', `data-url="${esc(`${github}/compare/${branches[0].split('/').map(encodeURIComponent).join('/')}`)}"`) : '') : '',
     canManage(rec) ? '<div class="panel-label">Session</div>' + row('Rename session', '', 'data-act="rename"')
-      + row(rec.done ? 'Reopen' : 'Mark done', '', 'data-act="done"') + (inRoom.length ? '' : row('Delete session', '', 'data-act="delete"')) : '',
+      + row(rec.done ? 'Reopen' : 'Mark done', '', 'data-act="done"') + (inRoom.length ? '' : row('Move to a team…', '', 'data-act="move"')) + (inRoom.length ? '' : row('Delete session', '', 'data-act="delete"')) : '',
   ].join('');
 }
 
@@ -1530,6 +1573,7 @@ $('#panelBody').onclick = e => {
   if (url) proto.openExternal(url);
   if (act === 'done') toggleDone(current);
   if (act === 'rename') openRename(current);
+  if (act === 'move') moveMenu(e.target.closest('[data-act]'), current);
   if (act === 'delete') deleteSession(current);
 };
 $('#lanes').onclick = e => {
@@ -1827,7 +1871,18 @@ function showPane(name) {
 }
 function renderTeamPane() {
   const team = currentTeam;
-  $('#teamPane').innerHTML = team ? `
+  // Your own space: what it is, and the two ways to work with people. The team tools below it stay as they are.
+  $('#teamPane').innerHTML = isSolo(team) ? `
+    <div class="group">
+      <div class="setting"><div><b>Just me</b><p>Your own space, private to this Mac. Nobody else sees its sessions.</p></div></div>
+      <div class="setting"><div><b>Work with people on this Wi-Fi</b><p>Invite them here. Your sessions stay where they are.</p></div>
+        <button class="btn" data-open="people">Invite people</button></div>
+      <div class="setting"><div><b>Work with people anywhere</b><p>Make a team, then use Move to a team… on a session to carry on there with the same folder and branch.</p></div>
+        <button class="btn" data-open="teams">Make a team</button></div>
+    </div>
+    <h4>Delete this space</h4>
+    <div class="group"><div class="setting"><div><b>Delete Just me</b><p>Its sessions, notes and comments go. Folders and branches on this Mac stay. This can't be undone.</p></div>
+      <button class="btn danger" data-drop-team>Delete</button></div></div>` : team ? `
     <div class="group"><div class="setting"><div><b>${esc(team.name)}</b><p>${esc(team.where)}, owned by ${esc(team.owner)}</p></div>
       <button class="btn" data-open="people">${ownsTeam(team) ? 'Invite or remove people' : 'See everyone'}</button></div></div>
     <h4>People</h4>

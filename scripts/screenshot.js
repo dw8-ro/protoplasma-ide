@@ -170,6 +170,11 @@ boot(async (win, hub) => {
   await js(`$('input[data-pref=theme][value=light]').click(); openSession('lobby-fix'); focus = ${JSON.stringify(mine.id)}; split = null; panelTab = 'environment'; render()`);
   await sleep(1500);
   await shot('light.png', { light: true });
+  if (process.env.SHOTS) { // review only: a first launch, in your own space
+    await js(`$('input[data-pref=theme][value=dark]').click(); openTeam([...listedTeams.values()].find(isSolo)); 0`);
+    await sleep(1500); await shot('solo.png');
+    await js(`openSettings('team')`); await sleep(500); await shot('solo-settings.png');
+  }
   console.log(`saved ${docs}/{session,code,sessions,new-session,settings,light}.png`);
 });
 

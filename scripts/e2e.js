@@ -109,6 +109,9 @@ async function run(win, hub) {
     check('signs in from the saved profile', await until('!!me && me.login === "david"'));
     check('own avatar falls back to an initial', await js(`$('#meAvatar').textContent.trim() === 'D'`));
 
+    check('with no team yet, you start in your own space on this Mac', await until(`isSolo(currentTeam) && currentTeam.where === 'This Mac' && $('#teamLabel').textContent === 'Just me' && !$('#start').open`, 15000),
+      await js(`JSON.stringify({ team: currentTeam?.name, label: $('#teamLabel').textContent, start: $('#start').open, err: $('#createErr').textContent })`));
+    const solo = await js('currentTeam.key');
     await js(`showTeams(me); $('#teamName').value = 'E2E'; $('#createTeam').requestSubmit()`);
     check('creates an online team and connects', await until('!!currentTeam && currentTeam.where === "Online" && $("#conn").className.includes("live")'));
     const team = await js('currentTeam.id');
@@ -493,9 +496,18 @@ async function run(win, hub) {
     check('cancelling Delete team leaves Settings open on the same team', await js(`$('#settings').open && !$('#start').open && currentTeam?.name === 'Spare'`));
     check('the team list has no delete buttons', await js(`!document.querySelector('#teamList [data-drop]')`));
     await js(`window.confirm = () => true; $('#teamPane [data-drop-team]').click()`);
-    check('the owner can delete the open team from Settings', await until(`currentTeam === null && !$('#settings').open && $('#start').open && listedTeams.size === 1 && !$('#teamList').textContent.includes('Spare')`, 12000), await js(`$('#teamList').textContent.replace(/\\s+/g, ' ')`));
+    check('the owner can delete the open team from Settings', await until(`currentTeam === null && !$('#settings').open && $('#start').open && listedTeams.size === 2 && !$('#teamList').textContent.includes('Spare')`, 12000), await js(`$('#teamList').textContent.replace(/\\s+/g, ' ')`));
     await js(`openTeam(listedTeams.get(${JSON.stringify(mainTeam)})); 0`);
     await until(`currentTeam?.key === ${JSON.stringify(mainTeam)}`);
+
+    // ---- moving a session into another team: same goal, same folder
+    await js(`proto.saveSession(currentTeam.key, { name: 'carry-on', task: 'Keep going with a friend' }).then(() => 0)`);
+    await until(`!!recordFor('carry-on')`);
+    await js(`store.set(sourceKey('carry-on'), JSON.stringify({ cwd: ${JSON.stringify(root)} })); window.confirm = () => true; moveSession('carry-on', listedTeams.get(${JSON.stringify(solo)})); 0`);
+    check('Move to a team carries a session on in the other team, with its folder', await until(`currentTeam?.key === ${JSON.stringify(solo)} && current === 'carry-on' && recordFor('carry-on')?.task === 'Keep going with a friend' && JSON.parse(store.get(sourceKey('carry-on')) || 'null')?.cwd === ${JSON.stringify(root)}`, 15000));
+    await js(`openTeam(listedTeams.get(${JSON.stringify(mainTeam)})); 0`);
+    await until(`currentTeam?.key === ${JSON.stringify(mainTeam)}`);
+    check('and the one it came from is marked done', await until(`recordFor('carry-on')?.done === true`));
 
     // ---- an agent waiting on Claude's folder trust prompt needs you
     const untrusted = tempDir('protoplasma-e2e-trust-');

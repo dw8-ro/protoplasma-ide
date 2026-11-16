@@ -98,8 +98,9 @@ made outside it shows up to 15 s later.
 an idle agent starts fewer than one git process a second.
 
 ### 5. Better collision avoidance (pick after real use)
-**First item built on 15 Nov 2026:** each agent's branch is checked against main (`conflicts`), shown as "N conflicts
-with main" and told to the agent. Not yet: against teammates' pushed session branches, line ranges, plan-step claims.
+**Built on 15–16 Nov 2026:** each agent's branch is checked against main (`conflicts`) and against the other
+sessions' pushed branches (`branchConflicts`), shown on its card and told to the agent; and a file named in a plan step
+is brought up to a teammate's agent about to edit it (hub.js `claimsOn`). Not yet: line ranges.
 
 - **Will these branches conflict?** `git merge-tree --write-tree` (git 2.38 or later) answers exactly, without
   touching the folder: each agent's branch against main and against teammates' pushed session branches. Show "will

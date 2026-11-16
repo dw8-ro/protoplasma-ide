@@ -18,6 +18,11 @@ The review page David approved: claude.ai artifact "Protoplasma Visual Pass" (so
 - **David's design rule (16 Nov):** minimal but sufficient. Easy for newcomers, every tool still there for experts:
   simplify by choosing what shows first, never by removing a tool.
 - **Checks:** `npm run e2e` 149 of 149, the customer simulation 93 of 93, `npm test` 123 of 123. README pictures and the demo gif regenerated.
+- **Built after the review (16 Nov):** conflicts with other sessions' pushed branches (lane.js `branchConflicts`);
+  plan steps that name a file tell a teammate's agent about to edit it (hub.js `claimsOn`); a guessed status waits
+  20 s before "Your agent finished" (renderer `GUESSED_DONE_MS`, hub views send `hooked`); `allowScripts` enforced
+  (`.npmrc`, **`npm run setup` after every `npm install` or `npm ci`**, in every workflow too). David's main checkout
+  and other worktrees need `npm run setup` once after merging this, or agents won't start.
 - **Code review (16 Nov, `af8ba6f`):** one high-effort pass over everything not on `origin/main` (the 15 Nov work and
   the redesign), in one session rather than by independent reviewers. Six findings, all fixed: a window over the hub's
   `look` budget stopped getting output for what it showed (hub.js; a test in hub-live.test.js), Move to a team failed

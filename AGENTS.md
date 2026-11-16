@@ -190,6 +190,8 @@ docs/             screenshots (sources), readme/ (the README's images, dark and 
   - **PostToolUse:** only from apps before 0.5.3, which still register it: records the edit. New agents don't send it,
     because it carries every tool's whole output (files read, command output, MCP results).
   - **PermissionRequest:** sets the lane to "needs you". **Stop**, and Codex's **Interrupt:** set it to idle.
+  - **Plan claims** (`claimsOn`, `mentions`): an edit to a file that someone else's open plan step names, in any
+    session (by path, or by file name as a whole word), adds that step to the context, once per step and file per agent.
 
   Every hook sets `lane.hooked`. Claude Code and Codex send the same events and fields.
   Claude Code's hook timeout is 3 s (Codex's curl has the same), so hook answers must stay fast. If the hook fails, the
@@ -320,6 +322,10 @@ docs/             screenshots (sources), readme/ (the README's images, dark and 
     the branch and main each have commits the other lacks, and once per pair of commits. Commits only: edits not
     committed yet don't count. The hub passes it on (`lane.conflicts`, 50 names at most), tells the lane's agent in its
     prompt context, and the app shows "N conflicts with main" on the card and the bar, with the files under Environment.
+  - `branchConflicts`: the same against the other sessions' pushed branches (`branchConflicts`: `origin/session/*`,
+    newest first, at most 10, skipping its own and any with nothing main lacks), as `[{branch, files}]`, each pair of
+    commits asked once. The hub caps it (`branchClashes`) and tells the agent; the app shows "Conflicts with <session>"
+    and lists the files under Environment by session name.
   - Returns null when git fails.
   - **It writes two things:** it sets the upstream of a `session/*` branch when the remote branch exists, and
     `merge-tree` leaves the merged files it tried as loose objects nothing refers to (git's own gc clears them).

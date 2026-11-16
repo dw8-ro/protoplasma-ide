@@ -334,7 +334,7 @@ function startHub({ port = 7681, host = '0.0.0.0', dataDir, owners, tls, passIss
     return ls.map(l => ({ id: l.id, login: l.login, name: l.name, avatar: l.avatar, session: l.session, cmd: l.cmd, repo: l.repo, branch: l.branch,
       git: l.git, tree: l.tree, cols: l.cols, rows: l.rows, open: l.open, status: l.status, lastActive: l.lastActive, prompt: l.prompt || '',
       typedBy: l.typedBy || '', typedAt: l.typedAt || null, startedAt: l.startedAt, local: [...l.local],
-      files: [...filesOf(l)], overlaps: overlaps(l), conflicts: l.conflicts || [], branchConflicts: l.branchConflicts || [] }));
+      files: [...filesOf(l)], overlaps: overlaps(l), conflicts: l.conflicts || [], branchConflicts: l.branchConflicts || [], hooked: !!l.hooked }));
   }
   // With `session`: only to windows showing that session (ws.sees), and to every window that never said which it shows.
   const toTeam = (teamId, msg, session) => {

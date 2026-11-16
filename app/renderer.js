@@ -1156,19 +1156,28 @@ $('#alerts').onclick = e => {
 
 // Notify when an agent we can answer needs input, or one of ours finishes, unless that session is already in view.
 // The Dock badge counts agents waiting on input.
+// An agent whose status is guessed from its output (no hooks yet: Codex before they're trusted, an Other command)
+// reads Idle after 3 quiet seconds, which a long silent command is too. Its "finished" waits until it has stayed idle.
+const GUESSED_DONE_MS = 20_000;
+const finishing = new Map(); // lane id -> timer for a guessed "finished"
+const inSight = l => document.hasFocus() && ((view === 'session' && current === l.session && tab === 'agents') || (view === 'panes' && paneLaneIds().includes(l.id)));
+function notify(title, l) {
+  if (inSight(l)) return;
+  const note = new Notification(title, { body: l.session }), teamKey = currentTeam?.key;
+  note.onclick = () => { proto.focus(); if (currentTeam?.key === teamKey) openSession(l.session, l.id); };
+}
 function notifyChanges(lanes) {
   for (const l of lanes) {
     const before = lastStatus.get(l.id);
     lastStatus.set(l.id, l.status);
     if (before === undefined || before === l.status) continue;
-    if (document.hasFocus() && ((view === 'session' && current === l.session && tab === 'agents') || (view === 'panes' && paneLaneIds().includes(l.id)))) continue;
+    clearTimeout(finishing.get(l.id));
     const mine = local.has(l.id);
-    let title;
-    if (l.status === 'needs you' && canAnswer(l) && prefs.notifyNeeds) title = mine ? 'Your agent needs you' : `${l.name}'s agent needs you`;
-    else if (mine && before === 'working' && l.status === 'idle' && prefs.notifyDone) title = 'Your agent finished';
-    if (!title) continue;
-    const note = new Notification(title, { body: l.session }), teamKey = currentTeam?.key;
-    note.onclick = () => { proto.focus(); if (currentTeam?.key === teamKey) openSession(l.session, l.id); };
+    if (l.status === 'needs you' && canAnswer(l) && prefs.notifyNeeds) notify(mine ? 'Your agent needs you' : `${l.name}'s agent needs you`, l);
+    else if (mine && before === 'working' && l.status === 'idle' && prefs.notifyDone) {
+      if (l.hooked !== false) notify('Your agent finished', l); // hooks say so (or a hub too old to tell)
+      else finishing.set(l.id, setTimeout(() => { if (lastStatus.get(l.id) === 'idle') notify('Your agent finished', l); }, GUESSED_DONE_MS));
+    }
   }
   for (const id of lastStatus.keys()) if (!lanes.some(l => l.id === id)) lastStatus.delete(id);
   proto.setBadge(prefs.badge ? lanes.filter(l => l.status === 'needs you' && canAnswer(l)).length : 0);

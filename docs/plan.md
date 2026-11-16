@@ -120,7 +120,8 @@ is brought up to a teammate's agent about to edit it (hub.js `claimsOn`). Not ye
 - A chat window over ACP, Windows, a browser viewer, an own agent or model router.
 
 ## Decisions for David
-- **Q1. Who may create Online teams?** Today only `dw8-ro` (the hub's `PROTO_OWNERS`), and the app doesn't say so
+- **Q1. Who may create Online teams?** (16 Nov: recommended to keep it to `dw8-ro` for 0.7.0; a cap of 3 teams per
+  person is built for when it opens; see HANDOFF.md.) Today only `dw8-ro` (the hub's `PROTO_OWNERS`), and the app doesn't say so
   (R16). Either keep it and have the app explain, starting new people on This Mac; or open it to everyone with a
   limit per person. Suggested: explain now, open it when the launch plan resumes.
 - **Q2. Should what you type in New session go to the agent as its first message (U1)?** It starts using your model

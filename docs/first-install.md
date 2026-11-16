@@ -60,12 +60,16 @@ Overlaps and the push guard, the core of the app:
 
 Status tells the truth (these are expected to fail on 0.6.1: they're the checks for phase 1 of
 [plan.md](plan.md), so note what you see and try them again after that release):
-- [ ] **David:** give Claude something long to do and press Esc while it works. Its card says Idle within a few
+- [x] **David:** give Claude something long to do and press Esc while it works. Its card says Idle within a few
   seconds, not Working.
-- [ ] **David:** ask Claude to ask you which of two names you prefer before it renames something. While its question
+- [x] **David:** ask Claude to ask you which of two names you prefer before it renames something. While its question
   is up, the card says Needs you and the alert shows.
-- [ ] **David:** ask Claude to run `sleep 60` and approve it. The card goes from Needs you to Working as soon as you
+- [x] **David:** ask Claude to run `sleep 60` and approve it. The card goes from Needs you to Working as soon as you
   approve, not a minute later.
+  (These three, 16 Nov, with Claude Code 2.1.289 through the app's own lane and hub code: `node scripts/status-check.js`,
+  3 of 3. Claude runs `sleep` without asking, so the script uses a 20 s `node -e` timer. It found one bug, fixed: the
+  Enter that sent a prompt could turn the permission request that followed into Working. Not covered by the script:
+  the card and the alert in the window, which e2e checks from hub states.)
 - [ ] **Max:** the same three with Codex.
 - [ ] **Max:** while Codex waits for an approval, close the lid for a minute and open it. It still says Needs you.
 

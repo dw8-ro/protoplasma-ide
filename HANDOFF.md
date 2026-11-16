@@ -18,6 +18,27 @@ The review page David approved: claude.ai artifact "Protoplasma Visual Pass" (so
 - **David's design rule (16 Nov):** minimal but sufficient. Easy for newcomers, every tool still there for experts:
   simplify by choosing what shows first, never by removing a tool.
 - **Checks:** `npm run e2e` 149 of 149, the customer simulation 93 of 93, `npm test` 123 of 123. README pictures and the demo gif regenerated.
+- **Status checks with a real Claude Code (16 Nov):** `node scripts/status-check.js` runs real Claude Code (haiku)
+  through lane.js and a local hub in this checkout (one Claude trusts; it stops at a trust question, never answers it).
+  3 of 3: Esc → Idle 2.5 s later, a question → Needs you, an approval → Working 2.5 s after it. It found a bug, fixed
+  (`da0e8fe`): the Enter that sent the prompt was still being watched when the permission request came, and the
+  printing around it read as an answer. The hub now ignores a `key` older than the last hook's change (`statusAt`,
+  `ago`). Codex: `node scripts/codex-hooks.js` shows the four old hooks trusted and the two new ones untrusted, as
+  planned; approving them on its "Hooks need review" screen is David's, so Codex wasn't run live.
+- **Third security review (16 Nov, its own worktree):** notes copied to
+  [docs/sessions/2026-11-16-security-review.md](docs/sessions/2026-11-16-security-review.md). Its three hub fixes
+  are on `main` and live. On this branch since: its uncommitted push-redirect fix (`PUSH_CONFIG`), list coercion for
+  what a hub sends (renderer `cleanAgent`), the comment hover escaping its author (code.js `md`), a teams-per-person
+  cap on open hubs (`MAX_OWNED_TEAMS`, `MAX_TEAMS`), and `allowScripts` enforced. **For David on GitHub:** the
+  collaborator `footfungus2` has write access (can push `main`, which redeploys the hub, and tag a release); the
+  signing secrets aren't behind an approval; no `v*` tag ruleset; leftover branch `main-lsx6e3`.
+- **Checks after all of it (16 Nov):** `npm test` 127 of 127, `npm run e2e` 149 of 149, the customer simulation 93 of 93,
+  `node scripts/status-check.js` 3 of 3.
+- **Online teams (Q1), recommended:** keep `PROTO_OWNERS=dw8-ro` for 0.7.0. The review lists what opening the
+  hosted hub to anyone needs first: quotas (teams per person now exists; requests and comments don't), invites that
+  need accepting (today an owner can put anyone on a team, and with Just me that shows as an alert), a data file that
+  isn't rewritten whole on every change, backups. Newcomers start in Just me and can share a This Mac team on their
+  Wi-Fi; opening up later is clearing `PROTO_OWNERS` on Railway, David's call.
 - **Built after the review (16 Nov):** conflicts with other sessions' pushed branches (lane.js `branchConflicts`);
   plan steps that name a file tell a teammate's agent about to edit it (hub.js `claimsOn`); a guessed status waits
   20 s before "Your agent finished" (renderer `GUESSED_DONE_MS`, hub views send `hooked`); `allowScripts` enforced

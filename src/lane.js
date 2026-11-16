@@ -105,6 +105,8 @@ async function gitStatus(cwd, { env = process.env, fetch = false } = {}) {
   for (const file of added.slice(0, MAX_CHANGED)) changed.push(file); // (a spread of a huge list would overflow the stack)
   // Would this branch's commits conflict with main's, merged today? Only asked when each has commits the other lacks.
   stats.conflicts = main && ahead && behind ? await mainConflicts(cwd, main, base, line, env) : [];
+  // And with the other sessions' pushed branches: whichever of the two is merged second would conflict.
+  stats.branchConflicts = main && ahead ? await branchConflicts(cwd, branch, upstream, main, line, env) : [];
   const local = sinceUpstream === null ? changed : [...new Set([...(sinceUpstream || '').split('\0').filter(Boolean), ...added])];
   // untracked: the new files (not sent to the hub; see code:readLane).
   return { ...stats, changed: changed.slice(0, MAX_CHANGED), local: local.slice(0, MAX_CHANGED), untracked: added.slice(0, MAX_CHANGED) };
@@ -118,14 +120,38 @@ const clashes = new Map(); // folder -> { pair: "<HEAD's commit>\n<main's>", fil
 async function mainConflicts(cwd, main, base, line, env) {
   const pair = await line('rev-parse', 'HEAD', main);
   if (!pair || pair.split('\n')[1] === base) return []; // main hasn't moved since this branch left it (only its own pushed copy did)
-  if (clashes.get(cwd)?.pair !== pair) {
-    clashes.set(cwd, { pair, files: await new Promise(resolve => execFile('git',
-      [...SAFE_GIT, '-c', 'core.quotePath=false', 'merge-tree', '--write-tree', '--name-only', '--no-messages', '-z', 'HEAD', main],
-      { cwd, encoding: 'utf8', maxBuffer: 10e6, timeout: 20_000, env: gitEnv(env) },
-      // Exit 1 is "conflicts": the merged tree's id, then the files. Anything else (clean, or a git that can't say): none.
-      (err, out) => resolve(err?.code === 1 ? String(out).split('\0').slice(1).filter(Boolean).slice(0, MAX_CONFLICTS) : []))) });
-  }
+  if (clashes.get(cwd)?.pair !== pair) clashes.set(cwd, { pair, files: await mergeTree(cwd, main, env) });
   return clashes.get(cwd).files;
+}
+// The files git would stop on, merging `other` into HEAD (git 2.38 or later). Nothing in the folder changes.
+const mergeTree = (cwd, other, env) => new Promise(resolve => execFile('git',
+  [...SAFE_GIT, '-c', 'core.quotePath=false', 'merge-tree', '--write-tree', '--name-only', '--no-messages', '-z', 'HEAD', other],
+  { cwd, encoding: 'utf8', maxBuffer: 10e6, timeout: 20_000, env: gitEnv(env) },
+  // Exit 1 is "conflicts": the merged tree's id, then the files. Anything else (clean, or a git that can't say): none.
+  (err, out) => resolve(err?.code === 1 ? String(out).split('\0').slice(1).filter(Boolean).slice(0, MAX_CONFLICTS) : [])));
+/**
+ * The other sessions' pushed branches (`origin/session/*`, newest first, at most MAX_BRANCHES) this checkout's commits
+ * would conflict with: [{ branch, files }]. A branch with nothing main lacks (merged, or not started) is left out, since
+ * the check against main covers it. Each branch is asked again only when it, HEAD or main moves.
+ */
+const MAX_BRANCHES = 10;
+const crossed = new Map(); // "<folder>\n<branch>" -> { pair: "<HEAD>\n<branch>\n<main>", files }
+async function branchConflicts(cwd, branch, upstream, main, line, env) {
+  const refs = (await line('for-each-ref', '--sort=-committerdate', '--format=%(refname:short) %(objectname)', 'refs/remotes/origin/session/'))
+    .split('\n').map(l => l.split(' ')).filter(([ref, at]) => at && ref !== upstream && ref !== `origin/${branch}`).slice(0, MAX_BRANCHES);
+  if (!refs.length) return [];
+  const [head, mainAt] = (await line('rev-parse', 'HEAD', main)).split('\n');
+  const found = [];
+  for (const [ref, at] of refs) {
+    const key = `${cwd}\n${ref}`, pair = `${head}\n${at}\n${mainAt}`;
+    if (crossed.get(key)?.pair !== pair) {
+      const own = Number(await line('rev-list', '--count', `${main}..${at}`)) || 0;
+      crossed.set(key, { pair, files: own ? await mergeTree(cwd, at, env) : [] });
+    }
+    const { files } = crossed.get(key);
+    if (files.length) found.push({ branch: ref.replace(/^origin\//, ''), files });
+  }
+  return found;
 }
 // Git run in the background never asks for anything: no password prompt nobody sees, no ssh passphrase on a terminal.
 const gitEnv = env => ({ ...env, GIT_TERMINAL_PROMPT: '0', GIT_OPTIONAL_LOCKS: '0', GIT_SSH_COMMAND: env.GIT_SSH_COMMAND || 'ssh -o BatchMode=yes' });

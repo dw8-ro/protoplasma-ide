@@ -334,7 +334,7 @@ function startHub({ port = 7681, host = '0.0.0.0', dataDir, owners, tls, passIss
     return ls.map(l => ({ id: l.id, login: l.login, name: l.name, avatar: l.avatar, session: l.session, cmd: l.cmd, repo: l.repo, branch: l.branch,
       git: l.git, tree: l.tree, cols: l.cols, rows: l.rows, open: l.open, status: l.status, lastActive: l.lastActive, prompt: l.prompt || '',
       typedBy: l.typedBy || '', typedAt: l.typedAt || null, startedAt: l.startedAt, local: [...l.local],
-      files: [...filesOf(l)], overlaps: overlaps(l), conflicts: l.conflicts || [] }));
+      files: [...filesOf(l)], overlaps: overlaps(l), conflicts: l.conflicts || [], branchConflicts: l.branchConflicts || [] }));
   }
   // With `session`: only to windows showing that session (ws.sees), and to every window that never said which it shows.
   const toTeam = (teamId, msg, session) => {
@@ -387,6 +387,11 @@ function startHub({ port = 7681, host = '0.0.0.0', dataDir, owners, tls, passIss
       const main = lane.mainBranch || 'main', more = lane.conflicts.length - MAX_CONTEXT_FILES;
       parts.push(`Your branch "${lane.branch}" would conflict with ${main} if it were merged today (from Protoplasma), in: `
         + `${lane.conflicts.slice(0, MAX_CONTEXT_FILES).join(', ')}${more > 0 ? ` and ${more} more` : ''}. Merge ${main} into your branch and settle those before a pull request.`);
+    }
+    for (const c of (lane.branchConflicts || []).slice(0, 3)) {
+      const other = findSession(teams.get(lane.team), c.branch.replace(/^session\//, ''));
+      parts.push(`Your branch "${lane.branch}" would conflict with the branch "${c.branch}"${other ? ` (the session "${other.name}")` : ''} when both are merged (from Protoplasma), in: `
+        + `${c.files.slice(0, MAX_CONTEXT_FILES).join(', ')}. Agree with whoever works there who changes those first.`);
     }
     return parts.join('\n\n') || null;
   }
@@ -880,6 +885,8 @@ function startHub({ port = 7681, host = '0.0.0.0', dataDir, owners, tls, passIss
   const gitStats = g => g && typeof g === 'object'
     ? { added: g.added | 0, removed: g.removed | 0, files: g.files | 0, behind: g.behind | 0, ahead: g.ahead | 0, unpushed: g.unpushed | 0 } : null;
   const fileNames = v => (Array.isArray(v) ? v.slice(0, 50).map(f => str(f, 300)).filter(Boolean) : []); // e.g. what would conflict with main
+  // Other sessions' pushed branches this checkout would conflict with (lane.js branchConflicts).
+  const branchClashes = v => (Array.isArray(v) ? v.slice(0, 10).map(c => ({ branch: str(c?.branch, 120), files: fileNames(c?.files) })).filter(c => c.branch && c.files.length) : []);
   const changedFiles = g => new Set(Array.isArray(g?.changed) ? g.changed.slice(0, MAX_CHANGED).map(f => str(f, 300)).filter(Boolean) : []);
   const size = (v, min, max, fallback) => Math.min(max, Math.max(min, v | 0 || fallback)); // terminal cols and rows
   function onLane(ws, user, team, hello) {
@@ -908,7 +915,7 @@ function startHub({ port = 7681, host = '0.0.0.0', dataDir, owners, tls, passIss
       mainBranch: str(hello.git?.mainBranch, 100),
       roots: (Array.isArray(hello.roots) ? hello.roots.slice(0, 4) : []).map(r => str(r, 1000)).filter(Boolean),
       cols: size(hello.cols, 20, 500, 120), rows: size(hello.rows, 5, 200, 36), open: !!hello.open, status: str(hello.cmd, 40) === 'claude' ? 'idle' : 'running', lastActive: new Date().toISOString(), startedAt: before?.startedAt || new Date().toISOString(), files: new Set(), changed: changedFiles(hello.git), local: changedFiles(hello.git?.local ? { changed: hello.git.local } : hello.git),
-      git: gitStats(hello.git), conflicts: fileNames(hello.git?.conflicts), history: typeof hello.history === 'string' ? hello.history.slice(-SCROLLBACK) : '', hookSecret: hello.hookSecret, ws };
+      git: gitStats(hello.git), conflicts: fileNames(hello.git?.conflicts), branchConflicts: branchClashes(hello.git?.branchConflicts), history: typeof hello.history === 'string' ? hello.history.slice(-SCROLLBACK) : '', hookSecret: hello.hookSecret, ws };
     // One per checkout: the same path on two of someone's Macs is two checkouts.
     lane.tree = crypto.createHash('sha256').update(`${lane.login}\n${str(hello.machine, 64)}\n${lane.root}`).digest('hex').slice(0, 12);
     // Back after a dropped connection: it's still doing what it was (its next hook or report updates it).
@@ -944,6 +951,7 @@ function startHub({ port = 7681, host = '0.0.0.0', dataDir, owners, tls, passIss
       } else if (m?.t === 'git') {
         lane.git = gitStats(m);
         lane.conflicts = fileNames(m.conflicts);
+        lane.branchConflicts = branchClashes(m.branchConflicts);
         lane.changed = changedFiles(m);
         lane.local = Array.isArray(m.local) ? changedFiles({ changed: m.local }) : lane.changed;
         lane.files = new Set([...lane.files].filter(f => lane.changed.has(f))); // edits since committed to main, or undone, no longer count

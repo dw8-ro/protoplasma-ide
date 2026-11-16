@@ -1302,12 +1302,16 @@ const diffStat = lanes => {
 // Commits a lane's branch is missing from its upstream.
 const behindChip = l => { const n = l.git?.behind | 0; return n ? `<span class="behind" title="${n} commit${n === 1 ? '' : 's'} behind. Pull before pushing.">↓${n}</span>` : ''; };
 // Files this checkout's commits would conflict in, if its branch were merged with main today (lane.js mainConflicts).
+// Other sessions' branches this checkout's commits would conflict with (lane.js branchConflicts), named by session.
+const branchClashes = lanes => { const by = new Map(); for (const l of lanes) for (const c of (Array.isArray(l.branchConflicts) ? l.branchConflicts : [])) by.set(c.branch, [...new Set([...(by.get(c.branch) || []), ...(Array.isArray(c.files) ? c.files : [])])]); return by; };
+const sessionOfBranch = branch => { const key = String(branch).replace(/^session\//, ''); const rec = sessionRecords.find(r => (r.key || slug(r.name)) === key); return rec ? rec.name : branch; };
+const crossChip = lanes => { const by = branchClashes(lanes), names = [...by.keys()].map(sessionOfBranch); return names.length ? `<span class="behind clash" title="Would conflict with ${esc(names.join(', '))} when both are merged. Agree who changes those files first.">Conflicts with ${names.length === 1 ? esc(names[0]) : `${names.length} sessions`}</span>` : ''; };
 const clashChip = files => { files = Array.isArray(files) ? files : []; const n = files.length; return n ? `<span class="behind clash" title="Would conflict with main in ${esc(files.slice(0, 8).join(', '))}${n > 8 ? ` and ${n - 8} more` : ''}. Merge main and settle them before a pull request.">${n} conflict${n === 1 ? '' : 's'} with main</span>` : ''; };
 const branchLine = lanes => {
   const names = [...new Set(lanes.map(l => l.branch).filter(Boolean))];
   const diff = diffStat(lanes);
   const behind = behindChip({ git: { behind: Math.max(0, ...lanes.map(l => l.git?.behind || 0)) } });
-  return names.length || diff ? `<div class="card-branch"><svg><use href="#branch"/></svg><span class="names" title="${esc(names.join(', '))}">${esc(names.join(', '))}</span>${behind}${clashChip([...new Set(lanes.flatMap(l => (Array.isArray(l.conflicts) ? l.conflicts : [])))])}${diff}</div>` : '';
+  return names.length || diff ? `<div class="card-branch"><svg><use href="#branch"/></svg><span class="names" title="${esc(names.join(', '))}">${esc(names.join(', '))}</span>${behind}${clashChip([...new Set(lanes.flatMap(l => (Array.isArray(l.conflicts) ? l.conflicts : [])))])}${crossChip(lanes)}${diff}</div>` : '';
 };
 const lastActive = lanes => {
   const at = lanes.map(l => l.lastActive).filter(Boolean).sort().pop();
@@ -1368,7 +1372,7 @@ function renderRoom(lanes) {
     // Whose agent and which CLI sit above the terminal, so the bar under it is only how it's doing and what you can do.
     setHTML(t.label, `${mine ? 'Me' : esc(l.name)}<span class="agent-name">${esc(agent)}</span>`);
     setHTML(t.bar, `<span class="state ${cls}"><span class="dot"></span>${esc(label)}</span>` +
-      `${diffStat([l])}${behindChip(l)}${clashChip(l.conflicts)}${l.branch ? `<span class="branch" title="${esc(l.branch)}">${esc(l.branch)}</span>` : ''}` +
+      `${diffStat([l])}${behindChip(l)}${clashChip(l.conflicts)}${crossChip([l])}${l.branch ? `<span class="branch" title="${esc(l.branch)}">${esc(l.branch)}</span>` : ''}` +
       (mine && l.typedBy && Date.now() - Date.parse(l.typedAt) < 10 * 60_000 ? `<span class="typed" title="${esc(l.typedBy)} typed into this agent">${esc(l.typedBy)} typed, ${ago(l.typedAt)}</span>` : '') +
       (mine && !l.open ? '' : `<span class="access" title="${access}">${access}</span>`) // your own agent that only you type into is the usual case: nothing to say
       + (mine ? `<button class="btn ghost small" data-handoff="${esc(l.id)}" title="Hand this work to a teammate">Hand off</button>`
@@ -1572,6 +1576,7 @@ function environment(inRoom, rec) {
     ahead ? row('Ahead of the default branch', `${ahead} commit${ahead === 1 ? '' : 's'}`) : '',
     unpushed ? row('Not pushed', `${unpushed} commit${unpushed === 1 ? '' : 's'}`) : '',
     clashing.length ? `<div class="panel-label">Would conflict with main</div><ul class="files">${clashing.map(f => `<li class="overlap" data-open-file="${esc(f)}" title="Open ${esc(f)}"><span class="path"><bdi>${esc(f)}</bdi></span></li>`).join('')}</ul>` : '',
+    [...branchClashes(mine.length ? mine : inRoom)].map(([branch, files]) => `<div class="panel-label">Would conflict with ${esc(sessionOfBranch(branch))}</div><ul class="files">${files.map(f => `<li class="overlap" data-open-file="${esc(f)}" title="Open ${esc(f)}"><span class="path"><bdi>${esc(f)}</bdi></span></li>`).join('')}</ul>`).join(''),
     fileList(inRoom, 8),
     github ? '<div class="panel-label">GitHub</div>' + row('Repository', esc(roomRepo), `data-url="${esc(github)}"`)
       + row('Pull requests', '', 'data-tab="pulls"') + row('Issues', '', 'data-tab="issues"')

@@ -230,6 +230,13 @@ test('a branch that would conflict with main is shown to the team, and its agent
   l.ws.send(JSON.stringify({ t: 'git', branch: 'session/x', mainBranch: 'main', added: 1, removed: 1, files: 1, behind: 0, ahead: 1, changed: ['a.ts'], conflicts: [] }));
   for (let i = 0; i < 50 && mine.conflicts.length; i++) mine = (await state()).lanes.find(x => x.id === l.id);
   assert.deepEqual(mine.conflicts, [], 'and it goes once they are settled');
+  // Another session's pushed branch: shown, and told to the agent, with junk entries dropped.
+  l.ws.send(JSON.stringify({ t: 'git', branch: 'session/x', mainBranch: 'main', added: 1, removed: 1, files: 1, behind: 0, ahead: 1, changed: ['a.ts'], conflicts: [],
+    branchConflicts: [{ branch: 'session/y', files: ['src/b.ts'] }, { branch: 'session/z', files: [] }, 'junk', { files: ['c.ts'] }] }));
+  for (let i = 0; i < 50 && !mine.branchConflicts?.length; i++) mine = (await state()).lanes.find(x => x.id === l.id);
+  assert.deepEqual(mine.branchConflicts, [{ branch: 'session/y', files: ['src/b.ts'] }]);
+  const told = (await hook(l.id, { hook_event_name: 'UserPromptSubmit', prompt: 'hi' })).hookSpecificOutput.additionalContext;
+  assert.match(told, /would conflict with the branch "session\/y" when both are merged \(from Protoplasma\), in: src\/b\.ts/);
   await closed(l.ws);
 });
 

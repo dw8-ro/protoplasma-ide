@@ -1,4 +1,4 @@
-# Handoff: Protoplasma IDE, 15 November 2026
+# Handoff: Protoplasma IDE, 16 November 2026
 
 Read this first in a new session, then [AGENTS.md](AGENTS.md) for how the code fits together. What the last sessions
 did: [docs/sessions/2026-10-29.md](docs/sessions/2026-10-29.md) (the second security audit),
@@ -16,6 +16,28 @@ shared.js changed) and a tag releases to installed copies: both are David's call
   (a minor version: `npm version minor`, not `npm run release`).
 - **Checks:** `npm test` 120 of 120. `npm run e2e` 144 of 144 on Electron 44.10.2 (some runs: one fewer, failing only "Comment on this points
   the next comment at those lines", which needs the window to have focus). The customer simulation: 91 of 91.
+
+**Added on 16 Nov** (commits `e13c3e5` and `915a9a4`, same branch, not pushed):
+- Plan and Memory open in the side panel (`panelTab` `plan`/`memory`, from their rows under Session), so the agents
+  stay on screen. Not looked at by eye: no screenshot was taken. David: open each once and say if it reads well.
+- A quiet agent whose folder stopped changing is asked for its git status every 15 s, not 5 (lane.js `SETTLED_MS`,
+  `SLOW`). A change made outside such an agent shows up to 15 s later.
+- Checks at `915a9a4`: `npm test` 120 of 120, `npm run e2e` 145 of 145 (one new check).
+- Not rerun: the customer simulation, since the Electron revert and since Plan and Memory moved.
+  `scripts/customer/s3.js` was changed for the new rows and has never been run in that form.
+- The README pictures and the demo gif are from before Plan and Memory moved.
+
+**Start here in a new session:**
+1. **The redesign is half done.** What's built is simpler structure and wording. There has been no visual pass (David
+   asked for sleeker and more modern; colours, spacing and type are as in 0.6.1), and the review page the plan asks
+   for was never made. Next: a review page (an artifact) with before and after for U2 (team picker), U4 (one
+   "beside"), U7 (a shorter bar under each terminal) and U10 (what to do about an overlap), plus a proposal for the
+   look, black and white. David marks it up; build after that.
+2. **Cheap, and needing no review:** rerun the customer simulation; make e2e's "Comment on this…" step focus the
+   window first, so it stops failing now and then; regenerate the pictures (`npm run screenshot`,
+   `npm run readme-art`, `npm run demo`).
+3. **Then:** conflicts with teammates' pushed branches (phase 5), the largest item left.
+4. Work inline and commit after each tested step. Two multi-agent workflows died on the usage limit and lost their work.
 
 What's in, by phase:
 1. **Status you can trust.** A question from the agent is Needs you (`ASK_TOOLS`); an interrupt is Idle and an answered

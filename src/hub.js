@@ -31,8 +31,10 @@ const MAX_CONTEXT_FILES = 15; // per teammate, in an agent's prompt context
 const STATE_REFRESH_MS = 30_000; // rebroadcast at least this often so "last active" times stay fresh
 const PASS_TTL_MS = 12 * 60 * 60_000; // how long a pass lasts; the app gets a new one well before then
 const MAX_HUB_PRINTS = 5; // hub certificates kept per person (one per Mac they host teams on), newest first
+const LOGIN_HELD_MS = 30 * 24 * 60 * 60_000; // how long a login whose person renamed stays theirs for hub registrations
 const MAX_LANES = 30; // live agents per person per team
-const MAX_LOOKUPS = 60; // a minute's GitHub checks of tokens the hub hasn't seen check out (made-up ones)
+const MAX_LOOKUPS = 300; // a minute's GitHub checks of tokens the hub hasn't seen check out (made-up ones), hub-wide
+const MAX_ADDRESS_LOOKUPS = 10; // the same, per client address, so one source can't use up everyone's
 const KNOWN_MS = 24 * 60 * 60_000; // how long a token that checked out skips that limit
 const GITHUB_TOKEN = /^(gh[opusr]_|github_pat_)\w{20,255}$|^[0-9a-f]{40}$/;
 const CLIENT_ID = 'Ov23likRClHQUA3jdHEW'; // Protoplasma's GitHub sign-in app: the same as githubClientId in app/config.json
@@ -86,13 +88,15 @@ function readPass(pass, key, aud, now = Date.now()) {
  * @param {number} [o.port] 0 picks a free port
  * @param {string} [o.dataDir] where teams are saved; omit to keep them in memory
  * @param {string[]} [o.owners] GitHub logins allowed to create teams; omit to let anyone signed in
+ * @param {string} [o.addressHeader] the header a proxy in front puts the client's address in (Railway: x-real-ip); omit
+ *   to use the connection's own address. Only set it behind a proxy that sets it, or anyone can claim any address.
  * @param {string} [o.clientId] the GitHub sign-in app whose tokens are accepted; omit to accept any GitHub token
  * @param {(token: string) => Promise<{login: string, name: string, avatar: string} | null>} [o.verifyUser]
  * @param {{key: Buffer|string, cert: Buffer|string}} [o.tls] serve https/wss with this certificate (a hub on someone's Mac)
  * @param {string} [o.passIssuer] the online hub whose passes this hub accepts (needs `tls`: a pass names the certificate)
  * @returns {Promise<{ port: number, close: () => Promise<void>, listenOn: (host: string) => Promise<void>, fingerprint?: string }>}
  */
-function startHub({ port = 7681, host = '0.0.0.0', dataDir, owners, tls, passIssuer, clientId, verifyUser = token => module.exports.githubUser(token, clientId) } = {}) {
+function startHub({ port = 7681, host = '0.0.0.0', dataDir, owners, tls, passIssuer, clientId, addressHeader, verifyUser = token => module.exports.githubUser(token, clientId) } = {}) {
   const same = (a, b) => String(a).toLowerCase() === String(b).toLowerCase();
   const send = (ws, msg) => ws.readyState === ws.OPEN && ws.send(JSON.stringify(msg));
   const parse = raw => { try { return JSON.parse(raw); } catch { return null; } };
@@ -178,6 +182,23 @@ function startHub({ port = 7681, host = '0.0.0.0', dataDir, owners, tls, passIss
     return session;
   }
 
+  // ---- Who may create teams ----
+  // `owners` names logins, but a login can be renamed and then taken by someone else, so each one's GitHub id is recorded
+  // the first time it creates a team (owners.json) and the login under another id is refused after that.
+  const ownersFile = dataDir && path.join(dataDir, 'owners.json');
+  let ownerIds = {}; // login (lower case) -> GitHub id
+  try { const read = ownersFile && fs.existsSync(ownersFile) ? JSON.parse(fs.readFileSync(ownersFile, 'utf8')) : {}; ownerIds = idsOf(read); } catch {}
+  function isOwner(user) {
+    const login = owners.find(o => same(o, user.login))?.toLowerCase();
+    if (!login) return false;
+    if (Object.hasOwn(ownerIds, login)) return ownerIds[login] === user.id;
+    if (user.id != null) {
+      ownerIds[login] = user.id;
+      if (ownersFile) try { fs.writeFileSync(`${ownersFile}.tmp`, JSON.stringify(ownerIds)); fs.renameSync(`${ownersFile}.tmp`, ownersFile); } catch (e) { console.error(`Couldn't save owners: ${e.message}`); }
+    }
+    return true;
+  }
+
   // ---- Passes: checking them (a hub on someone's Mac) ----
   const ownPrint = tls && fingerprint(new crypto.X509Certificate(tls.cert).raw);
   // The issuer's public key, fetched when first needed, and again (at most once a minute) when a pass doesn't check out
@@ -203,11 +224,18 @@ function startHub({ port = 7681, host = '0.0.0.0', dataDir, owners, tls, passIss
   // Each person's app registers the certificate of the hub it runs (POST /hubs). A pass is only issued for a registered
   // hub, and the app asking for it learns whose hub that is, so a look-alike on the network can't pass itself off as a
   // teammate's.
+  // Each login's entry is pinned to the GitHub id that registered it: someone who takes a login after its person renamed
+  // can't register a hub under it (and so get passes naming it) until LOGIN_HELD_MS after that person last used it.
   const hubsFile = dataDir && path.join(dataDir, 'hubs.json');
-  let hubPrints = {}; // login (lower case) -> certificate fingerprints, newest first
+  let hubPrints = {}; // login (lower case) -> { id, prints: certificate fingerprints, newest first, at: last registered }
   try {
     const read = hubsFile && fs.existsSync(hubsFile) ? JSON.parse(fs.readFileSync(hubsFile, 'utf8')) : {};
-    if (read && typeof read === 'object' && Object.values(read).every(v => Array.isArray(v) && v.every(p => typeof p === 'string'))) hubPrints = read;
+    if (read && typeof read === 'object' && !Array.isArray(read)) {
+      for (const [login, v] of Object.entries(read)) {
+        const entry = Array.isArray(v) ? { id: null, prints: v, at: 0 } : v; // before ids: a list of prints
+        if (entry && Array.isArray(entry.prints) && entry.prints.every(p => typeof p === 'string')) hubPrints[login] = { id: Number.isSafeInteger(entry.id) ? entry.id : null, prints: entry.prints, at: +entry.at || 0 };
+      }
+    }
   } catch {} // a damaged file only means owners register their hubs again, which their apps do on their own
   const saveHubs = () => {
     if (!hubsFile) return;
@@ -229,12 +257,13 @@ function startHub({ port = 7681, host = '0.0.0.0', dataDir, owners, tls, passIss
   // ---- Identity (GitHub tokens and passes, cached by hash) ----
   const identities = new Map(); // sha256(token) -> { user, expires }; a rejected token is remembered briefly too
   const lookups = new Map();    // sha256(token) -> the GitHub lookup under way, shared by everyone presenting it
-  // Every new GitHub-shaped token is a request to GitHub, so made-up ones could make the hub hammer it. At most
-  // MAX_LOOKUPS a minute are made for tokens that haven't checked out before; past that they're answered like a GitHub
-  // outage (try again soon). Tokens that checked out in the last day skip the budget, across restarts too (their hashes
-  // are kept in known.json), and no address is trusted, so none can be forged.
-  // ponytail: one budget for the whole hub, so during a flood new sign-ins (and anyone away for a day) wait; per-address
-  // budgets (X-Real-IP behind Railway) if that happens.
+  // Every new GitHub-shaped token is a request to GitHub, so made-up ones could make the hub hammer it. Tokens that
+  // haven't checked out before get MAX_ADDRESS_LOOKUPS checks a minute per client address, and MAX_LOOKUPS for the whole
+  // hub; past either they're answered like a GitHub outage (try again soon). So one source sending made-up tokens only
+  // holds itself up. Tokens that checked out in the last day skip both budgets, across restarts too (their hashes are
+  // kept in known.json).
+  // ponytail: an attacker with many addresses (or, behind a proxy that passes on a client's own X-Real-IP, made-up ones)
+  // still reaches the hub-wide budget, and then new sign-ins wait; a proof-of-work or a sign-in queue if that happens.
   const knownFile = dataDir && path.join(dataDir, 'known.json');
   let known; // sha256(token) -> until when it skips the budget
   try { known = new Map(Object.entries(knownFile && fs.existsSync(knownFile) ? JSON.parse(fs.readFileSync(knownFile, 'utf8')) : {}).filter(([, until]) => until > Date.now())); } catch { known = new Map(); }
@@ -246,13 +275,18 @@ function startHub({ port = 7681, host = '0.0.0.0', dataDir, owners, tls, passIss
     } catch (e) { console.error(`Couldn't save known sign-ins: ${e.message}`); }
   };
   let asked = { n: 0, since: 0 };
-  async function identify(token) {
+  const askedBy = new Map(); // client address -> { n, since }: this minute's checks of unseen tokens from there
+  const addressOf = req => (addressHeader && str(req.headers[addressHeader], 100).split(',')[0].trim()) || req.socket.remoteAddress || '';
+  async function identify(token, from = '') {
     if (typeof token !== 'string' || !token || token.length > 2000) return null;
     const key = crypto.createHash('sha256').update(token).digest('hex');
     const hit = identities.get(key);
     if (hit?.expires > Date.now()) return hit.user;
     if (!lookups.has(key)) {
       if (GITHUB_TOKEN.test(token) && !(known.get(key) > Date.now())) { // counted before the wait, so parallel ones count too
+        let mine = askedBy.get(from);
+        if (!mine || Date.now() - mine.since > 60_000) askedBy.set(from, mine = { n: 0, since: Date.now() });
+        if (++mine.n > MAX_ADDRESS_LOOKUPS) throw new Error('Too many new sign-ins from one address.'); // not counted hub-wide
         if (Date.now() - asked.since > 60_000) asked = { n: 0, since: Date.now() };
         if (++asked.n > MAX_LOOKUPS) throw new Error('Too many new sign-ins at once.');
       }
@@ -595,7 +629,7 @@ function startHub({ port = 7681, host = '0.0.0.0', dataDir, owners, tls, passIss
       return json(200, { key: crypto.createPublicKey(issuingKey()).export({ type: 'spki', format: 'der' }).toString('base64url') });
     }
     if (!(tls ? ['teams'] : ['teams', 'passes', 'hubs']).includes(resource)) return json(404, { error: 'Not found.' });
-    const user = await identify(bearer(req)).catch(e => { throw Object.assign(e, { github: true }); });
+    const user = await identify(bearer(req), addressOf(req)).catch(e => { throw Object.assign(e, { github: true }); });
     if (!user) return json(401, { error: 'Sign in with GitHub first.' });
     const raw = req.method === 'POST' ? await readBody(req, MAX_API_BODY) : '';
     const body = raw.trim() ? parse(raw) : {};
@@ -607,12 +641,19 @@ function startHub({ port = 7681, host = '0.0.0.0', dataDir, owners, tls, passIss
       const print = str(resource === 'hubs' ? body.fp : body.aud, 100);
       if (!/^[\w-]{43}$/.test(print)) return json(400, { error: 'That isn\'t a hub certificate fingerprint.' });
       if (resource === 'hubs') {
-        const login = user.login.toLowerCase();
-        hubPrints[login] = [print, ...(Object.hasOwn(hubPrints, login) ? hubPrints[login] : []).filter(p => p !== print)].slice(0, MAX_HUB_PRINTS);
+        const login = user.login.toLowerCase(), now = Date.now();
+        const was = Object.hasOwn(hubPrints, login) ? hubPrints[login] : null;
+        if (was?.id != null && was.id !== user.id && now - was.at < LOGIN_HELD_MS) {
+          return json(409, { error: 'This GitHub login belonged to someone else recently, so a hub can\'t be registered under it yet.' });
+        }
+        // Their entry under a login they've since renamed from stays, empty, to hold that login for them a while.
+        for (const [other, e] of Object.entries(hubPrints)) if (other !== login && e.id != null && e.id === user.id && e.prints.length) hubPrints[other] = { ...e, prints: [], at: now };
+        const kept = was?.id === (user.id ?? null) ? was.prints : []; // an entry from before ids isn't carried to whoever registers now
+        hubPrints[login] = { id: user.id ?? null, prints: [print, ...kept.filter(p => p !== print)].slice(0, MAX_HUB_PRINTS), at: now };
         saveHubs();
         return json(200, {});
       }
-      const hubOwners = Object.keys(hubPrints).filter(login => hubPrints[login].includes(print));
+      const hubOwners = Object.keys(hubPrints).filter(login => hubPrints[login].prints.includes(print));
       if (!hubOwners.length) return json(404, { error: 'That Mac\'s hub isn\'t registered with the online hub yet. Its owner\'s Protoplasma registers it when it\'s open and online.' });
       const expires = Date.now() + PASS_TTL_MS;
       return json(200, { pass: signPass(user, print, issuingKey(), expires), owners: hubOwners, expires });
@@ -620,7 +661,7 @@ function startHub({ port = 7681, host = '0.0.0.0', dataDir, owners, tls, passIss
 
     if (!id && req.method === 'GET') return json(200, [...teams.values()].filter(t => onTeam(t, user)).map(teamView));
     if (!id && req.method === 'POST') {
-      if (owners && !owners.some(o => same(o, user.login))) return json(403, { error: 'This hub only lets its owners create teams.' });
+      if (owners && !isOwner(user)) return json(403, { error: 'This hub only lets its owners create teams.' });
       const name = str(body.name, 60).trim();
       if (!name) return json(400, { error: 'Give the team a name.' });
       const team = { id: crypto.randomBytes(6).toString('base64url'), name, owner: user.login, members: [], memories: [], sessions: [],
@@ -985,7 +1026,7 @@ function startHub({ port = 7681, host = '0.0.0.0', dataDir, owners, tls, passIss
   // The first message carries the token and team. Messages that arrive while it's being verified are queued and replayed.
   // Too much sent before then closes the socket (1013, so an agent reconnects and resends its screen in its hello)
   // rather than dropping some of it.
-  function authenticate(ws, role) {
+  function authenticate(ws, role, from) {
     const early = [];
     let first = true, earlyBytes = 0, checking = false;
     const timer = setTimeout(() => ws.close(checking ? 1013 : 4001, checking ? 'GitHub is slow to answer. Trying again.' : 'Sign-in timed out.'), 10_000);
@@ -999,7 +1040,7 @@ function startHub({ port = 7681, host = '0.0.0.0', dataDir, owners, tls, passIss
       checking = true;
       try {
         const m = parse(raw);
-        const user = await identify(m?.token).catch(() => undefined);
+        const user = await identify(m?.token, from).catch(() => undefined);
         const team = teams.get(m?.team);
         clearTimeout(timer);
         ws.off('message', gate);
@@ -1027,7 +1068,7 @@ function startHub({ port = 7681, host = '0.0.0.0', dataDir, owners, tls, passIss
       ws.on('error', () => {}); // an oversized or malformed frame closes that socket (ws does), and only that socket
       ws.alive = true;
       ws.on('pong', () => { ws.alive = true; });
-      authenticate(ws, role);
+      authenticate(ws, role, addressOf(req));
     });
   });
 
@@ -1039,6 +1080,7 @@ function startHub({ port = 7681, host = '0.0.0.0', dataDir, owners, tls, passIss
     }
     for (const [key, id] of identities) if (id.expires < Date.now()) identities.delete(key);
     for (const [key, until] of known) if (until < Date.now()) known.delete(key);
+    for (const [at, a] of askedBy) if (Date.now() - a.since > 60_000) askedBy.delete(at);
   }, HEARTBEAT_MS).unref();
 
   const close = () => new Promise(resolve => {
@@ -1066,11 +1108,13 @@ function startHub({ port = 7681, host = '0.0.0.0', dataDir, owners, tls, passIss
 module.exports = { startHub, githubUser, signPass, readPass };
 
 // Standalone: PORT, DATA_DIR, PROTO_OWNERS (comma-separated GitHub logins allowed to create teams), PROTO_CLIENT_ID (the
-// GitHub sign-in app whose tokens are accepted: Protoplasma's unless set; blank accepts any GitHub token).
+// GitHub sign-in app whose tokens are accepted: Protoplasma's unless set; blank accepts any GitHub token),
+// PROTO_ADDRESS_HEADER (where a proxy in front puts the client's address: x-real-ip on Railway, where it's the default).
 if (require.main === module) {
   const owners = process.env.PROTO_OWNERS?.split(',').map(s => s.trim()).filter(Boolean);
   startHub({ port: +process.env.PORT || 7681, host: process.env.HOST, dataDir: process.env.DATA_DIR, owners: owners?.length ? owners : undefined,
-    clientId: process.env.PROTO_CLIENT_ID ?? CLIENT_ID })
+    clientId: process.env.PROTO_CLIENT_ID ?? CLIENT_ID,
+    addressHeader: process.env.PROTO_ADDRESS_HEADER ?? (process.env.RAILWAY_ENVIRONMENT ? 'x-real-ip' : undefined) })
     .then(({ port }) => {
       console.log(`Protoplasma hub on port ${port}${owners?.length ? `, teams created by ${owners.join(', ')}` : ''}`);
       if (!process.env.DATA_DIR) console.log('No DATA_DIR set: teams are kept in memory only and are lost when the hub restarts.');

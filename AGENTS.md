@@ -19,7 +19,7 @@ Function names below are stable. Line numbers drift, so search by name.
 |---|---|---|
 | `npm install` | Installs dependencies (postinstall makes node-pty's `spawn-helper` executable) | Node 24 |
 | `npm start` | Runs the app from source. Updates are off in source runs. | |
-| `npm test` | 107 integration tests in `test/*.test.js`: real hub, real lanes, real git. About a minute. | git ≥ 2.28, macOS. No network or Electron needed. |
+| `npm test` | 109 integration tests in `test/*.test.js`: real hub, real lanes, real git. About a minute. | git ≥ 2.28, macOS. No network or Electron needed. |
 | `npm run e2e` | Drives the real Electron app through every main flow and prints `PASS`/`FAIL` per step, ending with `N/M passed`. 15-minute cap. | The `claude` CLI on the login-shell PATH and a GUI session. One step needs `gh auth status` to succeed (online). |
 | `npm run dist` | Packages `dist.noindex/Protoplasma-darwin-arm64/Protoplasma.app`, unsigned. | |
 | `npm run playground` | Two app copies (David on port 7801, Max on 7802) on a local hub and repo, each with an HTTP control API | |
@@ -66,7 +66,7 @@ app/config.json   githubClientId (OAuth app, device flow), onlineHub (the Railwa
 scripts/          e2e.js, playground.js + playground-app.js, stage.js, screenshot.js, demo.js + gif.js, readme-art.js +
                   readme-art/ (the README image pages and diagram), sign.sh, icon.js
 test/             hub.test.js (44), hub-live.test.js (13), workspace.test.js (13), files.test.js (13), lan.test.js (13),
-                  identity.test.js (5), updates.test.js (6)
+                  identity.test.js (7), updates.test.js (6)
 .github/workflows ci.yml (npm test on every push to main and PR), package.yml (dist check), release.yml (tag → release)
 Dockerfile        the hosted hub image (only src/hub.js + src/shared.js + ws)
 install.sh        the one-line installer
@@ -109,7 +109,8 @@ docs/             screenshots (sources), readme/ (the README's images, dark and 
 ### The hub (`src/hub.js`)
 - **The server:** `startHub({port, host, dataDir, owners, verifyUser, tls, passIssuer})` → `{port, close, listenOn, fingerprint}`.
   The default host is `0.0.0.0`. With `tls` (`{key, cert}`) it serves https/wss; `fingerprint` is that certificate's.
-  - `owners` lists the logins allowed to create teams. Leave it out to let anyone create them; an empty array lets
+  - `owners` lists the logins allowed to create teams; each one's GitHub id is recorded at its first team
+    (`owners.json`, `isOwner`), and the login under another id is refused after that. Leave it out to let anyone create them; an empty array lets
     nobody. The standalone entry point turns a blank `PROTO_OWNERS` into "left out".
   - The default `verifyUser` calls `module.exports.githubUser` late on purpose: scripts swap it for fake identities.
 - **State:**
@@ -124,10 +125,11 @@ docs/             screenshots (sources), readme/ (the README's images, dark and 
     so they can keep comparing logins. Invites carry the id the app got from GitHub (`findUser`).
 - **Sign-in:** `identify` caches a good token for 2 minutes and a rejected one for 10 s, keyed by its sha256.
   Concurrent lookups share one request. GitHub-shaped tokens the hub hasn't seen check out get a hub-wide budget of
-  `MAX_LOOKUPS` (60) GitHub checks a minute, counted before the wait; past it they get 503/1013. Tokens that checked
+  `MAX_LOOKUPS` (300) GitHub checks a minute, counted before the wait, and each client address `MAX_ADDRESS_LOOKUPS` (10)
+  (`askedBy`; the address comes from `addressHeader`, `X-Real-IP` on Railway, else the socket); past either they get
+  503/1013, so one source only holds itself up. Tokens that checked
   out in the last day (`known`, hashes kept in `known.json` so a restart or redeploy doesn't forget them) skip the
-  budget. No client address is trusted. During a flood, new sign-ins (and anyone away for over a day) wait (ponytail:
-  per-address budgets if that happens). A GitHub outage is never cached: REST answers 503 and a WebSocket closes with
+  budgets. Only a flood from many addresses makes everyone's new sign-ins wait. A GitHub outage is never cached: REST answers 503 and a WebSocket closes with
   1013. `githubUser` returns null without asking GitHub for anything not shaped like a GitHub token (`gh?_…`,
   `github_pat_…` or 40 hex characters).
 - **WebSockets:** the first frame carries `{token, team}`, and `authenticate` checks it. Frames sent while it's checked
@@ -210,7 +212,8 @@ docs/             screenshots (sources), readme/ (the README's images, dark and 
 - **Stopped agents** keep `prompt`, `touched` (`filesOf`) and `local` (not pushed) for **Continue**; `stoppedViews()`
   sends them.
 - **Standalone and Docker:** the env vars are `PORT`, `HOST`, `DATA_DIR`, `PROTO_OWNERS` (comma-separated; blank means
-  anyone) and `PROTO_CLIENT_ID` (the GitHub sign-in app whose tokens are accepted: Protoplasma's unless set; blank
+  anyone), `PROTO_ADDRESS_HEADER` (where a proxy puts the client's address; `x-real-ip` by default on Railway) and
+  `PROTO_CLIENT_ID` (the GitHub sign-in app whose tokens are accepted: Protoplasma's unless set; blank
   accepts any GitHub token, for a hub of your own). The Dockerfile copies only `src/hub.js` and `src/shared.js` and installs only `ws`.
 
 - **Passes:** how someone signs in to a hub on another Mac without handing it their GitHub token.
@@ -218,7 +221,8 @@ docs/             screenshots (sources), readme/ (the README's images, dark and 
     the hub certificate's `fingerprint` (shared.js: sha256 of the DER, base64url), and `exp` is 12 hours on
     (`PASS_TTL_MS`).
   - Issuing (the online hub, so only without `tls`): `POST /hubs {fp}` records a certificate under the caller's login
-    (`hubs.json`, at most 5 per login). `POST /passes {aud}` signs a pass for the caller only if someone registered
+    (`hubs.json`, at most 5 per login), pinned to their GitHub id: after a rename, the old login stays theirs for 30 days
+    (`LOGIN_HELD_MS`) and anyone else registering under it gets 409. `POST /passes {aud}` signs a pass for the caller only if someone registered
     `aud`, and answers `{pass, owners, expires}`. `GET /passes/key` is the public key (SPKI DER, base64url). The private
     key is `pass-key.pem` in `dataDir`, made on first use.
   - Checking (a hub with `tls` and `passIssuer`): `identify` sends tokens starting `p1.` to `passUser`, which checks the

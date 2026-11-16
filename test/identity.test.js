@@ -17,21 +17,23 @@ const people = {
   'tok-fakecarol': { login: 'carol', id: 5 },
   'tok-constructor': { login: 'constructor', id: 6 }, // a login that's also a property every JavaScript object has
   [`ghp_${'d'.repeat(36)}`]: { login: 'dana', id: 7 }, // shaped like a real GitHub token, so the sign-in budget applies
+  [`ghp_${'f'.repeat(36)}`]: { login: 'fay', id: 9 }, // the same, signing in for the first time during a flood
 };
+const FAY = `ghp_${'f'.repeat(36)}`;
 const DANA = `ghp_${'d'.repeat(36)}`;
 const asked = []; // tokens the hub asked "GitHub" about
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'protoplasma-identity-'));
 // A team saved before ids were kept: Carol is on it by login only.
 fs.writeFileSync(path.join(tmp, 'teams.json'), JSON.stringify([{ id: 'old', name: 'Old', owner: 'alice', members: ['carol'], memories: [], sessions: [] }]));
 let hub, url;
-const api = async (token, method, route, body) => {
-  const res = await fetch(`${url}${route}`, { method, headers: { authorization: `Bearer ${token}` }, body: body && JSON.stringify(body) });
+const api = async (token, method, route, body, from = '10.0.0.1') => {
+  const res = await fetch(`${url}${route}`, { method, headers: { authorization: `Bearer ${token}`, 'x-real-ip': from }, body: body && JSON.stringify(body) });
   return { status: res.status, body: await res.json().catch(() => null) };
 };
 const names = async token => (await api(token, 'GET', '/teams')).body.map(t => t.name);
 
 const start = async () => {
-  hub = await startHub({ port: 0, host: '127.0.0.1', dataDir: tmp,
+  hub = await startHub({ port: 0, host: '127.0.0.1', dataDir: tmp, addressHeader: 'x-real-ip',
     verifyUser: async token => { asked.push(token); return people[token] ? { ...people[token], name: people[token].login, avatar: '' } : null; } });
   url = `http://127.0.0.1:${hub.port}`;
 };
@@ -75,23 +77,54 @@ test('a login that is also a JavaScript property name is a person like any other
   assert.equal((await api('tok-constructor', 'POST', '/hubs', { fp: 'c'.repeat(43) })).status, 200);
 });
 
+test('a hub on a Mac stays registered to the person, not the login, when someone takes their old login', async () => {
+  const fp = c => c.repeat(43);
+  assert.equal((await api('tok-bob', 'POST', '/hubs', { fp: fp('a') })).status, 200);
+  assert.deepEqual((await api('tok-carol', 'POST', '/passes', { aud: fp('a') })).body.owners, ['bob']);
+  assert.equal((await api('tok-bobby', 'POST', '/hubs', { fp: fp('b') })).status, 200, 'Bob, renamed, registers again');
+  assert.equal((await api('tok-newbob', 'POST', '/hubs', { fp: fp('n') })).status, 409, 'the new holder of "bob" can\'t, for now');
+  assert.equal((await api('tok-carol', 'POST', '/passes', { aud: fp('n') })).status, 404, 'so no pass names "bob" for their hub');
+  assert.equal((await api('tok-carol', 'POST', '/passes', { aud: fp('a') })).status, 404, 'Bob\'s old registration went with his old login');
+  assert.deepEqual((await api('tok-carol', 'POST', '/passes', { aud: fp('b') })).body.owners, ['bobby']);
+});
+
+test('a hub\'s owners are the people who first created teams under those logins, not whoever holds them later', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'protoplasma-owners-'));
+  const other = await startHub({ port: 0, host: '127.0.0.1', dataDir: dir, owners: ['bob'], verifyUser: async t => people[t] && { ...people[t], name: people[t].login, avatar: '' } });
+  const create = async token => (await fetch(`http://127.0.0.1:${other.port}/teams`, { method: 'POST', headers: { authorization: `Bearer ${token}` }, body: '{"name":"T"}' })).status;
+  try {
+    assert.equal(await create('tok-bob'), 201);
+    assert.equal(await create('tok-newbob'), 403, 'the same login with another id');
+    assert.equal(await create('tok-carol'), 403, 'not an owner at all');
+    assert.deepEqual(JSON.parse(fs.readFileSync(path.join(dir, 'owners.json'), 'utf8')), { bob: 2 });
+  } finally { await other.close(); fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
 // Last: it uses up this hub's budget of new GitHub checks for a minute.
-test('made-up GitHub tokens get at most a minute\'s budget of GitHub checks, sent at once or not', async () => {
+test('made-up GitHub tokens only hold up the address sending them, and the hub has a budget for all of them', async () => {
   assert.equal((await api(DANA, 'GET', '/teams')).status, 200, 'Dana signs in before the flood');
   for (let i = 0; i < 70; i++) assert.equal((await api(`tok-junk-${i}`, 'GET', '/teams')).status, 401, 'not shaped like a token: free, not counted');
-  const before = asked.length;
   const madeUp = i => `ghp_${String(i).padStart(36, '0')}`;
-  const answers = await Promise.all(Array.from({ length: 80 }, (_, i) => api(madeUp(i), 'GET', '/teams'))); // all in parallel
-  assert.equal(answers.filter(a => a.status === 401).length, 59, 'the rest of the minute\'s 60 (Dana\'s used one)');
-  assert.equal(answers.filter(a => a.status === 503).length, 21, 'the others are told to try again');
-  assert.equal(asked.length - before, 59, 'GitHub was asked 59 times, not 80');
+  let before = asked.length;
+  const answers = await Promise.all(Array.from({ length: 80 }, (_, i) => api(madeUp(i), 'GET', '/teams', undefined, '6.6.6.6'))); // all at once
+  assert.equal(answers.filter(a => a.status === 401).length, 10, 'one address gets 10 checks a minute');
+  assert.equal(answers.filter(a => a.status === 503).length, 70, 'the others are told to try again');
+  assert.equal(asked.length - before, 10, 'GitHub was asked 10 times, not 80');
+  assert.equal((await api(FAY, 'GET', '/teams', undefined, '7.7.7.7')).status, 200, 'a newcomer elsewhere still signs in');
   assert.deepEqual(await names('tok-alice'), ['Old', 'Lobby', 'Props'], 'a sign-in already checked still works');
+  // From many addresses, the hub-wide budget (300 a minute; Dana, Fay and the flood used 12) still caps what GitHub is asked.
+  before = asked.length;
+  for (let n = 0; n < 300; n += 50) { // in batches: hundreds of sockets at once is the test's problem, not the hub's
+    await Promise.all(Array.from({ length: 50 }, (_, i) => api(madeUp(1000 + n + i), 'GET', '/teams', undefined, `10.1.${(n + i) >> 3}.${(n + i) & 7}`)));
+  }
+  assert.equal(asked.length - before, 288);
+  assert.equal((await api(madeUp(5000), 'GET', '/teams', undefined, '8.8.8.8')).status, 503, 'the hub-wide budget is used up');
   // After a restart (a redeploy) during the flood, someone who signed in within the day still isn't held up.
   await hub.close();
   await start();
-  await Promise.all(Array.from({ length: 61 }, (_, i) => api(madeUp(100 + i), 'GET', '/teams')));
-  assert.equal((await api(madeUp(200), 'GET', '/teams')).status, 503, 'the budget is used up again');
-  assert.equal((await api(DANA, 'GET', '/teams')).status, 200);
+  await Promise.all(Array.from({ length: 11 }, (_, i) => api(madeUp(100 + i), 'GET', '/teams', undefined, '6.6.6.6')));
+  assert.equal((await api(madeUp(200), 'GET', '/teams', undefined, '6.6.6.6')).status, 503, 'that address is held up again');
+  assert.equal((await api(DANA, 'GET', '/teams', undefined, '6.6.6.6')).status, 200, 'even from there');
 });
 
 test('only a token Protoplasma\'s own GitHub app issued signs someone in', async () => {

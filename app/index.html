@@ -20,6 +20,8 @@
     --needs: #f2b35b;
     --overlap: #f07a8b;
     --lane: #141416;
+    --fill: rgba(255, 255, 255, .06); /* soft buttons and hovers: see-through, so they sit the same on the canvas, the sheet and a card */
+    --fill-hover: rgba(255, 255, 255, .1);
     --primary: #f4f4f5;
     --primary-hover: #ffffff;
     --primary-text: #0b0b0c;
@@ -43,6 +45,8 @@
     --needs: #93600f;
     --overlap: #b8344c;
     --lane: #ffffff;
+    --fill: rgba(0, 0, 0, .05);
+    --fill-hover: rgba(0, 0, 0, .08);
     --primary: #17171a;
     --primary-hover: #000000;
     --primary-text: #ffffff;
@@ -68,15 +72,15 @@
   /* Controls */
   .btn {
     display: inline-flex; align-items: center; justify-content: center; gap: 8px;
-    height: 32px; padding: 0 14px; border-radius: 8px; border: 1px solid var(--line-strong);
-    background: var(--raised); font-weight: 500; cursor: pointer; white-space: nowrap; transition: border-color .15s, background-color .15s;
+    height: 32px; padding: 0 14px; border-radius: 8px; border: 1px solid transparent;
+    background: var(--fill); font-weight: 500; cursor: pointer; white-space: nowrap; transition: background-color .12s, color .12s;
   }
-  .btn:hover { border-color: var(--faint); }
+  .btn:hover:not(:disabled) { background: var(--fill-hover); }
   .btn:disabled { opacity: .5; cursor: default; }
   .btn.primary { background: var(--primary); color: var(--primary-text); border-color: var(--primary); }
   .btn.primary:hover:not(:disabled) { background: var(--primary-hover); }
   .btn.ghost { background: transparent; border-color: transparent; color: var(--muted); }
-  .btn.ghost:hover { color: var(--text); background: var(--raised); }
+  .btn.ghost:hover:not(:disabled) { color: var(--text); background: var(--fill-hover); }
   .btn.small { height: 26px; padding: 0 10px; font-size: 12px; border-radius: 7px; }
   .btn.wide { width: 100%; height: 40px; font-size: 14px; }
   .btn svg { width: 16px; height: 16px; }
@@ -135,9 +139,9 @@
   .mark { width: 18px; height: 18px; color: var(--text); }
   .team-switch {
     display: flex; align-items: center; gap: 8px; height: 30px; padding: 0 10px 0 12px; border-radius: 8px;
-    background: var(--surface); border: 1px solid var(--line); cursor: pointer; font-weight: 500;
+    background: none; border: 0; cursor: pointer; font-weight: 500; transition: background-color .12s;
   }
-  .team-switch:hover { border-color: var(--line-strong); }
+  .team-switch:hover { background: var(--fill); }
   .team-switch svg { width: 12px; height: 12px; color: var(--faint); }
   .conn { margin-left: auto; display: flex; align-items: center; gap: 7px; color: var(--muted); font-size: 12px; }
   .conn .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--faint); }
@@ -152,9 +156,10 @@
   .side-link, .ws, .ws-session {
     display: flex; align-items: center; gap: 9px; width: 100%; height: 30px; padding: 0 9px; border: 0; border-radius: 7px;
     background: none; color: var(--muted); text-align: left; cursor: pointer; font-weight: 500; white-space: nowrap;
+    transition: background-color .12s, color .12s;
   }
   .side-link svg, .ws svg { flex: none; width: 15px; height: 15px; }
-  .side-link:hover, .ws:hover, .ws-session:hover { color: var(--text); }
+  .side-link:hover, .ws:hover, .ws-session:hover { color: var(--text); background: var(--fill); }
   .side-link.on, .ws.on, .ws-session.on { background: var(--raised); color: var(--text); }
   .side-label { display: flex; align-items: center; justify-content: space-between; padding: 18px 4px 6px 9px; color: var(--faint); font-size: 12px; }
   .icon-btn.small { width: 22px; height: 22px; border-radius: 6px; }
@@ -188,10 +193,10 @@
   body.sidebar-hidden .main { margin-left: 8px; }
   .page { flex: 1; min-height: 0; overflow: auto; padding: 22px 28px 28px; }
   .page-head { display: flex; align-items: center; gap: 10px; margin-bottom: 18px; }
-  .page-head h1 { font-size: 18px; font-weight: 600; letter-spacing: -0.015em; }
+  .page-head h1 { font-size: 20px; font-weight: 600; letter-spacing: -0.02em; }
   .page-head .spacer { margin-left: auto; }
-  .page-head input { height: 30px; border-radius: 8px; border: 1px solid var(--line); background: var(--surface); color: var(--muted); padding: 0 10px; font: inherit; }
-  .page-head select { height: 30px; border-color: var(--line); background-color: var(--surface); color: var(--muted); }
+  .page-head input { height: 30px; border-radius: 8px; border: 1px solid transparent; background: var(--fill); color: var(--muted); padding: 0 10px; font: inherit; }
+  .page-head select { height: 30px; border-color: transparent; background-color: var(--fill); color: var(--muted); }
   .page-head input { width: 190px; }
   .chip { display: inline-flex; align-items: center; gap: 8px; height: 26px; max-width: 100%; padding: 0 6px 0 10px; border-radius: 7px; background: var(--surface); border: 1px solid var(--line); color: var(--muted); font: 12px var(--mono); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .chip button { border: 0; background: none; color: var(--faint); cursor: pointer; padding: 0 4px; font: inherit; }
@@ -255,12 +260,15 @@
   .alerts { display: grid; gap: 6px; margin: 10px 0 0; }
   .alerts:empty { display: none; }
   .alert {
-    display: grid; gap: 2px; padding: 10px 12px; border-radius: 10px; cursor: pointer; text-align: left; font-size: 12px;
-    color: var(--needs); background: color-mix(in srgb, currentColor 9%, transparent); border: 1px solid color-mix(in srgb, currentColor 26%, transparent);
+    display: grid; gap: 2px; padding: 9px 12px; border-radius: 10px; cursor: pointer; text-align: left; font-size: 12px;
+    --c: var(--needs); border: 0; background: var(--fill); transition: background-color .12s;
   }
-  .alert.overlap { color: var(--overlap); }
-  .alert b { color: var(--text); font-weight: 600; }
-  .alert span { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .alert:hover { background: var(--fill-hover); }
+  .alert.overlap { --c: var(--overlap); }
+  /* The status colour is only in a dot: a tinted, outlined box was the loudest thing in the window. */
+  .alert b { display: flex; align-items: center; gap: 8px; color: var(--text); font-weight: 600; }
+  .alert b::before { content: ''; flex: none; width: 6px; height: 6px; border-radius: 50%; background: var(--c); }
+  .alert span { padding-left: 14px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
   /* Session view: one agent at a time (or two side by side), with the session panel on the right */
   .room { flex: 1; display: flex; flex-direction: column; min-width: 0; min-height: 0; }
@@ -275,9 +283,10 @@
   .stage { flex: 1; min-width: 0; min-height: 0; display: flex; flex-direction: column; }
   .back-bar { display: flex; align-items: center; gap: 10px; padding: 12px 20px 10px; }
   .back-bar b { font-weight: 600; }
-  .lanes { flex: 1; min-height: 0; display: flex; gap: 12px; padding: 14px; overflow: auto; }
-  .panel { flex: none; width: 292px; margin: 14px 14px 14px 0; display: flex; flex-direction: column; min-height: 0; border: 1px solid var(--line); border-radius: 12px; background: var(--surface); overflow: hidden; }
-  .panel-tabs { display: flex; gap: 2px; padding: 8px; border-bottom: 1px solid var(--line); }
+  .lanes { flex: 1; min-height: 0; display: flex; overflow: auto; }
+  /* The session panel: a column flush with the sheet's edge, like the terminals beside it. */
+  .panel { --stack-bg: var(--main); flex: none; width: 300px; display: flex; flex-direction: column; min-height: 0; border-left: 1px solid var(--line); overflow: hidden; }
+  .panel-tabs { display: flex; gap: 2px; padding: 10px 12px 0; }
   .panel-tabs button { height: 26px; padding: 0 10px; border: 0; border-radius: 6px; background: none; color: var(--faint); cursor: pointer; font-weight: 500; font-size: 12.5px; }
   .panel-tabs button.on { background: var(--raised); color: var(--text); }
   .panel-body { flex: 1; min-height: 0; overflow: auto; padding: 12px; }
@@ -332,13 +341,13 @@
   .panel-empty { padding: 4px 8px; color: var(--faint); font-size: 12px; }
   .comment-form { padding: 10px 12px; border-top: 1px solid var(--line); }
   .comment-form input { height: 32px; font-size: 12.5px; }
-  /* An agent's terminal: a plain card with the owner's name inside it, the terminal on the page background, and a quiet
-     toolbar underneath. The owner's colour is only in the name's dot (David found coloured outlines too busy). */
+  /* An agent's terminal: a flat pane, edge to edge with its neighbours, with the owner's name above it and a status
+     line underneath. The owner's colour is only in the name's dot (David found coloured outlines too busy). */
   .lane {
     --c: var(--muted); position: relative; flex: 1 1 0; min-width: 0; display: flex; flex-direction: column;
-    background: var(--lane); border: 1px solid var(--line); border-radius: 12px; transition: border-color .15s;
+    background: var(--lane); box-shadow: -1px 0 0 var(--line); /* a shadow, not a border between neighbours: your own lane is reordered, and hidden ones stay in the page */
   }
-  .lane:focus-within { border-color: var(--line-strong); }
+  .lane:focus-within .lane-label { color: var(--text); } /* which terminal the keys go to */
   .lane.mine { order: -1; min-width: 440px; }
   /* Whose agent it is: their name, with their colour only in a small dot. */
   .lane-label { display: flex; align-items: center; gap: 7px; padding: 10px 14px 0 16px; color: var(--muted); font-size: 11.5px; font-weight: 600; line-height: 16px; }
@@ -347,9 +356,9 @@
   .screen { margin: 8px 8px 8px 16px; overflow: hidden; } /* margins, not padding: the fit addon sizes to the padded box */
   .lane .screen { flex: 1; min-height: 0; }
   .lane:not(.mine) .screen { overflow-x: auto; } /* a teammate's terminal too wide for a narrow pane even at the smallest font scrolls sideways */
-  .lane-bar { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border-top: 1px solid var(--line); white-space: nowrap; font-size: 12px; color: var(--muted); }
+  .lane-bar { display: flex; align-items: center; gap: 10px; padding: 4px 8px 8px 16px; white-space: nowrap; font-size: 12px; color: var(--muted); }
   .lane-bar > * { flex: none; }
-  .lane-bar .tag { height: 24px; padding: 0 9px; border-radius: 7px; border: 1px solid var(--line); color: var(--text); line-height: 22px; font-weight: 500; }
+  .lane-bar .tag { color: var(--text); font-weight: 500; }
   .lane-bar .state { display: inline-flex; align-items: center; gap: 6px; }
   .lane-bar .state .dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
   .lane-bar .state.working { color: var(--live); }
@@ -359,16 +368,17 @@
   .lane-bar .branch { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; color: var(--faint); font: 11.5px var(--mono); }
   .lane-bar .typed { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; color: var(--needs); }
   .lane-bar .access { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; margin-left: auto; color: var(--faint); }
+  .lane-bar > .btn { margin-left: auto; } /* what you can do sits at the right end */
+  .lane-bar > :is(.access, .btn) ~ .btn { margin-left: 0; }
   /* Side by side, panes are narrow: the branch shortens first, then "Only you can type" goes. */
   .lane { container-type: inline-size; }
-  @container (max-width: 620px) { .lane-bar .access { display: none; } .lane-bar [data-stop] { margin-left: auto; } }
+  @container (max-width: 620px) { .lane-bar .access { display: none; } .lane-bar .access + .btn { margin-left: auto; } }
   /* The code view, laid out like Amoeba's editor: views on the left, the editor, and the agents in a panel below it. */
   .room.coding .room-body { display: grid; grid-template-columns: minmax(0, 1fr) auto; grid-template-rows: minmax(0, 1fr) 5px min(var(--dock, 36%), calc(100% - 220px)); }
   .room.coding .code-view { grid-column: 1 / -1; grid-row: 1; }
   .room.coding .dock-grip { grid-column: 1 / -1; grid-row: 2; cursor: row-resize; border-top: 1px solid var(--line); }
   .room.coding .stage { grid-row: 3; grid-column: 1; }
-  .room.coding .panel { grid-row: 3; grid-column: 2; margin-top: 6px; }
-  .room.coding .lanes { padding-top: 6px; }
+  .room.coding .panel { grid-row: 3; grid-column: 2; }
   .files li[data-open-file] { cursor: pointer; }
   .files li[data-open-file]:hover .path { color: var(--text); text-decoration: underline; text-underline-offset: 2px; }
   .room.coding.dock-hidden .room-body { grid-template-rows: minmax(0, 1fr) 0 0; }
@@ -465,8 +475,8 @@
   .pane-head b { overflow: hidden; text-overflow: ellipsis; }
   .pane-head .pane-task { min-width: 0; overflow: hidden; text-overflow: ellipsis; color: var(--faint); font-size: 12px; }
   .pane-head .spacer { margin-left: auto; }
-  .pane-body { flex: 1; min-height: 0; display: flex; padding: 12px; }
-  .pane-body .lane { min-width: 0; }
+  .pane-body { flex: 1; min-height: 0; display: flex; }
+  .pane-body .lane { min-width: 0; box-shadow: none; }
   .pane-empty { margin: auto; display: grid; justify-items: center; gap: 12px; width: min(340px, 100%); color: var(--muted); text-align: center; }
   .pane-empty[hidden] { display: none; }
   .pane-pick { display: grid; gap: 4px; width: 100%; max-height: 50vh; overflow: auto; }
@@ -649,7 +659,7 @@
   .settings-nav span { padding: 14px 10px 4px; color: var(--faint); font-size: 11.5px; }
   .settings-nav h2 { font-size: 15px; padding: 0 10px 12px; }
   .settings-nav button { height: 30px; padding: 0 10px; border: 0; border-radius: 7px; background: none; color: var(--muted); text-align: left; cursor: pointer; font-weight: 500; }
-  .settings-nav button:hover { color: var(--text); }
+  .settings-nav button:hover { color: var(--text); background: var(--fill); }
   .settings-nav button.on { background: var(--raised); color: var(--text); }
   .settings-body { position: relative; overflow: auto; padding: 26px 32px 28px; }
   .settings-body section { max-width: 760px; }
@@ -692,6 +702,8 @@
   .about { display: grid; justify-items: start; gap: 6px; }
   .about .mark { width: 34px; height: 34px; }
   .linkish { background: none; border: 0; padding: 0; color: var(--text); text-decoration: underline; text-underline-offset: 2px; cursor: pointer; }
+
+  .menu button, button.panel-row, .tree-row, .settings-nav button, .icon-btn, .agent-card { transition: background-color .12s, color .12s; }
 
   @media (prefers-reduced-motion: reduce) {
     .switch, .switch::after { transition: none; }

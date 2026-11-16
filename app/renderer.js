@@ -13,7 +13,7 @@ const REPO = /^[a-z\d][a-z\d-]*\/(?!\.\.?$)[\w.-]+$/i; // owner/name (an owner n
 
 // ---- Preferences (Settings) ----
 
-const DEFAULT_PREFS = { theme: 'dark', fontSize: 12.5, fontFamily: 'SF Mono', lineHeight: 1.2, notifyNeeds: true, notifyDone: true, badge: true, agent: 'claude', open: false, sessionBranches: true, shareFiles: false, findNearby: false };
+const DEFAULT_PREFS = { theme: 'dark', fontSize: 12.5, fontFamily: 'SF Mono', lineHeight: 1.2, notifyNeeds: true, notifyDone: true, badge: true, agent: 'claude', open: false, sessionBranches: true, shareFiles: false, findNearby: false, otherCommand: '' };
 const prefs = { ...DEFAULT_PREFS, ...(() => { try { return JSON.parse(store.get('prefs') || '{}'); } catch { return {}; } })() };
 const effectiveTheme = () => (prefs.theme === 'system' ? (matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark') : prefs.theme);
 
@@ -50,10 +50,11 @@ document.addEventListener('error', e => {
   failedAvatars.add(e.target.getAttribute('src'));
   e.target.replaceWith(e.target.parentElement.dataset.initial);
 }, true);
-const agentName = cmd => ({ claude: 'Claude Code', codex: 'Codex', opencode: 'OpenCode' })[cmd] || cmd;
+// An agent's name as this Mac knows it (main.js agents:status, from src/agents.js). A teammate's own command shows as it is.
+const agentName = cmd => agents.find(a => a.cmd === cmd)?.name || cmd;
 // No prototype: a status a hub on a Mac sends ("constructor") must miss, not find a function render() then throws on.
 const STATUS = Object.assign(Object.create(null), { working: ['working', 'Working'], 'needs you': ['needs', 'Needs you'], idle: ['idle', 'Idle'],
-  'not synced': ['idle', 'Not synced'], overlap: ['overlap', 'Overlap'], done: ['done', 'Done'], running: ['idle', 'Running'], stopping: ['idle', 'Stopping'] });
+  'not synced': ['idle', 'Not synced'], overlap: ['overlap', 'Overlap'], done: ['done', 'Done'], running: ['idle', 'Idle'], stopping: ['idle', 'Stopping'] });
 const pill = status => {
   const [cls, label] = STATUS[status] || ['idle', status];
   return `<span class="pill ${cls}"><span class="dot"></span>${esc(label)}</span>`;
@@ -98,14 +99,16 @@ let sessionRecords = [];   // saved sessions: { name, task, createdBy, createdAt
 let view = 'sessions';     // sessions | people | session
 let focus = null;          // agent shown in the session view
 let split = null;          // a second agent shown beside it ("New pane")
-let panelTab = 'session';  // session | environment
+let panelTab = 'session';  // session | environment, and plan | memory, which open from Session's rows
 let panelHidden = false;
 let filterRepo = null;     // workspace the Sessions page is narrowed to ('' means folders with no GitHub repo)
 let board = [];            // every agent on screen: the hub's, plus local ones it hasn't reported yet
 let agents = [];           // agent CLIs and whether this Mac has them: { cmd, installed }
 let stoppedAgents = [];    // recently stopped agents; the hub keeps their last screen
 let replaying = null;      // the stopped agent whose last screen is on the stage
-let lookedAt;              // last session reported to the hub via `look`
+let lookedAt;              // what the hub was last told this window is looking at (`look`)
+let onScreen = [];         // the sessions whose terminals are on screen: the hub sends agents' output only for those
+let hubReplays = false;    // the hub fills a terminal again when its session comes back on screen (older hubs can't)
 const lastStatus = new Map(); // lane id -> previous status, for notifications
 const local = new Map();   // agents running in this app: id -> { teamKey, session, cmd, open, repo, login, name, avatar, refused? }
 const terms = new Map();   // id -> { term, el, bar }
@@ -198,6 +201,7 @@ proto.onSignedIn(({ user, error }) => {
 let gotState = false; // the open team's sessions have arrived from its hub (until then, none look gone)
 function clearTeamView() {
   gotState = false;
+  hubReplays = false;
   hubLanes = [];
   teamWatchers = [];
   memories = [];
@@ -356,7 +360,15 @@ $('#createTeam').onsubmit = async e => {
     $('#teamName').value = '';
     $('#createErr').textContent = '';
     openTeam(team);
-  } catch (err) { $('#createErr').textContent = errorText(err); }
+  } catch (err) {
+    const text = errorText(err);
+    // The hosted hub may keep new teams to the people who run it. Say what works instead of leaving a dead end.
+    if (/only lets its owners/i.test(text) && whereValue() === 'online') {
+      $('input[name=where][value=mac]').checked = true;
+      syncWhere();
+      $('#createErr').textContent = 'New online teams are made by the people who run this hub for now, so This Mac is picked instead: press Create again. Teammates on your Wi-Fi can join it, and anyone can invite you to their online team.';
+    } else $('#createErr').textContent = text;
+  }
   finally { button.disabled = false; }
 };
 
@@ -456,7 +468,7 @@ function watch(conn) {
     if (generation !== watchGeneration) return;
     const socket = ws = new WebSocket(`${conn.hub.replace(/^http/, 'ws')}/watch`);
     let first = true;
-    socket.onopen = () => socket.send(JSON.stringify({ t: 'watch', token, team: conn.id }));
+    socket.onopen = () => socket.send(JSON.stringify({ t: 'watch', token, team: conn.id, sees: [] }));
     socket.onmessage = e => {
       let m;
       try { m = JSON.parse(e.data); } catch { return; } // a hub on a Mac could send anything; a bad frame mustn't wedge the socket
@@ -470,6 +482,7 @@ function watch(conn) {
       }
       if (m.t === 'state') {
         gotState = true;
+        hubReplays = m.replays === true;
         // A hub on a Mac could send anything; iterated fields default to arrays so a non-array can't throw out of render().
         hubLanes = Array.isArray(m.lanes) ? m.lanes : [];
         const sessions = Array.isArray(m.sessions) ? m.sessions : [];
@@ -587,7 +600,8 @@ async function startAgent({ session, cmd, open, source, task, resume = false, pr
     const records = await proto.saveSession(team.key, { name: session, task });
     if (currentTeam?.key === team.key) sessionRecords = records;
   }
-  const opts = { session, cmd, open, resume, prompt, folderKey: recordFor(session)?.key, teamKey: team.key, ...source };
+  // "Other command" is this Mac's own setting, passed here and nowhere else: never a session's or a teammate's.
+  const opts = { session, cmd, open, resume, prompt, folderKey: recordFor(session)?.key, teamKey: team.key, ...source, ...(cmd === 'other' && { command: prefs.otherCommand }) };
   let started;
   try { started = await proto.startLane(opts); } catch (e) {
     if (created && task) proto.deleteSession(team.key, session).catch(() => {}); // don't leave an empty session behind
@@ -604,8 +618,10 @@ async function startAgent({ session, cmd, open, source, task, resume = false, pr
 }
 // The agent this Mac last ran in a session, if it can pick that conversation back up.
 // Your agent that stopped most recently in this session, or else the last kind you started here.
-const resumable = session => (sourceFor(session) && (stoppedAgents.find(s => s.session === session && same(s.login, me.login))?.cmd
-  || store.get(lastAgentKey(session)))) || '';
+const resumable = session => {
+  const last = (sourceFor(session) && (stoppedAgents.find(s => s.session === session && same(s.login, me.login))?.cmd || store.get(lastAgentKey(session)))) || '';
+  return agents.find(a => a.cmd === last)?.resumes ? last : ''; // only a CLI that can pick its conversation back up
+};
 async function resumeAgent() {
   const cmd = resumable(current);
   if (!cmd) return openNewAgent(current);
@@ -614,16 +630,25 @@ async function resumeAgent() {
 }
 
 // Only agents this Mac can run are offered; the rest are shown as not installed.
-const refreshAgents = () => proto.agents().then(list => { agents = list; syncAgents(); });
+const refreshAgents = () => proto.agents(prefs.otherCommand).then(list => { agents = list; syncAgents(); if (currentTeam) render(); });
 const isInstalled = cmd => agents.find(a => a.cmd === cmd)?.installed !== false;
 // The agent Settings names, or one this Mac has when it hasn't got that one (someone with only Codex, say).
 const defaultAgent = () => (isInstalled(prefs.agent) ? prefs.agent : agents.find(a => a.installed)?.cmd || prefs.agent);
 function syncAgents() {
+  // The pickers are drawn from the list, so a new agent in src/agents.js (or an "Other command") shows up by itself.
+  const was = $('input[name=cmd]:checked')?.value;
+  const radios = extra => agents.map(a => `<label><input type="radio" ${extra} value="${esc(a.cmd)}"><span>${esc(a.name)}</span></label>`).join('');
+  setHTML($('#agentPick'), radios('name="cmd"'));
+  setHTML($('#prefAgentPick'), radios('name="prefAgent" data-pref="agent"'));
+  for (const input of $('#prefAgentPick').querySelectorAll('input')) input.checked = input.value === prefs.agent;
+  const again = [...document.querySelectorAll('input[name=cmd]')].find(i => i.value === (was || defaultAgent()));
+  if (again) again.checked = true;
   for (const input of document.querySelectorAll('input[name=cmd]')) {
     input.disabled = !isInstalled(input.value);
     input.nextElementSibling.title = input.disabled ? 'Not installed on this Mac' : '';
   }
   if ($('input[name=cmd]:checked')?.disabled) (document.querySelector('input[name=cmd]:not(:disabled)') || {}).checked = true;
+  $('#agentField').hidden = agents.length > 0 && agents.filter(a => a.installed).length === 1 && !document.querySelector('input[name=cmd]:checked:disabled'); // nothing to choose
   const missing = [...document.querySelectorAll('input[name=cmd]:disabled')].map(i => agentName(i.value));
   $('#agentHint').hidden = !missing.length;
   const names = missing.length > 1 ? `${missing.slice(0, -1).join(', ')} and ${missing.at(-1)}` : missing[0];
@@ -648,7 +673,11 @@ async function openNewAgent(session) {
   sourcePicked = false;
   const known = session && showSource(session); // an existing session keeps the source it already uses
   $('#agentErr').textContent = '';
-  $(`input[name=cmd][value=${defaultAgent()}]`).checked = true;
+  $('#sendTask').checked = true;
+  $('#agentMore').open = false;
+  $('#taskLabel').textContent = adding ? 'This session\'s goal' : 'What should the agent do?';
+  const preferred = $(`input[name=cmd][value=${defaultAgent()}]`);
+  if (preferred) preferred.checked = true;
   $('#open').checked = prefs.open;
   $('#repoHint').textContent = prefs.sessionBranches
     ? 'The session gets its own branch (session/…) and folder under ~/Protoplasma, so main only changes through a push or pull request.'
@@ -738,6 +767,8 @@ function syncSessionName() {
   $('#startAgent').textContent = adding ? 'Start agent' : 'Start the session';
 }
 $('#session').oninput = syncSessionName;
+// Opened options come into view above the footer, which sticks to the bottom of a dialog too tall for the window.
+$('#agentMore').ontoggle = e => { if (e.target.open) e.target.scrollIntoView({ block: 'nearest' }); };
 $('#task').oninput = () => { $('#task').dataset.from = ''; };
 $('#new').onclick = () => openNewAgent();
 $('#cancel').onclick = () => $('#agent').close();
@@ -747,6 +778,12 @@ $('#pick').onclick = async () => {
   const dir = await proto.pickFolder($('#cwd').value);
   if (dir) { showFolder(dir); store.set('cwd', dir); }
 };
+// A session's name from what was typed for its agent: its first words, and a number if that name is taken.
+function sessionNameFrom(text) {
+  const name = String(text).trim().split(/\s+/).slice(0, 5).join(' ').slice(0, 40).replace(/[\s.,;:!?-]+$/, '');
+  if (!name) return '';
+  for (let n = 1; ; n++) { const tried = n === 1 ? name : `${name} ${n}`; if (!existingSession(tried)) return tried; }
+}
 // A name that matches an existing session apart from case and punctuation joins it, since both would get the same
 // branch and folder. Same rule as slug() in src/shared.js.
 // Letters of any script stay; a name with none (all emoji) gets a short code of its own instead of a shared one.
@@ -767,8 +804,10 @@ const existingSession = name => {
 $('#agentForm').onsubmit = async e => {
   e.preventDefault();
   const fromRepo = $('input[name=source]:checked').value === 'repo';
-  const typed = $('#session').value.trim();
-  const session = typed && (existingSession(typed) ?? typed);
+  // A name you give joins the session of that name. Left empty, the session is named after what you typed for the
+  // agent, and never joins another by accident: a name already taken gets a number.
+  const typed = $('#session').value.trim(), made = typed ? '' : sessionNameFrom($('#task').value);
+  const session = typed ? existingSession(typed) ?? typed : made;
   const known = session && sourceFor(session), repo = $('#repo').value.trim();
   // An existing session keeps whether it has its own branch; a new one follows the setting.
   const source = fromRepo ? { repo, worktree: known?.repo && same(known.repo, repo) ? known.worktree !== false : prefs.sessionBranches } : { cwd: $('#cwd').value };
@@ -776,13 +815,18 @@ $('#agentForm').onsubmit = async e => {
   const button = $('#startAgent'), label = button.textContent;
   $('#agentErr').textContent = '';
   try {
-    if (!session) throw new Error('Name the session.');
+    if (!session) throw new Error('Say what the agent should do, or name the session.');
     if (fromRepo && !REPO.test(source.repo)) throw new Error('Pick a repo, like owner/name.');
     if (!fromRepo && !source.cwd) throw new Error('Choose a folder.');
     if (rec && task !== (rec.task || '') && !canManage(rec)) throw new Error(`Only ${rec.createdBy} or the team's owner can change this session's goal.`);
     button.disabled = $('#cancel').disabled = true;
     button.textContent = fromRepo ? 'Getting the repo…' : 'Starting…';
-    await startAgent({ session, cmd: $('input[name=cmd]:checked').value, open: $('#open').checked, source, task });
+    // What you typed is the session's goal, and the agent's first message too, unless it was already the goal of a
+    // session you're adding an agent to, or the CLI can't be started with one.
+    const cmd = $('input[name=cmd]:checked')?.value;
+    if (!cmd) throw new Error('No agent to start yet. Try again in a moment.'); // the list of agents hasn't arrived
+    const first = $('#sendTask').checked && !$('#task').dataset.from && agents.find(a => a.cmd === cmd)?.prompts ? task : '';
+    await startAgent({ session, cmd, open: $('#open').checked, source, task, prompt: first });
     if (fromRepo) store.set('repo', source.repo);
     store.set('sourceKind', fromRepo ? 'repo' : 'folder');
     $('#agent').close();
@@ -808,8 +852,8 @@ function agentMenu(anchor) {
   refreshAgents();
   const last = resumable(current);
   showMenu(anchor, [...(last ? [{ text: `Resume ${agentName(last)}`, hint: isInstalled(last) ? 'last conversation' : 'Not installed', disabled: !isInstalled(last), run: resumeAgent }] : []),
-    { label: 'Add an agent' }, ...['claude', 'codex', 'opencode'].map(cmd =>
-    ({ text: agentName(cmd), disabled: !isInstalled(cmd), hint: isInstalled(cmd) ? '' : 'Not installed', run: () => addAgent(cmd) }))]);
+    { label: 'Add an agent' }, ...agents.map(a =>
+    ({ text: a.name, disabled: !a.installed, hint: a.installed ? '' : 'Not installed', run: () => addAgent(a.cmd) }))]);
 }
 
 // Continuing a teammate's work: your own agent, in this session, starting from what theirs was doing. `agent` is a
@@ -837,9 +881,10 @@ function continueMenu(anchor, id) {
   const t = terms.get(id), screen = t ? screenText(t.term) : replaying === id && replayTerm ? screenText(replayTerm) : '';
   const session = agent.session, source = sourceFor(session); // its session: in pane mode that needn't be the open one
   if (!source) return alert('Add an agent to this session first, so it has a folder on this Mac. Then continue from here.');
-  showMenu(anchor, [{ label: 'Continue this work with' }, ...['claude', 'codex', 'opencode'].map(cmd => ({
-    text: agentName(cmd), disabled: !isInstalled(cmd), hint: isInstalled(cmd) ? '' : 'Not installed',
-    run: () => startAgent({ session, cmd, open: prefs.open, source, prompt: briefFrom(agent, screen) }).catch(err => alert(errorText(err))) }))]);
+  // Only a CLI that takes a first message can be started with one.
+  showMenu(anchor, [{ label: 'Continue this work with' }, ...agents.filter(a => a.prompts).map(a => ({
+    text: a.name, disabled: !a.installed, hint: a.installed ? '' : 'Not installed',
+    run: () => startAgent({ session, cmd: a.cmd, open: prefs.open, source, prompt: briefFrom(agent, screen) }).catch(err => alert(errorText(err))) }))]);
 }
 // Handing your agent's work in this session to a teammate: it shows in their alerts until they continue it.
 function handOffMenu(anchor, id) {
@@ -905,6 +950,7 @@ function openSession(name, laneId = null) {
   if (name !== current) { code.on = false; setCommentRef(null); } // a session opens on its agents; the code comes up when you open a file
   if (laneId) Object.assign(code, { dock: 'agent', dockHidden: false }); // and an agent asked for by name is brought forward
   view = 'session';
+  if (name !== current && panelTab !== 'environment') panelTab = 'session'; // another session opens on its people, not its plan
   current = name;
   tab = 'agents';
   focus = laneId;
@@ -1013,7 +1059,11 @@ function render() {
   const lanes = board = [...hubLanes, ...mine.map(([id, o]) => ({ id, ...o, status: o.refused ? `Not shared: ${o.refused}` : 'not synced', files: [], overlaps: [] }))];
   assignColors([currentTeam.owner, ...currentTeam.members, ...lanes.map(l => l.login)]); // the whole team, so nobody's colour moves
   const looking = view === 'session' ? current : null;
-  if (lookedAt !== looking && ws?.readyState === WebSocket.OPEN) { ws.send(JSON.stringify({ t: 'look', session: looking })); lookedAt = looking; }
+  // Which sessions' terminals are on screen. The hub sends output only for those, and each agent's screen when its
+  // session comes into view. (A hub from before this sends everything, as it always did: see `pending`.)
+  onScreen = view === 'session' && current ? [current] : view === 'panes' ? panes.filter(Boolean) : [];
+  const told = JSON.stringify([looking, onScreen]);
+  if (lookedAt !== told && ws?.readyState === WebSocket.OPEN) { ws.send(JSON.stringify({ t: 'look', session: looking, sees: onScreen })); lookedAt = told; }
   const inSettings = $('#settings').open;
   $('#navSessions').classList.toggle('on', !inSettings && view === 'sessions' && filterRepo === null);
   $('#navPeople').classList.toggle('on', !inSettings && view === 'people');
@@ -1038,7 +1088,7 @@ function renderAlerts(lanes) {
   const codebase = l => l.repo || l.tree;
   const clashes = [...new Set(lanes.flatMap(l => l.overlaps.map(f => `${codebase(l)}|${f}`)))].map(key => {
     const file = key.slice(key.indexOf('|') + 1), who = lanes.filter(l => l.overlaps.includes(file) && `${codebase(l)}|${file}` === key);
-    return `<button class="alert overlap" data-session="${esc(who[0].session)}" data-file="${esc(file)}"><b>${esc(whoEdited(who.map(l => l.name)))} edited</b><span>${esc(file)}</span></button>`;
+    return `<button class="alert overlap" data-session="${esc(who[0].session)}" data-file="${esc(file)}" title="Opens the file in its session. The Conflicts tab beside it shows each person's version."><b>${esc(whoEdited(who.map(l => l.name)))} edited</b><span>${esc(file)}</span></button>`;
   });
   // Work a teammate handed you, for a day or until you start an agent in that session (the hub clears it then).
   const handed = sessionRecords.filter(r => r.handoff && same(r.handoff.to, me.login) && Date.now() - Date.parse(r.handoff.at) < 86_400_000)
@@ -1173,11 +1223,13 @@ const diffStat = lanes => {
 };
 // Commits a lane's branch is missing from its upstream.
 const behindChip = l => { const n = l.git?.behind | 0; return n ? `<span class="behind" title="${n} commit${n === 1 ? '' : 's'} behind. Pull before pushing.">↓${n}</span>` : ''; };
+// Files this checkout's commits would conflict in, if its branch were merged with main today (lane.js mainConflicts).
+const clashChip = files => { files = Array.isArray(files) ? files : []; const n = files.length; return n ? `<span class="behind clash" title="Would conflict with main in ${esc(files.slice(0, 8).join(', '))}${n > 8 ? ` and ${n - 8} more` : ''}. Merge main and settle them before a pull request.">${n} conflict${n === 1 ? '' : 's'} with main</span>` : ''; };
 const branchLine = lanes => {
   const names = [...new Set(lanes.map(l => l.branch).filter(Boolean))];
   const diff = diffStat(lanes);
   const behind = behindChip({ git: { behind: Math.max(0, ...lanes.map(l => l.git?.behind || 0)) } });
-  return names.length || diff ? `<div class="card-branch"><svg><use href="#branch"/></svg><span class="names" title="${esc(names.join(', '))}">${esc(names.join(', '))}</span>${behind}${diff}</div>` : '';
+  return names.length || diff ? `<div class="card-branch"><svg><use href="#branch"/></svg><span class="names" title="${esc(names.join(', '))}">${esc(names.join(', '))}</span>${behind}${clashChip([...new Set(lanes.flatMap(l => (Array.isArray(l.conflicts) ? l.conflicts : [])))])}${diff}</div>` : '';
 };
 const lastActive = lanes => {
   const at = lanes.map(l => l.lastActive).filter(Boolean).sort().pop();
@@ -1212,15 +1264,23 @@ function renderRoom(lanes) {
   if (!here(split) || split === focus) split = null;
   const onStage = view === 'panes' ? paneLaneIds() : tab === 'agents' ? [focus, split] : [];
 
-  for (const id of terms.keys()) if (!lanes.some(l => l.id === id) && !local.has(id)) dropTerminal(id);
+  // A teammate's agent has a terminal here only while its session is on screen: that's when the hub sends its output.
+  // With a hub that can't replay a screen (one from before this), every agent keeps its terminal, as it always did.
+  const inView = l => local.has(l.id) || !hubReplays || onScreen.includes(l.session);
+  for (const id of terms.keys()) if (!local.has(id) && !lanes.some(l => l.id === id && inView(l))) dropTerminal(id);
+  for (const id of pending.keys()) if (!local.has(id) && !lanes.some(l => l.id === id)) pending.delete(id); // kept from an older hub, for an agent that's gone
   for (const t of terms.values()) t.el.hidden = true; // local lanes on other teams stay alive, just hidden
   if (replayGpu) gpu(replayGpu, view === 'session' && tab === 'replay');
   for (const l of lanes) {
+    if (!inView(l)) continue;
     const t = terms.get(l.id) || createTerminal(l);
     const mine = local.has(l.id);
     t.el.hidden = !onStage.includes(l.id);
     gpu(t, !t.el.hidden);
-    if (!t.el.hidden && !t.shown) requestAnimationFrame(() => t.term.scrollToBottom()); // output while hidden can leave it scrolled up
+    if (scaleOff(t)) { gpu(t, false); gpu(t, true); }
+    // Output while hidden can leave it scrolled up. By the next frame the terminal may be gone (its session left the
+    // screen, and frames wait while the window is hidden): scrolling a disposed one throws inside xterm.
+    if (!t.el.hidden && !t.shown) requestAnimationFrame(() => { if (terms.get(l.id) === t) t.term.scrollToBottom(); });
     t.shown = !t.el.hidden;
     t.el.style.setProperty('--c', colorFor(l.login));
     if (!mine) { const cols = laneCols(l.cols), rows = laneRows(l.rows); if (t.term.cols !== cols || t.term.rows !== rows) t.term.resize(cols, rows); }
@@ -1229,9 +1289,9 @@ function renderRoom(lanes) {
     const [cls, label] = STATUS[statusOf(l)] || ['idle', l.status];
     setHTML(t.label, mine ? 'Me' : esc(l.name));
     setHTML(t.bar, `<span class="tag" title="${esc(agent)}">${esc(agent)}</span><span class="state ${cls}"><span class="dot"></span>${esc(label)}</span>` +
-      `${diffStat([l])}${behindChip(l)}${l.branch ? `<span class="branch" title="${esc(l.branch)}">${esc(l.branch)}</span>` : ''}` +
+      `${diffStat([l])}${behindChip(l)}${clashChip(l.conflicts)}${l.branch ? `<span class="branch" title="${esc(l.branch)}">${esc(l.branch)}</span>` : ''}` +
       (mine && l.typedBy && Date.now() - Date.parse(l.typedAt) < 10 * 60_000 ? `<span class="typed" title="${esc(l.typedBy)} typed into this agent">${esc(l.typedBy)} typed, ${ago(l.typedAt)}</span>` : '') +
-      `<span class="access" title="${access}">${access}</span>`
+      (mine && !l.open ? '' : `<span class="access" title="${access}">${access}</span>`) // your own agent that only you type into is the usual case: nothing to say
       + (mine ? `<button class="btn ghost small" data-handoff="${esc(l.id)}" title="Hand this work to a teammate">Hand off</button>`
         : `<button class="btn ghost small" data-continue="${esc(l.id)}" title="Start your own agent from what this one was doing">Continue</button>`)
       + (mine && !stopping.has(l.id) ? `<button class="btn ghost small" data-stop="${esc(l.id)}">Stop</button>` : ''));
@@ -1253,18 +1313,14 @@ function renderRoom(lanes) {
   $('#shareBtn').hidden = !ownsTeam(currentTeam);
   $('#panel').hidden = panelHidden;
   $('#backBar').hidden = tab === 'agents';
-  $('#stageTitle').textContent = { memory: 'Memory', plan: 'Plan', pulls: 'Pull requests', issues: 'Issues' }[tab]
+  $('#stageTitle').textContent = { pulls: 'Pull requests', issues: 'Issues' }[tab]
     || (ended ? `${whose(ended)} ${agentName(ended.cmd)}, stopped ${ago(ended.endedAt)}` : tab === 'replay' ? 'Stopped agent' : '');
   $('#replayPanel').hidden = tab !== 'replay';
   $('#continueReplay').hidden = !ended || same(ended.login, me.login);
   $('#replayScreen').hidden = !ended;
   $('#replayGone').hidden = tab !== 'replay' || !!ended;
   $('#lanes').hidden = tab !== 'agents';
-  $('#memoryPanel').hidden = tab !== 'memory';
-  $('#planPanel').hidden = tab !== 'plan';
-  if (tab === 'plan') renderPlan();
   $('#ghPanel').hidden = tab !== 'pulls' && tab !== 'issues';
-  if (tab === 'memory') renderMemory();
   $('#empty').hidden = inRoom.length > 0;
   const last = resumable(current);
   $('#resumeBtn').hidden = !last;
@@ -1280,8 +1336,14 @@ function renderRoom(lanes) {
 
 // The panel beside the stage. Session: everyone here and their agents. Environment: the code they're working in.
 function renderPanel(inRoom, rec) {
-  for (const b of $('.panel-tabs').children) b.setAttribute('aria-selected', b.classList.toggle('on', b.dataset.panel === panelTab));
+  const under = panelTab === 'environment' ? 'environment' : 'session';
+  for (const b of $('.panel-tabs').children) b.setAttribute('aria-selected', b.classList.toggle('on', b.dataset.panel === under));
   $('#commentForm').hidden = panelTab !== 'session';
+  $('#panelBody').hidden = panelTab === 'plan' || panelTab === 'memory';
+  $('#planPanel').hidden = panelTab !== 'plan';
+  $('#memoryPanel').hidden = panelTab !== 'memory';
+  if (panelTab === 'plan') return renderPlan();
+  if (panelTab === 'memory') return renderMemory();
   if (panelTab === 'environment') return setHTML($('#panelBody'), environment(inRoom, rec));
   const notes = roomNotes().length;
   // You come first, so there's always somewhere to add an agent.
@@ -1294,8 +1356,8 @@ function renderPanel(inRoom, rec) {
       <div class="person-meta"><span>${same(login, currentTeam.owner) ? 'Owner' : 'Member'}</span><span>${theirs.length ? `${(STATUS[sessionStatus(theirs)] || [])[1]?.toLowerCase() || ''}${at ? `, ${ago(at)}` : ''}` : 'no agents here'}</span></div>
       ${theirs.map(l => agentCard(l, agentLabel(l, inRoom))).join('')}
     </div>`;
-  }).join('') + stoppedRows() + `<button class="panel-row" data-tab="plan"><b>Plan</b><span>${stepsDone(rec) || 'No steps yet'}</span></button>`
-    + `<button class="panel-row" data-tab="memory"><b>Memory</b><span>${notes ? `${notes} note${notes === 1 ? '' : 's'}` : 'No notes yet'}</span></button>`
+  }).join('') + stoppedRows() + `<button class="panel-row" data-panel="plan"><b>Plan</b><span>${stepsDone(rec) || 'No steps yet'}</span></button>`
+    + `<button class="panel-row" data-panel="memory"><b>Memory</b><span>${notes ? `${notes} note${notes === 1 ? '' : 's'}` : 'No notes yet'}</span></button>`
     + '<div class="panel-label">Comments</div>' + comments(rec));
 }
 // Agents that stopped in this session. The hub keeps the last of their output for a while.
@@ -1393,9 +1455,9 @@ function askMenu(anchor, c) {
   const waiting = l => statusOf(l) === 'needs you';
   showMenu(anchor, [...(mine.length ? [{ label: 'Send it to' }, ...mine.map(l => ({ text: `Your ${agentLabel(l, mine)}`, disabled: waiting(l),
     hint: waiting(l) ? 'Answer it first' : (STATUS[statusOf(l)] || [])[1] || '', run: () => send(l.id) }))] : []),
-    { label: 'Start an agent with it' }, ...['claude', 'codex', 'opencode'].map(cmd => ({ text: agentName(cmd), disabled: !isInstalled(cmd) || !source,
-      hint: !isInstalled(cmd) ? 'Not installed' : !source ? 'Add an agent here first' : '',
-      run: () => startAgent({ session: current, cmd, open: prefs.open, source, prompt }).catch(err => alert(errorText(err))) }))]);
+    { label: 'Start an agent with it' }, ...agents.filter(a => a.prompts).map(a => ({ text: a.name, disabled: !a.installed || !source,
+      hint: !a.installed ? 'Not installed' : !source ? 'Add an agent here first' : '',
+      run: () => startAgent({ session: current, cmd: a.cmd, open: prefs.open, source, prompt }).catch(err => alert(errorText(err))) }))]);
 }
 function agentCard(l, name) {
   const mine = local.has(l.id), [cls, label] = STATUS[statusOf(l)] || ['idle', l.status];
@@ -1421,6 +1483,7 @@ function environment(inRoom, rec) {
   const mine = inRoom.filter(l => local.has(l.id)); // your checkout's commits; teammates' are on their own Macs
   const behind = Math.max(0, ...(mine.length ? mine : inRoom).map(l => l.git?.behind || 0));
   const ahead = Math.max(0, ...mine.map(l => l.git?.ahead || 0)), unpushed = Math.max(0, ...mine.map(l => l.git?.unpushed || 0));
+  const clashing = [...new Set((mine.length ? mine : inRoom).flatMap(l => (Array.isArray(l.conflicts) ? l.conflicts : [])))];
   const github = roomRepo && `https://github.com/${roomRepo}`;
   const row = (label, value, action = '') => `<${action ? 'button' : 'div'} class="panel-row" ${action}><b>${label}</b><span class="mono">${value}</span></${action ? 'button' : 'div'}>`;
   return [
@@ -1429,6 +1492,7 @@ function environment(inRoom, rec) {
     behind ? row('Behind', `${behind} commit${behind === 1 ? '' : 's'}`) : '',
     ahead ? row('Ahead of the default branch', `${ahead} commit${ahead === 1 ? '' : 's'}`) : '',
     unpushed ? row('Not pushed', `${unpushed} commit${unpushed === 1 ? '' : 's'}`) : '',
+    clashing.length ? `<div class="panel-label">Would conflict with main</div><ul class="files">${clashing.map(f => `<li class="overlap" data-open-file="${esc(f)}" title="Open ${esc(f)}"><span class="path"><bdi>${esc(f)}</bdi></span></li>`).join('')}</ul>` : '',
     fileList(inRoom, 8),
     github ? '<div class="panel-label">GitHub</div>' + row('Repository', esc(roomRepo), `data-url="${esc(github)}"`)
       + row('Pull requests', '', 'data-tab="pulls"') + row('Issues', '', 'data-tab="issues"')
@@ -1438,7 +1502,7 @@ function environment(inRoom, rec) {
   ].join('');
 }
 
-$('.panel-tabs').onclick = e => { if (e.target.dataset.panel) { panelTab = e.target.dataset.panel; render(); } };
+$('#panel').addEventListener('click', e => { const to = e.target.closest('[data-panel]'); if (to) { panelTab = to.dataset.panel; render(); } });
 $('#panelBody').onclick = e => {
   const file = e.target.closest('[data-open-file]');
   if (file) return openFile(file.dataset.openFile, { line: Number(file.dataset.line) || undefined });
@@ -1567,7 +1631,7 @@ async function checkNotes(notes) {
     const now = await proto.code.hash(root, m.file).catch(() => '');
     if (noteChanged.get(m.id) !== (!!now && now !== m.hash)) { noteChanged.set(m.id, !!now && now !== m.hash); changed = true; }
   }
-  if (changed && tab === 'memory') renderMemory();
+  if (changed && panelTab === 'memory') renderMemory();
 }
 function renderMemory() {
   const canRemove = m => [m.author, currentTeam.owner].some(l => l.toLowerCase() === me.login.toLowerCase());
@@ -1654,10 +1718,21 @@ function gpu(t, on) {
   } catch { t.webgl?.dispose(); t.webgl = null; t.webglFailed = true; }
 }
 
+// Whether a terminal's text is drawn for another scale than its cells. xterm's WebGL renderer keeps the display's pixel
+// ratio from when it was made but draws its letters for the ratio at the time, and nothing tells it when the two part
+// (seen once: letters at half size in full-size cells, until the next resize). A new renderer has both right.
+// ponytail: reads xterm's own fields, so an xterm that renames them only loses this check (e2e's offSize would say so).
+const scaleOff = t => {
+  const drawn = t.webgl && t.term._core?._renderService?._renderer?.value, atlas = drawn?._charAtlas?._config;
+  return !!atlas && (atlas.devicePixelRatio !== devicePixelRatio || drawn._devicePixelRatio !== devicePixelRatio);
+};
+
 function dropTerminal(id) {
   const t = terms.get(id);
   t.resizer?.disconnect();
-  t.term.dispose();
+  // Once xterm has read what was already written to it: output still queued when a terminal goes (an agent's last
+  // words, a team switch) can ask for the window's size, which a disposed terminal answers with a TypeError.
+  t.term.write('', () => setTimeout(() => t.term.dispose()));
   t.el.remove();
   terms.delete(id);
   pending.delete(id);
@@ -1725,7 +1800,8 @@ function applyPrefs() {
   for (const input of document.querySelectorAll('[data-pref]')) {
     if (input.tagName === 'SELECT') input.value = prefs[input.dataset.pref];
     else if (input.type === 'checkbox') input.checked = !!prefs[input.dataset.pref];
-    else input.checked = input.value === String(prefs[input.dataset.pref]);
+    else if (input.type === 'radio') input.checked = input.value === String(prefs[input.dataset.pref]);
+    else input.value = prefs[input.dataset.pref] ?? '';
   }
   $('#fontSize').textContent = `${prefs.fontSize}px`;
   $('#lineHeight').textContent = prefs.lineHeight.toFixed(1);
@@ -1767,9 +1843,10 @@ async function openSettings(pane = 'general') {
     $('.sidebar').inert = $('.main').inert = true; // a page over the main area, not a modal: what's under it can't be reached
     $('#settings').show(); $('#settings').focus(); render();
   }
-  proto.agents().then(list => {
+  proto.agents(prefs.otherCommand).then(list => {
     agents = list;
-    $('#providers').innerHTML = list.map(a => `<div class="setting"><div><b>${esc(agentName(a.cmd))}</b><p>The <kbd>${esc(a.cmd)}</kbd> command on this Mac.</p></div>
+    syncAgents();
+    $('#providers').innerHTML = list.filter(a => a.cmd !== 'other').map(a => `<div class="setting"><div><b>${esc(a.name)}</b><p>The <kbd>${esc(a.cmd)}</kbd> command on this Mac.${a.installed || !a.install ? '' : ` Get it with <kbd>${esc(a.install)}</kbd>.`}</p></div>
       <span class="where">${a.installed ? 'Installed' : 'Not installed'}</span></div>`).join('');
   });
   proto.ghStatus().then(s => { if ($('#ghStatus')) $('#ghStatus').textContent = s.detail; });
@@ -1803,8 +1880,9 @@ $('#settings').addEventListener('close', () => {
 $('#settings').onchange = e => {
   const key = e.target.dataset.pref;
   if (!key) return;
-  prefs[key] = e.target.type === 'checkbox' ? e.target.checked : e.target.value;
+  prefs[key] = e.target.type === 'checkbox' ? e.target.checked : e.target.type === 'radio' || e.target.tagName === 'SELECT' ? e.target.value : e.target.value.trim();
   savePrefs();
+  if (key === 'otherCommand') refreshAgents();
 };
 $('#settings').onclick = e => {
   const { pane, step, line, open, url } = e.target.dataset;
@@ -1914,11 +1992,11 @@ $('#switcher').onclick = e => { if (e.target === $('#switcher')) $('#switcher').
 
 // ---- First-run checklist: what this Mac still needs before agents can run ----
 
-const INSTALL_CLAUDE = 'npm install -g @anthropic-ai/claude-code';
 function renderSetup(agentList, gh) {
   const items = [];
   if (!agentList.some(a => a.installed)) {
-    items.push(`<div class="setup-item"><div><b>Install an agent</b><p>Claude Code is the one Protoplasma knows best: <code>${INSTALL_CLAUDE}</code>. Codex and OpenCode work too.</p></div><button class="btn small" data-copy="${esc(INSTALL_CLAUDE)}">Copy</button></div>`);
+    const [first, ...rest] = agentList.filter(a => a.install); // the table's first is the one with the surest hooks
+    if (first) items.push(`<div class="setup-item"><div><b>Install an agent</b><p>${esc(first.name)} is the one Protoplasma knows best: <code>${esc(first.install)}</code>. ${esc(rest.map(a => a.name).join(' and '))} work too.</p></div><button class="btn small" data-copy="${esc(first.install)}">Copy</button></div>`);
   }
   if (!gh.ok) {
     const cmd = /Not installed/.test(gh.detail) ? 'brew install gh && gh auth login' : 'gh auth login';
@@ -1932,7 +2010,7 @@ function renderSetup(agentList, gh) {
   setHTML($('#setup'), shown ? `<h2>Finish setting up this Mac</h2><p>Run these in Terminal, then check again.</p>${items.join('')}
     <div class="actions"><button class="btn small ghost" data-dismiss>Not now</button><button class="btn small" data-recheck>Check again</button></div>` : '');
 }
-const checkSetup = () => Promise.all([proto.agents(), proto.ghStatus()]).then(([list, gh]) => { agents = list; renderSetup(list, gh); });
+const checkSetup = () => Promise.all([proto.agents(prefs.otherCommand), proto.ghStatus()]).then(([list, gh]) => { agents = list; renderSetup(list, gh); });
 $('#setup').onclick = e => {
   if (e.target.dataset.copy) { proto.copy(e.target.dataset.copy); e.target.textContent = 'Copied'; }
   if ('recheck' in e.target.dataset) checkSetup();

@@ -66,8 +66,24 @@ function makeDemoRepo() {
 
 async function run(win, hub) {
   const js = s => win.webContents.executeJavaScript(s);
+  // Terminals on screen whose text isn't the size their cells were measured at (a font changed while they were hidden):
+  // such text is drawn small and spaced out, or large and overlapping. A monospace character is about 0.6 of its font size wide.
+  const OFF_SIZE = `globalThis.offSize = () => [...terms].filter(([, t]) => !t.el.hidden && t.el.offsetParent).map(([id, t]) => {
+    const core = t.term._core, cell = core._charSizeService?.width, font = t.term.options.fontSize, drawn = core._renderService?._renderer?.value;
+    const atlas = drawn?._charAtlas?._config, scale = drawn?.dimensions?.device.cell.width / drawn?.dimensions?.css.cell.width;
+    const ok = cell > 0 && Math.abs(cell / font - 0.6) < 0.06 && !!drawn && Math.abs(scale - devicePixelRatio) < 0.3
+      && (!atlas || (atlas.fontSize === font && atlas.devicePixelRatio === devicePixelRatio));
+    return { id: id.slice(0, 10), mine: local.has(id), font, cell, cols: t.term.cols, rows: t.term.rows, webgl: !!t.webgl, failed: !!t.webglFailed, fits: !!t.refit,
+      dpr: devicePixelRatio, scale, atlasFont: atlas?.fontSize, atlasDpr: atlas?.devicePixelRatio, ok };
+  }).filter(x => !x.ok); 0`;
   // The page's own errors, so a failed step says what went wrong in the window.
-  win.webContents.on('console-message', (e, level, message) => { if ((e.level ?? level) === 'error' || level === 3) console.log(`  page error: ${e.message ?? message}`); });
+  win.webContents.on('console-message', (e, level, message) => { if ((e.level ?? level) === 'error' || level === 3) console.log(`  page error: ${e.message ?? message}`);
+    else if (/webgl/i.test(e.message ?? message)) console.log(`  page says: ${e.message ?? message}`); });
+  // Where a page error came from: the console message alone has no stack.
+  const traceErrors = () => win.webContents.executeJavaScript(`addEventListener('error', e => console.error('  at: ' + String(e.error?.stack || e.filename + ':' + e.lineno).split('\\n').slice(0, 8).join(' | ')));
+    addEventListener('unhandledrejection', e => console.error('  rejected: ' + String(e.reason?.stack || e.reason).split('\\n').slice(0, 8).join(' | '))); 0`).catch(() => {});
+  win.webContents.on('did-finish-load', traceErrors);
+  if (!win.webContents.isLoading()) traceErrors();
   // An uncaught error's message alone doesn't say where it came from: print its stack too.
   await js(`addEventListener('error', e => e.error?.stack && console.error(e.error.stack))`);
   const until = async (expr, ms = 8000) => { const end = Date.now() + ms; while (Date.now() < end) { if (await js(expr)) return true; await sleep(100); } return false; };
@@ -124,19 +140,23 @@ async function run(win, hub) {
     check('clicking a repo selects it', await js(`$('#repo').value === 'max/engine' && $('#repoPicker .repo-row.on')?.dataset.repo === 'max/engine' && $('#repoPicker').querySelectorAll('.repo-row').length === 3`));
     const height = await js(`$('#agent').getBoundingClientRect().height`);
     await js(`$('#session').value = ''; $('#agentForm').requestSubmit()`);
-    check('a form error shows without moving the dialog', await js(`$('#agentErr').textContent === 'Name the session.' && $('#agent').getBoundingClientRect().height === ${height}`));
+    check('a form error shows without moving the dialog', await js(`$('#agentErr').textContent === 'Say what the agent should do, or name the session.' && $('#agent').getBoundingClientRect().height === ${height}`));
     await js(`$('#session').value = 's1'`);
 
     // ---- an agent in a folder
-    await js(`$('input[name=source][value=folder]').checked = true; syncSource(); $('#cwd').value = ${JSON.stringify(root)}; $('#task').value = 'E2E goal'; $('#agentForm').requestSubmit()`);
+    await js(`$('input[name=source][value=folder]').checked = true; syncSource(); $('#cwd').value = ${JSON.stringify(root)}; $('#task').value = 'E2E goal'; $('#sendTask').checked = false; $('#agentForm').requestSubmit()`); // a real Claude Code is never sent a prompt
     check('starts a real Claude Code agent', await until('local.size === 1 && hubLanes.length === 2', 15000));
     const mine = await js('[...local.keys()][0]');
+    check('a session left without a name is named after what was typed, and never joins another by accident',
+      await js(`sessionNameFrom('Fix the double booking race in the lobby, please.') === 'Fix the double booking race' && sessionNameFrom('s1') === 's1 2' && sessionNameFrom('  ') === ''`));
     const theirs = await js(`hubLanes.find(l => l.id !== ${JSON.stringify(mine)}).id`);
     check('teammate output reaches the window', await until(`(terms.get(${JSON.stringify(theirs)})?.term.buffer.active.getLine(0)?.translateToString() || '').includes('teammate ready')`));
     check('the session opens on your own agent, with its goal', await until(`view === 'session' && current === 's1' && focus === ${JSON.stringify(mine)} && !terms.get(${JSON.stringify(mine)}).el.hidden && terms.get(${JSON.stringify(theirs)}).el.hidden && $('#roomTask').textContent === 'E2E goal' && $('#roomWho').textContent === 'Your agent'`));
     check('the session panel lists both people and their agents', await until(`$('#panelBody').querySelectorAll('.person').length === 2 && $('#panelBody').querySelectorAll('.agent-card').length === 2 && !!$('#panelBody [data-add]')`));
     check('the sidebar lists the workspace with its session', await js(`!!$('#workspaces .ws') && $('#workspaces .ws-session.on')?.textContent.trim() === 's1'`), await js(`$('#workspaces').textContent.replace(/\\s+/g, ' ')`));
-    check('live git diff shows on your lane', await until(`!!terms.get(${JSON.stringify(mine)}).bar.querySelector('.diff')`, 12000));
+    // Its git report reaches the hub, and when the checkout has changes the bar shows them (a clean one equal to main has none).
+    check('live git status shows on your lane', await until(`(() => { const g = hubLanes.find(l => l.id === ${JSON.stringify(mine)})?.git;
+      return !!g && (!(g.added || g.removed || g.files) || !!terms.get(${JSON.stringify(mine)}).bar.querySelector('.diff')); })()`, 12000));
     await js(`$('#panelBody [data-focus="${theirs}"]').click()`);
     check('clicking a teammate\'s agent shows it full size', await until(`focus === ${JSON.stringify(theirs)} && terms.get(${JSON.stringify(mine)}).el.hidden && !terms.get(${JSON.stringify(theirs)}).el.hidden && $('#roomWho').textContent === "Max's agent" && !$('#myAgent').hidden`));
     const large = await js(`terms.get(${JSON.stringify(theirs)}).term.options.fontSize`);
@@ -243,12 +263,26 @@ async function run(win, hub) {
     check('Claude gets the note before reading the file', /Never cache totals/.test((await hook(mine, mySecret, { hook_event_name: 'PreToolUse', tool_name: 'Read', tool_input: { file_path: path.join(root, 'src/x.ts') } }))?.additionalContext || ''));
 
     // ---- an agent from a GitHub repo: its own branch and folder
+    await js(OFF_SIZE);
     const clone = makeDemoRepo();
     await js(`openNewAgent('Fix Login'); $('input[name=source][value=repo]').checked = true; syncSource(); $('#repo').value = 'protoplasma-e2e/demo'; $('#task').value = ''; $('#agentForm').requestSubmit()`);
     check('starts an agent from a repo', await until('local.size === 2', 15000), await js(`$('#agentErr').textContent`));
     const second = await js(`[...local.keys()].find(id => id !== ${JSON.stringify(mine)})`);
     check('the session works on its own branch', await until(`hubLanes.find(l => l.id === ${JSON.stringify(second)})?.branch === 'session/fix-login'`, 12000),
       await js(`hubLanes.find(l => l.id === ${JSON.stringify(second)})?.branch`));
+    check('its text is drawn at the size its cells were measured for', await until(`!!terms.get(${JSON.stringify(second)}) && !terms.get(${JSON.stringify(second)}).el.hidden && offSize().length === 0`, 6000), await js('JSON.stringify(offSize())'));
+    // The display's pixel ratio blinks just as the terminal redraws its letters, and nothing tells it: they'd stay at
+    // half size in full-size cells. The app notices at its next redraw and gives the terminal a new renderer.
+    if (await js(`!!terms.get(${JSON.stringify(second)}).webgl`)) {
+      await js(`(() => { const own = Object.getOwnPropertyDescriptor(window, 'devicePixelRatio'), real = devicePixelRatio;
+        Object.defineProperty(window, 'devicePixelRatio', { get: () => real / 2, configurable: true });
+        const t = terms.get(${JSON.stringify(second)}).term;
+        t.options.theme = { ...t.options.theme }; // any change of options redraws the letters
+        if (own) Object.defineProperty(window, 'devicePixelRatio', own); else delete window.devicePixelRatio; })(); 0`);
+      const off = await js('JSON.stringify(offSize())');
+      await js('render(); 0');
+      check('letters drawn for another pixel ratio are redrawn at the right one', off !== '[]' && await until('offSize().length === 0', 6000), `${off} -> ${await js('JSON.stringify(offSize())')}`);
+    }
     check('in its own folder, leaving the clone on main', fs.existsSync(path.join(demoOwner, 'demo@fix-login', 'README.md')) && git(clone, 'branch', '--show-current') === 'main');
     check('the clone gets the push guard', /Added by Protoplasma/.test(fs.readFileSync(path.join(clone, '.git/hooks/pre-push'), 'utf8')));
 
@@ -321,8 +355,9 @@ async function run(win, hub) {
     check('Code again goes back to just the agents', await until(`!$('#room').classList.contains('coding') && $('#code').hidden && $('#dockTabs').hidden`));
 
     // ---- a plan, renaming with agents running, comments on lines, conflicts, and pane mode (as in Amoeba)
-    await js(`openSession('Fix Login'); tab = 'plan'; render(); $('#stepText').value = 'Lock the seat row'; $('#stepForm').requestSubmit(); 0`);
+    await js(`openSession('Fix Login'); panelTab = 'plan'; render(); $('#stepText').value = 'Lock the seat row'; $('#stepForm').requestSubmit(); 0`);
     check('a session gets a plan with steps', await until(`recordFor('Fix Login')?.steps?.length === 1 && /Lock the seat row/.test($('#stepList').textContent)`));
+    check('the plan opens in the side panel, with the agents still on screen', await js(`(() => { const p = $('#planPanel'); return !p.hidden && !!p.closest('#panel') && p.clientWidth > 0 && p.scrollWidth <= p.clientWidth && !$('#lanes').hidden && $('#panelBody').hidden; })()`));
     await js(`$('#stepList input[type=checkbox]').click(); 0`);
     check('a step can be ticked off', await until(`recordFor('Fix Login').steps[0].done === true`));
     await js(`go('sessions')`);
@@ -331,12 +366,13 @@ async function run(win, hub) {
     check('a session can be renamed while its agent runs, and the agent moves with it', await until(`hubLanes.find(l => l.id === ${JSON.stringify(second)})?.session === 'Login work' && local.get(${JSON.stringify(second)}).session === 'Login work' && /Login work/.test($('#sessions').textContent)`));
     await js(`proto.renameSession(currentTeam.key, 'Login work', 'Fix Login').then(r => { sessionRecords = r; render(); }); 0`);
     await until(`local.get(${JSON.stringify(second)}).session === 'Fix Login'`);
-    // Waits for openFile itself: it marks the file active before it loads it, then focuses the editor, which used to take
-    // focus from the comment field below now and then.
+    // This step failed now and then until 16 Nov: the session's folder finishing its load showed the open file again,
+    // and that took focus from the comment field (code.js showActive).
     await js(`openSession('Fix Login'); openFile('README.md')`);
     await until(`code.active === 'README.md' && !!editor.getModel()`);
     await js(`editor.setSelection(new monaco.Selection(1, 1, 1, 4)); editor.getAction('protoplasma.comment').run(); 0`);
     check('Comment on this points the next comment at those lines', await until(`commentRef?.file === 'README.md' && commentRef.line === 1 && !$('#commentRef').hidden && document.activeElement === $('#commentText')`));
+    check('and the file being shown again behind it leaves you in the comment', await js(`showActive().then(() => document.activeElement === $('#commentText'))`));
     await js(`$('#commentText').value = 'Say what this repo is for'; $('#commentForm').requestSubmit(); 0`);
     check('the comment shows the line it is about, and the editor marks the line', await until(`recordFor('Fix Login')?.comments?.at(-1)?.line === 1 && /README\.md:1/.test($('#panelBody').textContent) && editor.getModel().getAllDecorations().some(d => d.options.glyphMarginClassName === 'comment-glyph')`));
     check('Ask my agent sends the comment with its lines, to your agent here or a new one', await js(`(() => { const c = recordFor('Fix Login').comments.at(-1), p = commentPrompt(c);
@@ -352,11 +388,11 @@ async function run(win, hub) {
     // ---- notes that keep up with the code
     // This session has no GitHub repo, so the Memory form won't pin a note to a file: add it as the form would.
     await js(`(async () => { const hash = await proto.code.hash(await rootFor(current), 'README.md');
-      memories = await proto.addMemory(currentTeam.key, { text: 'Keep the intro short', file: 'README.md', repo: roomRepo, hash }); tab = 'memory'; render(); })(); 0`);
+      memories = await proto.addMemory(currentTeam.key, { text: 'Keep the intro short', file: 'README.md', repo: roomRepo, hash }); panelTab = 'memory'; render(); })(); 0`);
     check('a note on a file keeps what the file held', await until(`memories.some(m => m.text === 'Keep the intro short' && /^[\\w-]{16}$/.test(m.hash || ''))`, 10000));
     await js(`proto.addMemory(currentTeam.key, { text: 'Written against an older README', file: 'README.md', repo: roomRepo, hash: 'older-readme-0000' }).then(list => { memories = list; checkNotes.at = 0; render(); }); 0`);
     check('a note whose file has changed since says so, and one that still matches doesn\'t', await until(`(() => { const rows = [...document.querySelectorAll('#memoryList .memory')].map(r => r.textContent); const row = t => rows.find(r => r.includes(t)) || ''; return /File changed since/.test(row('older README')) && !!row('Keep the intro short') && !/File changed since/.test(row('Keep the intro short')); })()`, 10000), await js(`$('#memoryList').textContent.replace(/\\s+/g, ' ')`));
-    await js(`(async () => { for (const m of memories.filter(m => /Keep the intro short|older README/.test(m.text))) memories = await proto.removeMemory(currentTeam.key, m.id); tab = 'agents'; render(); })(); 0`);
+    await js(`(async () => { for (const m of memories.filter(m => /Keep the intro short|older README/.test(m.text))) memories = await proto.removeMemory(currentTeam.key, m.id); panelTab = 'session'; render(); })(); 0`);
     await until(`!memories.some(m => /Keep the intro short|older README/.test(m.text))`);
     await js(`$('[data-explorer="conflicts"]').click(); 0`);
     check('the Explorer has a Conflicts tab', await until(`code.explorer === 'conflicts' && !$('#codeConflicts').hidden && $('#conflictCount').textContent === '0' && /Nothing here/.test($('#codeConflicts').textContent)`));
@@ -372,6 +408,7 @@ async function run(win, hub) {
       return started?.session === 's1' && /Max started/.test(started.prompt); })()`));
     await js(`$('#singlePane').click(); 0`);
     check('Single goes back to one session, terminals and all', await until(`view === 'session' && current === 'Fix Login' && $('#lanes').contains(terms.get(${JSON.stringify(second)}).el) && $('#lanes').contains(terms.get(${JSON.stringify(mine)}).el)`));
+    check('after pane mode, text is still drawn at the size its cells were measured for', await until('offSize().length === 0', 6000), await js('JSON.stringify(offSize())'));
 
     // ---- with session branches off, a repo session works on the clone's own branch
     await js(`$('#settingsBtn').click(); $('input[data-pref=sessionBranches]').click(); $('#settingsDone').click();
@@ -410,7 +447,7 @@ async function run(win, hub) {
     await js(`openSession('s1'); $('#panelBody [data-act=done]').click()`);
     check('Mark done', await until(`recordFor('s1')?.done === true`));
     check('a finished session leaves the sidebar but stays on the Sessions page', await js(`go('sessions'); !$('#workspaces [data-session="s1"]') && /Done/.test($('#sessions [data-session="s1"]').textContent)`));
-    await js(`window.confirm = () => true; openSession('s1'); tab = 'memory'; render(); $('#panelBody [data-act=delete]').click()`);
+    await js(`window.confirm = () => true; openSession('s1'); render(); $('#panelBody [data-act=delete]').click()`);
     check('Delete removes it', await until(`!recordFor('s1')`));
     check('and you land back on the Sessions page', await until(`view === 'sessions' && !$('#sessionsPage').hidden && $('#room').hidden && !$('#sessions [data-session="s1"]')`));
     await js(`$('#sessions [data-menu="Fix Login"]').click()`);
@@ -425,7 +462,7 @@ async function run(win, hub) {
     check('⌘K finds pages by name', await js(`$('#switcher').open && /People/.test($('#switcherList').textContent)`));
     await js(`$('#switcherInput').onkeydown(new KeyboardEvent('keydown', { key: 'Enter' }))`);
     check('and goes there', await until(`!$('#switcher').open && view === 'people'`));
-    await js(`go('sessions'); renderSetup([{ cmd: 'claude', installed: false }], { ok: false, detail: 'Not installed. Run "brew install gh", then "gh auth login".' })`);
+    await js(`go('sessions'); renderSetup(agents.map(a => ({ ...a, installed: false })), { ok: false, detail: 'Not installed. Run "brew install gh", then "gh auth login".' })`);
     check('the setup checklist lists what is missing', await js(`!$('#setup').hidden && $('#setup').querySelectorAll('.setup-item').length === 2`));
     await js(`checkSetup(); 0`);
     check('and disappears once this Mac is set up', await until(`$('#setup').hidden`, 15000));
@@ -475,6 +512,9 @@ async function run(win, hub) {
     // ---- signing out stops your agents and clears the board
     await js(`openNewAgent('bye'); $('input[name=source][value=folder]').checked = true; syncSource(); $('#cwd').value = ${JSON.stringify(root)}; $('#agentForm').requestSubmit()`);
     await until('local.size === 1 && hubLanes.length === 1', 15000);
+    // The letters in a terminal are drawn on a canvas with this font. Electron 44.11.3's canvas refused it (xterm writes it
+    // with a leading space), and every letter came out in the canvas's own 10px font: tiny, in full-size cells.
+    check('a canvas takes the font terminals draw their letters with', await js(`(() => { const c = document.createElement('canvas').getContext('2d'); c.font = ' normal 25px ' + terminalFont(); return c.font.startsWith('25px'); })()`));
     await js(`$('#signout').click()`);
     check('signing out stops your agents and returns to sign-in', await until(`local.size === 0 && me === null && currentTeam === null && $('#start').open && !$('#signinView').hidden && terms.size === 0`, 10000),
       await js(`JSON.stringify({ local: local.size, terms: terms.size, me: !!me })`));

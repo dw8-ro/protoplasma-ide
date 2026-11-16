@@ -129,6 +129,64 @@ test('an edit counts from its PreToolUse, which also shows the agent working aga
   await closed(l.ws);
 });
 
+// An agent's status as the hub has it, waited for (each look is a round trip).
+const statusOf = async id => (await state()).lanes.find(x => x.id === id)?.status;
+const reaches = async (id, want) => { for (let i = 0; i < 50; i++) if (await statusOf(id) === want) return want; return statusOf(id); };
+// Once the hub has handled everything this agent sent before: a size change is handled in order, and shows in the state.
+const handled = async (l, cols) => {
+  l.ws.send(JSON.stringify({ t: 'size', cols, rows: 30 }));
+  for (let i = 0; i < 50 && (await state()).lanes.find(x => x.id === l.id)?.cols !== cols; i++);
+};
+
+test('a question from the agent, or a plan to approve, shows as needing you', async () => {
+  const l = await lane({});
+  for (const tool of ['AskUserQuestion', 'ExitPlanMode', 'request_user_input']) {
+    await hook(l.id, { hook_event_name: 'PreToolUse', tool_name: 'Read', tool_input: { file_path: '/r/a.ts' } });
+    assert.equal(await reaches(l.id, 'working'), 'working');
+    await hook(l.id, { hook_event_name: 'PreToolUse', tool_name: tool });
+    assert.equal(await reaches(l.id, 'needs you'), 'needs you', tool);
+  }
+  await closed(l.ws);
+});
+
+test('what the screen did after a person\'s key ends a stale status, only for an agent with hooks', async () => {
+  const l = await lane({});
+  const key = moving => l.ws.send(JSON.stringify({ t: 'key', moving }));
+  l.ws.send(JSON.stringify({ t: 'status', status: 'working' })); // no hooks yet: its own word counts
+  assert.equal(await reaches(l.id, 'working'), 'working');
+  key(false);
+  await handled(l, 101);
+  assert.equal(await statusOf(l.id), 'working', 'nothing without hooks');
+  await hook(l.id, { hook_event_name: 'PermissionRequest' });
+  assert.equal(await reaches(l.id, 'needs you'), 'needs you');
+  key(true); // approved, and the command prints on: no hook says so until it ends
+  assert.equal(await reaches(l.id, 'working'), 'working');
+  key(false); // Esc, then a quiet screen: interrupted, which runs no Stop hook
+  assert.equal(await reaches(l.id, 'idle'), 'idle');
+  key(true);
+  await handled(l, 102);
+  assert.equal(await statusOf(l.id), 'idle', 'printing alone doesn\'t make an idle agent work');
+  await hook(l.id, { hook_event_name: 'PermissionRequest' });
+  key(false); // Esc at the question
+  assert.equal(await reaches(l.id, 'idle'), 'idle');
+  await hook(l.id, { hook_event_name: 'UserPromptSubmit', prompt: 'go' });
+  await hook(l.id, { hook_event_name: 'Interrupt' }); // Codex says so itself
+  assert.equal(await reaches(l.id, 'idle'), 'idle');
+  await closed(l.ws);
+});
+
+test('an agent that comes back after the hub saw it go still has its status from its hooks', async () => {
+  const first = await lane({ id: 'sleepy', cmd: 'codex' });
+  await hook('sleepy', { hook_event_name: 'PermissionRequest' });
+  await closed(first.ws);
+  for (let i = 0; i < 50 && !(await state()).stopped.some(s => s.id === 'sleepy'); i++);
+  const back = await lane({ id: 'sleepy', cmd: 'codex' }); // a Mac waking up
+  back.ws.send(JSON.stringify({ t: 'status', status: 'idle' })); // its guess from a quiet screen
+  await handled(back, 101);
+  assert.equal(await statusOf('sleepy'), 'needs you', 'still waiting on the person');
+  await closed(back.ws);
+});
+
 test('only the session creator\'s (or the owner\'s) agent sets a session\'s repo', async () => {
   await api('tok-alice', 'POST', `/teams/${team.id}/sessions`, { name: 'alices-work', task: 'x' });
   const theirs = await lane({ session: 'alices-work', repo: 'bob/evil' }, 'tok-bob');
@@ -159,6 +217,51 @@ const watcher = token => new Promise((resolve, reject) => {
   ws.on('open', () => ws.send(JSON.stringify({ t: 'watch', token, team: team.id })));
   ws.on('message', function first(raw) { if (JSON.parse(raw).t === 'state') { ws.off('message', first); resolve(ws); } });
   ws.on('error', reject);
+});
+
+test('a branch that would conflict with main is shown to the team, and its agent is told', async () => {
+  const l = await lane({ branch: 'session/x' });
+  l.ws.send(JSON.stringify({ t: 'git', branch: 'session/x', mainBranch: 'main', added: 1, removed: 1, files: 1, behind: 1, ahead: 1, changed: ['a.ts'], conflicts: ['src/a.ts', 42, 'x'.repeat(400)] }));
+  let mine;
+  for (let i = 0; i < 50 && !mine?.conflicts?.length; i++) mine = (await state()).lanes.find(x => x.id === l.id);
+  assert.deepEqual(mine.conflicts, ['src/a.ts', 'x'.repeat(300)], 'names only, and no longer than a path');
+  const context = (await hook(l.id, { hook_event_name: 'UserPromptSubmit', prompt: 'hi' })).hookSpecificOutput.additionalContext;
+  assert.match(context, /Your branch "session\/x" would conflict with main if it were merged today \(from Protoplasma\), in: src\/a\.ts/);
+  l.ws.send(JSON.stringify({ t: 'git', branch: 'session/x', mainBranch: 'main', added: 1, removed: 1, files: 1, behind: 0, ahead: 1, changed: ['a.ts'], conflicts: [] }));
+  for (let i = 0; i < 50 && mine.conflicts.length; i++) mine = (await state()).lanes.find(x => x.id === l.id);
+  assert.deepEqual(mine.conflicts, [], 'and it goes once they are settled');
+  await closed(l.ws);
+});
+
+test('a window gets agents\' output only for the sessions it shows, and their screens as one comes into view', async () => {
+  const a = await lane({ session: 'in-view' }), b = await lane({ session: 'elsewhere' });
+  a.ws.send(JSON.stringify({ t: 'out', d: 'A-before ' }));
+  b.ws.send(JSON.stringify({ t: 'out', d: 'B-before ' }));
+  // A window that says which sessions it shows (none yet), and one that doesn't say, as apps before this.
+  const open = hello => new Promise((resolve, reject) => {
+    const ws = new WebSocket(`${url.replace('http', 'ws')}/watch`), got = [];
+    ws.on('open', () => ws.send(JSON.stringify({ t: 'watch', token: 'tok-bob', team: team.id, ...hello })));
+    ws.on('message', raw => { const m = JSON.parse(raw); if (m.t === 'out' && [a.id, b.id].includes(m.lane)) got.push(`${m.lane === a.id ? 'A' : 'B'}:${m.d}`); if (m.t === 'state') resolve({ ws, got }); });
+    ws.on('error', reject);
+  });
+  const picky = await open({ sees: [] }), plain = await open({});
+  assert.equal((await state()).replays, true, 'the hub says it replays screens, so a window may drop the terminals it isn\'t showing');
+  await handled(a, 101);
+  await handled(b, 101);
+  assert.deepEqual(picky.got, [], 'nothing until it shows a session');
+  assert.ok(plain.got.some(x => x.startsWith('A:')) && plain.got.some(x => x.startsWith('B:')), 'a window that doesn\'t say gets everything, as before');
+  picky.ws.send(JSON.stringify({ t: 'look', session: 'in-view', sees: ['in-view'] }));
+  a.ws.send(JSON.stringify({ t: 'out', d: 'A-live' }));
+  b.ws.send(JSON.stringify({ t: 'out', d: 'B-live' }));
+  for (let i = 0; i < 100 && !picky.got.includes('A:A-live'); i++) await new Promise(r => setTimeout(r, 20));
+  await handled(b, 102);
+  assert.match(picky.got[0], /^A:\x1bc[\s\S]*A-before /, 'the agent\'s screen so far, when its session comes into view');
+  assert.ok(picky.got.includes('A:A-live') && !picky.got.some(x => x.startsWith('B:')), 'then its output, and none from the session it doesn\'t show');
+  await api('tok-alice', 'POST', `/teams/${team.id}/sessions/in-view`, { rename: 'renamed-in-view' });
+  a.ws.send(JSON.stringify({ t: 'out', d: 'A-renamed' }));
+  for (let i = 0; i < 100 && !picky.got.includes('A:A-renamed'); i++) await new Promise(r => setTimeout(r, 20));
+  assert.ok(picky.got.includes('A:A-renamed'), 'a renamed session stays in view');
+  await Promise.all([closed(picky.ws), closed(plain.ws), closed(a.ws), closed(b.ws)]);
 });
 
 test('a file request the agent\'s app never answers fails after 10 s', { timeout: 20_000 }, async () => {

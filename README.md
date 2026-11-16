@@ -100,7 +100,7 @@ The [GitHub CLI](https://cli.github.com) (`brew install gh`, then `gh auth login
 
 ### The real CLI
 
-Each agent is the actual `claude`, `codex` or `opencode` process, under your own account, in a real terminal, and you type straight into it. The only thing Protoplasma adds is hooks for Claude Code and Codex, for that run only, which give the agent the team's context and ask you before a conflicting edit or a risky push. Codex asks you to trust them the first time.
+Each agent is the actual `claude`, `codex` or `opencode` process, under your own account, in a real terminal, and you type straight into it. The only thing Protoplasma adds is hooks for Claude Code and Codex (and for OpenCode a plugin that does the same, not yet tried against a live model), for that run only, which give the agent the team's context and ask you before a conflicting edit or a risky push. Codex asks you to trust them the first time.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/readme/agents-dark.png">
@@ -142,9 +142,11 @@ Work can move between people. **Continue** on a teammate's agent, running or sto
 
 Pick one of your GitHub repos or a folder on your Mac, and the agent to run. A session started from a repo gets its own branch and folder.
 
+Any other agent CLI works too: put its command in Settings → Agents → **Other command** (for example `gemini`). It gets a shared terminal, overlap warnings from git and the push guard. It has none of Protoplasma's hooks, so its status is a guess from its output and it isn't told what teammates' agents are doing.
+
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/readme/start-dark.png">
-  <img src="docs/readme/start-light.png" alt="Starting a session: what you're working on, the goal, a GitHub repo, and Claude Code, Codex or OpenCode">
+  <img src="docs/readme/start-light.png" alt="Starting a session: what the agent should do, a GitHub repo, and Claude Code, Codex or OpenCode">
 </picture>
 
 ## How it works
@@ -172,7 +174,7 @@ Work reaches `main` the usual way, through a pull request. These layers make col
 
 - **Sign-in** asks for read-only access to your public GitHub profile and nothing else. Repo access stays with the GitHub CLI on your Mac.
 - **What the hub keeps:** team names, members, notes, and sessions with their goals, repos, who started them, plans and comments (a comment on lines of code keeps the text of those lines).
-- **What passes through it:** while an agent runs, its terminal output, Claude Code's and Codex's hook events (which include what a tool is about to change), its latest prompt, its branch, the names of the files its checkout changed, and its folder's path. Up to 512 KB of each agent's output is held in memory, with the last screen of the 20 most recently stopped agents per team. None of it is written to disk.
+- **What passes through it:** while an agent runs, its terminal output, its branch, the names of the files its checkout changed, and its folder's path. From Claude Code's and Codex's hooks the hub gets only which tool is about to run, the name of the file it changes or the command it runs (up to 20,000 characters), and the first 300 characters of the latest prompt: the app on your Mac takes everything else out first, so the text an agent writes into a file never leaves it this way. Up to 512 KB of each agent's output is held in memory, with the last screen of the 20 most recently stopped agents per team. None of it is written to disk.
 - **Your GitHub sign-in** goes only to GitHub, the online hub and the hub on your own Mac. A team hosted on a teammate's Mac is reached over an encrypted connection, pinned to that Mac's certificate, with a pass from the online hub that works only on that Mac's hub and expires within 12 hours. Passes are only issued for a Mac whose owner registered it, so something on the network pretending to be a teammate's Mac gets nothing it can use. Looking for such teams is off until you turn it on in Your teams, and a team on your Mac can't be reached from the network until you invite someone to it.
 - **Your code** is read and written on your Mac only, and the hub never stores it. Teammates see which files changed; what your agent prints in its terminal is visible to the whole team. With **Share the files your agents change** on (Settings → Agents, off by default), a teammate can open those files read-only; each one passes through the hub and isn't kept.
 - **Teams** are invite-only, and removing someone disconnects them at once. People are recognised by their GitHub account's id, so renaming your account keeps your place, and whoever later takes your old username doesn't get it.
@@ -237,12 +239,12 @@ The first message on every WebSocket carries a team id and a GitHub token, or, f
 
 | Endpoint | Direction | Messages |
 | --- | --- | --- |
-| `/lane` | lane → hub | `hello {token, team, id, hookSecret, session, cmd, root, roots, repo, branch, git, cols, rows, open, history, machine}`, `out {d}`, `size {cols, rows}`, `git {branch, mainBranch, added, removed, files, behind, ahead, unpushed, changed, local}`, `status {status}` |
+| `/lane` | lane → hub | `hello {token, team, id, hookSecret, session, cmd, root, roots, repo, branch, git, cols, rows, open, history, machine}`, `out {d}`, `size {cols, rows}`, `git {branch, mainBranch, added, removed, files, behind, ahead, unpushed, changed, local}`, `status {status}`, `key {moving}` (after a person's Enter, Esc or Ctrl-C: whether the screen kept printing) |
 | | hub → lane | `in {d}` (only for agents teammates may type into) |
-| `/watch` | app → hub | `watch {token, team}`, `look {session}`, `in {lane, d}`, `replay {id}`, `file:get {lane, path, ask}` (a teammate's file), `file:put {req, text, error}` (answering for your own agent) |
-| | hub → app | `state {lanes, watchers, members, memories, sessions, stopped}`, `out {lane, d}`, `replay {id, d}`, `file:get {req, lane, path, from}`, `file:put {ask, text, error}` |
+| `/watch` | app → hub | `watch {token, team, sees}`, `look {session, sees}` (`sees`: the sessions whose terminals the window shows; it gets `out` only for those, and a window that never sends it gets everything), `in {lane, d}`, `replay {id}`, `file:get {lane, path, ask}` (a teammate's file), `file:put {req, text, error}` (answering for your own agent) |
+| | hub → app | `state {replays, lanes, watchers, members, memories, sessions, stopped}` (`replays`: this hub sends an agent's screen when its session comes into view), `out {lane, d}`, `replay {id, d}`, `file:get {req, lane, path, from}`, `file:put {ask, text, error}` |
 | `/teams` | app → hub | REST for teams, members, notes, sessions (renaming, goals, plan steps, hand-offs) and comments |
-| `/hooks/:lane` | Claude Code, Codex → hub | Hook events, authenticated with a per-lane secret |
+| `/hooks/:lane` | Claude Code, Codex → hub | Hook events, cut down by the app to what the hub reads (`hook_event_name`, `cwd`, and for a tool call `tool_name` with its `file_path`, `notebook_path`, `command` or `cmd`; for a prompt its first 300 characters), authenticated with a per-lane secret |
 | `/hubs` | app → online hub | `POST {fp}`: registers the certificate of the hub on your Mac |
 | `/passes` | app → online hub | `POST {aud}`: a pass for the hub whose certificate fingerprint is `aud`, with `owners`, who registered it. `GET /passes/key`: the public key passes are signed with |
 
@@ -253,7 +255,7 @@ A hub on someone's Mac serves https/wss with its own self-signed certificate. Te
 
 - [ ] Notarised builds, so browser downloads open without the first-launch prompt
 - [ ] Coordination tools over MCP, so agents can leave notes and message each other
-- [ ] Hooks for OpenCode (a plugin), like Claude Code's and Codex's
+- [ ] OpenCode's hooks tried against a live model (they're in, as a plugin, written from its plugin types), and a plugin for OpenCode 2
 - [ ] Viewer role
 
 ## Licence

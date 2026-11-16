@@ -36,8 +36,9 @@ Two things you'll see that are expected:
 - [ ] **David:** People → **Invite** → Max's GitHub username. Max shows as a member.
 - [ ] **Max:** "Test" appears in his team list on its own within about 30 seconds. He opens it, and both see each
   other on the People page.
-- [ ] **David:** Sessions → **New**: session "Try it", a goal ("Tidy the README"), repo `dw8-ro/protoplasma-test`,
-  then **Start the session**. Claude Code starts in its own folder
+- [ ] **David:** Sessions → **New**: type what the agent should do ("Tidy the README"), name the session "Try it",
+  pick the repo `dw8-ro/protoplasma-test`, then **Start the session**. What you typed goes to the agent as its first
+  message once you've answered its trust question (untick it under More options to start it empty). Claude Code starts in its own folder
   (`~/Protoplasma/dw8-ro/protoplasma-test@try-it`, branch `session/try-it`). Answer its trust question.
 - [ ] **Max:** the session appears with David's agent. Opening it shows David's terminal live.
 - [ ] **Max:** **Add an agent** in the same session, with Codex. The goal and repo are filled in. Codex shows
@@ -56,6 +57,17 @@ Overlaps and the push guard, the core of the app:
   (team context in its prompt).
 - [ ] **Max:** ask Codex to push to main. It's stopped once with Protoplasma's reason. **David:** ask Claude to run
   `git push origin HEAD:main`. Claude asks first. **Say no both times.**
+
+Status tells the truth (these are expected to fail on 0.6.1: they're the checks for phase 1 of
+[plan.md](plan.md), so note what you see and try them again after that release):
+- [ ] **David:** give Claude something long to do and press Esc while it works. Its card says Idle within a few
+  seconds, not Working.
+- [ ] **David:** ask Claude to ask you which of two names you prefer before it renames something. While its question
+  is up, the card says Needs you and the alert shows.
+- [ ] **David:** ask Claude to run `sleep 60` and approve it. The card goes from Needs you to Working as soon as you
+  approve, not a minute later.
+- [ ] **Max:** the same three with Codex.
+- [ ] **Max:** while Codex waits for an approval, close the lid for a minute and open it. It still says Needs you.
 
 Sharing work:
 - [ ] **David:** open the code view (**Code**), make a change, and **Commit & Push**. It goes to `session/try-it`,

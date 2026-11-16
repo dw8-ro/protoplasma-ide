@@ -1,9 +1,79 @@
-# Handoff: Protoplasma IDE, 8 November 2026
+# Handoff: Protoplasma IDE, 16 November 2026
 
 Read this first in a new session, then [AGENTS.md](AGENTS.md) for how the code fits together. What the last sessions
 did: [docs/sessions/2026-10-29.md](docs/sessions/2026-10-29.md) (the second security audit),
 [docs/sessions/2026-10-26.md](docs/sessions/2026-10-26.md) (19–26 Oct) and
 [docs/sessions/2026-10-18.md](docs/sessions/2026-10-18.md) (the first security audit).
+
+## Built on 15 Nov 2026, not released: most of the plan
+
+Everything below is committed on the worktree branch `claude/protoplasma-research-market-84c834` (on top of `bc9d448`, which is
+`origin/main`: see `git log bc9d448..`). **Nothing is pushed.** Pushing `main` redeploys the hosted hub (hub.js and
+shared.js changed) and a tag releases to installed copies: both are David's call, after he has tried it.
+- **The plan and what's left of it:** [docs/plan.md](docs/plan.md). **The log of this work,** with every decision taken
+  while David was away: [docs/sessions/2026-11-15.md](docs/sessions/2026-11-15.md). **The findings behind it:**
+  [docs/research/](docs/research/). **Notes for the release:** [docs/release-notes/0.7.0.md](docs/release-notes/0.7.0.md)
+  (a minor version: `npm version minor`, not `npm run release`).
+- **Checks:** `npm test` 120 of 120. `npm run e2e` 144 of 144 on Electron 44.10.2 (some runs: one fewer, failing only "Comment on this points
+  the next comment at those lines", which needs the window to have focus). The customer simulation: 91 of 91.
+
+**Added on 16 Nov** (commits `e13c3e5` and `915a9a4`, same branch, not pushed):
+- Plan and Memory open in the side panel (`panelTab` `plan`/`memory`, from their rows under Session), so the agents
+  stay on screen. Not looked at by eye: no screenshot was taken. David: open each once and say if it reads well.
+- A quiet agent whose folder stopped changing is asked for its git status every 15 s, not 5 (lane.js `SETTLED_MS`,
+  `SLOW`). A change made outside such an agent shows up to 15 s later.
+- The open file being shown again in the background (a session's folder finishing its load, an agent changing the
+  file) no longer takes focus out of a comment, a commit message or a terminal (code.js `showActive`). This was the
+  cause of e2e's "Comment on this…" step failing now and then; it was put down to window focus before, wrongly.
+- Checks after that: `npm run e2e` 146 of 146 (two new checks since 15 Nov). `npm test` 120 of 120 at `915a9a4`; the
+  focus fix touched only app/code.js and e2e, which `npm test` doesn't load.
+- Not rerun: the customer simulation, since the Electron revert and since Plan and Memory moved.
+  `scripts/customer/s3.js` was changed for the new rows and has never been run in that form.
+- The README pictures and the demo gif are from before Plan and Memory moved.
+
+**Start here in a new session:**
+1. **The redesign is half done.** What's built is simpler structure and wording. There has been no visual pass (David
+   asked for sleeker and more modern; colours, spacing and type are as in 0.6.1), and the review page the plan asks
+   for was never made. Next: a review page (an artifact) with before and after for U2 (team picker), U4 (one
+   "beside"), U7 (a shorter bar under each terminal) and U10 (what to do about an overlap), plus a proposal for the
+   look, black and white. David marks it up; build after that.
+2. **Cheap, and needing no review:** rerun the customer simulation; regenerate the pictures (`npm run screenshot`,
+   `npm run readme-art`, `npm run demo`).
+3. **Then:** conflicts with teammates' pushed branches (phase 5), the largest item left.
+4. Work inline and commit after each tested step. Two multi-agent workflows died on the usage limit and lost their work.
+
+What's in, by phase:
+1. **Status you can trust.** A question from the agent is Needs you (`ASK_TOOLS`); an interrupt is Idle and an answered
+   permission is Working at once (lane.js `decided` sends `key {moving}`, hub.js applies it to agents with hooks);
+   `hooked` survives a reconnect; Codex gets `Interrupt` and a hook for its question tool, added after its four
+   trusted hooks so only the new two need a review. The relay sends the hub only what it reads (teams.js `slimHook`).
+2. **One table for agents** (`src/agents.js`), **"Other command"** for any CLI (Settings → Agents), and **hooks for
+   OpenCode** as a plugin (`src/opencode-plugin.mjs`).
+3. **Simpler:** New session asks what the agent should do, names the session from it and gives it to the agent as its
+   first message; fewer words elsewhere (see the plan for the list).
+4. **Lighter:** an agent's output goes only to windows showing its session (`sees`), and a teammate's terminal exists
+   only while its session is on screen.
+5. **Conflicts with main** are worked out per agent (`git merge-tree`), shown on its card and told to it.
+
+What it still needs, in order:
+- **David, live** (none of it could be done for him): the "Status tells the truth" block in
+  [docs/first-install.md](docs/first-install.md) with real Claude Code and Codex. The interrupt and answered-permission
+  rules rest on what the screen does after a key, which was tested with stand-ins, never with a real agent mid-turn.
+  Codex shows "Hooks need review" once for the two new hooks.
+- **OpenCode's hooks have never run against a live model:** no provider is signed in on this Mac. OpenCode 1.19.5 is
+  installed (`npm install -g opencode-ai`), and Codex was updated to 0.169.0.
+- **The README pictures** are regenerated for the new New session form (`npm run screenshot`, `npm run readme-art`).
+  The demo gif too (`npm run demo`).
+- **No independent review** of this work was run (the usage limit). hub.js, teams.js `slimHook` and main.js's "Other
+  command" are the parts to read first.
+- **Not built:** the rest of phase 3 (the team picker, one "beside", a shorter bar, what to do
+  about an overlap; Plan and Memory in the side panel is in since 16 Nov), and the rest of phase 5.
+- **Electron stays at 44.10.2. Don't take 44.11.x as it is:** its canvas refuses the font string xterm's WebGL renderer
+  draws letters with (`" normal 25px …"`, with a leading space), so every terminal's text comes out tiny in full-size
+  cells. This is what David saw twice. e2e now checks a canvas takes that font, so the next Electron update says so at
+  once. The way forward for 44.11 and later is an xterm that writes the font without the leading space.
+- **Seen once and not explained:** on the first launch of a freshly downloaded Electron, e2e's "creates a This Mac
+  team…" step failed; it passed on every later run.
 
 ## Latest release: v0.6.1 (8 Nov 2026, `a52368f`): small fixes, lighter teammates' terminals, and research on Rust
 
@@ -38,6 +108,10 @@ report, then decide on Tauri only if memory still matters.
   six busy teammate terminals that saves 30–40 MB in the page process. Measure with the new `scripts/memory.js`; the
   playground now starts with `--expose-gc`, so it measures after a collection. The GPU process can't be trimmed from
   the app: mostly the compositor and Skia's cache. Details in the research report, option A.
+- **Explained and fixed on 15 Nov:** the page error "Cannot read properties of undefined (reading 'dimensions')" was
+  `renderRoom`'s `requestAnimationFrame(() => t.term.scrollToBottom())` running on a terminal disposed before that
+  frame came (frames wait while the window is hidden). It now checks the terminal is still the lane's. The notes
+  below are what was tried before the stack was known.
 - **An unexplained page error, seen once:** "Cannot read properties of undefined (reading 'dimensions')".
   - When: one e2e run, the first launch of a freshly downloaded Electron 44.10.2, while a second agent's terminal was
     laid out (between "the clone gets the push guard" and "shows when the branch falls behind").

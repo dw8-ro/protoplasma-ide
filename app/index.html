@@ -121,6 +121,7 @@
   .pill.needs, .pill.overlap { background: color-mix(in srgb, currentColor 11%, transparent); border-color: color-mix(in srgb, currentColor 28%, transparent); }
   .pill.needs { color: var(--needs); }
   .pill.overlap { color: var(--overlap); }
+  .clash { color: var(--overlap); }
   .where { color: var(--faint); font-size: 12px; font-weight: 400; }
   @keyframes pulse { 50% { opacity: .35; } }
 
@@ -280,6 +281,15 @@
   .panel-tabs button { height: 26px; padding: 0 10px; border: 0; border-radius: 6px; background: none; color: var(--faint); cursor: pointer; font-weight: 500; font-size: 12.5px; }
   .panel-tabs button.on { background: var(--raised); color: var(--text); }
   .panel-body { flex: 1; min-height: 0; overflow: auto; padding: 12px; }
+  /* Plan and Memory open in the panel, from their rows under Session, so the agents stay on screen. */
+  .panel-head { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
+  .panel-head b { font-weight: 600; }
+  .panel .memory-form { grid-template-columns: minmax(0, 1fr); }
+  .panel .memory-form .btn { justify-self: start; }
+  .panel .step-form select { width: auto; }
+  .panel .step:hover { background: var(--raised); }
+  .panel .memory { padding: 12px; }
+  .panel .memory-meta { flex-wrap: wrap; }
   .person { margin-bottom: 16px; }
   .person-head { display: flex; align-items: center; gap: 9px; }
   .person-head b { flex: 1; font-weight: 600; overflow: hidden; text-overflow: ellipsis; }
@@ -604,6 +614,12 @@
   .segmented input:focus-visible + span { outline: 2px solid color-mix(in srgb, var(--text) 55%, transparent); }
   .toggle { display: flex; align-items: center; gap: 10px; color: var(--muted); cursor: pointer; }
   .toggle input { width: 16px; height: 16px; accent-color: var(--primary); }
+  .more { margin: 0 0 4px; }
+  #agent { scroll-padding-bottom: 104px; } /* what's scrolled to stays clear of the footer, which sticks to the bottom */
+  .more summary { color: var(--muted); font-size: 12px; font-weight: 500; cursor: pointer; width: fit-content; border-radius: 6px; }
+  .more summary:focus-visible { outline: 2px solid var(--focus, currentColor); outline-offset: 3px; }
+  .more[open] summary { margin-bottom: 12px; }
+  .more .toggle + .toggle { margin-top: 10px; }
   .actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 22px; }
   .members { list-style: none; margin: 18px 0 0; padding: 0; display: grid; gap: 2px; }
   .members li { display: flex; align-items: center; gap: 10px; padding: 6px 0; }
@@ -763,7 +779,7 @@
       <button id="codeToggle" class="btn small" title="Show the code (⇧⌘E)"><svg><use href="#icon-code"/></svg>Code</button>
       <button id="newPane" class="btn small">New pane</button>
       <button id="panelToggle" class="icon-btn" aria-label="Hide the session panel" title="Session panel"><svg><use href="#sidepanel"/></svg></button>
-      <button id="shareBtn" class="btn small primary">Share</button>
+      <button id="shareBtn" class="btn small primary">Invite</button>
     </div>
     <div class="room-body">
       <!-- The code: shown when you open a file, the way Amoeba does, with the agents moving to a panel underneath. -->
@@ -816,7 +832,12 @@
         </div>
         <div id="replayPanel" class="replay" hidden><div id="replayScreen"></div><p id="replayGone" class="gh-empty" hidden>That agent's screen isn't kept any more.</p></div>
         <div id="ghPanel" class="gh-panel" hidden></div>
-        <div id="planPanel" class="gh-panel" hidden>
+      </div>
+      <aside id="panel" class="panel">
+        <div class="panel-tabs" role="tablist"><button data-panel="session" class="on" role="tab">Session</button><button data-panel="environment" role="tab">Environment</button></div>
+        <div id="panelBody" class="panel-body"></div>
+        <div id="planPanel" class="panel-body" hidden>
+          <div class="panel-head"><button class="btn small" data-panel="session">Back</button><b>Plan</b></div>
           <form id="stepForm" class="memory-form step-form">
             <input id="stepText" maxlength="200" placeholder="A step, like Lock the seat row before writing" aria-label="Step" autocomplete="off">
             <select id="stepOwner" aria-label="Owner"></select>
@@ -825,7 +846,8 @@
           <p id="stepErr" class="error" role="alert"></p>
           <div id="stepList" class="steps-list"></div>
         </div>
-        <div id="memoryPanel" class="gh-panel" hidden>
+        <div id="memoryPanel" class="panel-body" hidden>
+          <div class="panel-head"><button class="btn small" data-panel="session">Back</button><b>Memory</b></div>
           <form id="memoryForm" class="memory-form">
             <input id="memoryText" maxlength="500" placeholder="Something every agent on the team should know" aria-label="Note" autocomplete="off">
             <input id="memoryFile" list="fileList" maxlength="300" placeholder="Pin to a file (optional)" aria-label="File" autocomplete="off">
@@ -836,10 +858,6 @@
           <p id="memoryErr" class="error" role="alert"></p>
           <div id="memoryList"></div>
         </div>
-      </div>
-      <aside id="panel" class="panel">
-        <div class="panel-tabs" role="tablist"><button data-panel="session" class="on" role="tab">Session</button><button data-panel="environment" role="tab">Environment</button></div>
-        <div id="panelBody" class="panel-body"></div>
         <form id="commentForm" class="comment-form"><div id="commentRef" class="comment-ref" hidden></div><input id="commentText" maxlength="500" placeholder="Comment for the people in this session" aria-label="Comment" autocomplete="off"></form>
         <div id="roomWatching" class="panel-foot"></div>
       </aside>
@@ -871,7 +889,7 @@
     <div id="teamList" class="team-list"></div>
     <p id="teamsNote" class="fine"></p>
     <label class="nearby fine"><input type="checkbox" id="findNearby"> Look for teams on this network</label>
-    <p class="fine">For teams hosted on a teammate's Mac. The connection is encrypted, and their Mac gets a pass from the online hub that works only there, never your GitHub sign-in.</p>
+    <p class="fine">For teams hosted on a teammate's Mac. Encrypted, and their Mac never gets your GitHub sign-in.</p>
     <form id="createTeam" class="create">
       <h3>Create a team</h3>
       <div class="segmented">
@@ -917,9 +935,9 @@
   <form id="agentForm">
     <h2 id="agentTitle">New session</h2>
     <p id="agentLede" class="lede"></p>
-    <label class="field"><span>What are you working on?</span><input id="session" list="sessionList" maxlength="60" placeholder="fix-login-bug" autocomplete="off"></label>
+    <label class="field"><span id="taskLabel">What should the agent do?</span><input id="task" maxlength="300" placeholder="Fix the double-booking race in the lobby" autocomplete="off"></label>
+    <label class="field"><span>Session name <span class="where">Optional</span></span><input id="session" list="sessionList" maxlength="60" placeholder="Named after what you typed above" autocomplete="off"></label>
     <datalist id="sessionList"></datalist>
-    <label class="field"><span>Goal for its agents <span class="where">Optional</span></span><input id="task" maxlength="300" placeholder="Fix the double-booking race in the lobby" autocomplete="off"></label>
     <fieldset class="field"><legend>Code</legend>
       <div class="segmented">
         <label><input type="radio" name="source" value="repo" checked><span>GitHub repo</span></label>
@@ -934,15 +952,15 @@
     <div id="folderField" class="field" hidden><span id="cwdLabel">Folder</span>
       <div class="row"><input id="cwd" readonly placeholder="Choose the folder it works in" aria-labelledby="cwdLabel"><button type="button" id="pick" class="btn">Choose…</button></div>
     </div>
-    <fieldset class="field"><legend>Agent</legend>
-      <div class="segmented">
-        <label><input type="radio" name="cmd" value="claude" checked><span>Claude Code</span></label>
-        <label><input type="radio" name="cmd" value="codex"><span>Codex</span></label>
-        <label><input type="radio" name="cmd" value="opencode"><span>OpenCode</span></label>
-      </div>
+    <fieldset id="agentField" class="field"><legend>Agent</legend>
+      <div id="agentPick" class="segmented"></div>
       <p id="agentHint" class="fine" hidden></p>
     </fieldset>
-    <label class="toggle"><input id="open" type="checkbox">Let teammates type into it</label>
+    <details id="agentMore" class="more">
+      <summary>More options</summary>
+      <label class="toggle"><input id="sendTask" type="checkbox" checked>Give what you typed to the agent as its first message</label>
+      <label class="toggle"><input id="open" type="checkbox">Let teammates type into it</label>
+    </details>
     <div class="foot">
       <p id="agentErr" class="error" role="alert"></p>
       <div class="actions"><button type="button" id="cancel" class="btn ghost">Cancel</button><button id="startAgent" class="btn primary">Start the session</button></div>
@@ -993,11 +1011,9 @@
       <div id="providers" class="group" style="margin-bottom: 14px"></div>
       <div class="group">
         <div class="setting"><div><b>Default agent</b><p>Preselected when you start a session or add an agent.</p></div>
-          <div class="segmented" style="min-width: min(330px, 100%)">
-            <label><input type="radio" name="prefAgent" data-pref="agent" value="claude"><span>Claude Code</span></label>
-            <label><input type="radio" name="prefAgent" data-pref="agent" value="codex"><span>Codex</span></label>
-            <label><input type="radio" name="prefAgent" data-pref="agent" value="opencode"><span>OpenCode</span></label>
-          </div></div>
+          <div id="prefAgentPick" class="segmented" style="min-width: min(330px, 100%)"></div></div>
+        <div class="setting"><div><b>Other command</b><p>Any other agent CLI, written as you'd type it in Terminal, like <kbd>gemini</kbd>. It gets a shared terminal, overlap warnings from git and the push guard, but none of Protoplasma's hooks, so its status is a guess.</p></div>
+          <input data-pref="otherCommand" maxlength="200" placeholder="None" aria-label="Other command" autocomplete="off" spellcheck="false" style="min-width: min(220px, 100%)"></div>
         <div class="setting"><div><b>Let teammates type by default</b><p>They can run commands on this Mac through your agent. Off is safer; you can still allow it per agent.</p></div>
           <input type="checkbox" class="switch" data-pref="open" aria-label="Let teammates type by default"></div>
         <div class="setting"><div><b>A branch for every session</b><p>Sessions started from a GitHub repo get their own branch (session/…) and folder, so main only changes through a push or pull request. Off works on the repo's current branch.</p></div>
@@ -1048,8 +1064,8 @@
       <h3>Data &amp; privacy</h3>
       <div class="group">
         <div class="setting"><div><b>Kept on the hub</b><p>Team names and members, notes, and sessions with their goals, repos, who started them, plans and comments. A comment on lines of code keeps the text of those lines (up to 300 characters), so it can find them again.</p></div></div>
-        <div class="setting"><div><b>Passed through the hub</b><p>While an agent runs: its terminal output (anyone on the team can watch it, so whatever it prints is visible to them), Claude Code's hook events, its latest prompt, its branch and the names of the files its checkout has changed, and its folder's path. Up to 512 KB of each agent's output is held in memory, so someone joining sees the current screen and a stopped agent's last screen can be looked at (the 20 most recent per team). None of it is written to disk, and it's gone when the hub restarts.</p></div></div>
-        <div class="setting"><div><b>Not kept on the hub</b><p>Your repos and their files (apart from the lines a comment is about, above). Agents and git run on your Mac, and the GitHub CLI's login stays here too. Some code does pass through without being kept: Claude Code's hook events include what a tool is about to change, and with "Share the files your agents change" on, teammates can open those files.</p></div></div>
+        <div class="setting"><div><b>Passed through the hub</b><p>While an agent runs: its terminal output (anyone on the team can watch it, so whatever it prints is visible to them), its branch and the names of the files its checkout has changed, and its folder's path. From Claude Code's and Codex's hooks: which tool is about to run, the file it names or the command it runs, and the first 300 characters of its latest prompt. Up to 512 KB of each agent's output is held in memory, so someone joining sees the current screen and a stopped agent's last screen can be looked at (the 20 most recent per team). None of it is written to disk, and it's gone when the hub restarts.</p></div></div>
+        <div class="setting"><div><b>Not kept on the hub</b><p>Your repos and their files (apart from the lines a comment is about, above). Agents and git run on your Mac, and the GitHub CLI's login stays here too. What an agent writes into a file doesn't leave this Mac through its hooks: the app takes it out before the hub sees them. Two things do pass through without being kept: the commands an agent runs, and, with "Share the files your agents change" on, the files teammates open.</p></div></div>
         <div class="setting"><div><b>Your GitHub sign-in</b><p>Read-only access to your public profile, used to check who you are. Stored encrypted on this Mac, and sent only to GitHub, the online hub and this Mac's own hub, none of which saves it. A team on a teammate's Mac gets a pass from the online hub instead, which works only on that Mac's hub and expires within 12 hours.</p></div></div>
         <div class="setting"><div><b>Training or analytics</b></div><span class="where">Never</span></div>
       </div>

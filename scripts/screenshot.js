@@ -153,7 +153,7 @@ boot(async (win, hub) => {
   await shot('sessions.png');
 
   await js(`reposError = ''; repos = ${JSON.stringify(demoRepos)}; openNewAgent();
-    $('#session').value = 'anticheat-alerts'; $('#task').value = 'Page the on-call when a ban wave starts';
+    $('#session').value = ''; $('#task').value = 'Page the on-call when a ban wave starts';
     $('input[name=source][value=repo]').checked = true; syncSource(); $('#repo').value = 'user1/lobby-server'; renderRepoPicker()`);
   await sleep(600);
   await shot('new-session.png');

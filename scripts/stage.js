@@ -45,7 +45,7 @@ async function boot(run) {
   require('../app/main');
   // This Mac has all three agents, as far as the pictures go.
   ipcMain.removeHandler('agents:status');
-  ipcMain.handle('agents:status', () => ['claude', 'codex', 'opencode'].map(cmd => ({ cmd, installed: true })));
+  ipcMain.handle('agents:status', () => Object.entries(require('../src/agents').AGENTS).map(([cmd, a]) => ({ cmd, name: a.name, install: a.install, installed: true, resumes: true, prompts: true })));
 }
 
 const tempDir = prefix => { const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix)); temp.push(dir); return dir; };

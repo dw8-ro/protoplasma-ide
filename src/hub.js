@@ -8,7 +8,7 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const { WebSocketServer } = require('ws');
-const { SCROLLBACK, EDIT_TOOLS, appendScrollback, slug, fingerprint, laneIdOf } = require('./shared');
+const { SCROLLBACK, EDIT_TOOLS, ASK_TOOLS, appendScrollback, slug, fingerprint, laneIdOf } = require('./shared');
 
 const HEARTBEAT_MS = 15_000;
 const IDENTITY_TTL_MS = 2 * 60_000; // how long a verified GitHub token is trusted before GitHub is asked again
@@ -326,17 +326,22 @@ function startHub({ port = 7681, host = '0.0.0.0', dataDir, owners, tls, passIss
   function views(teamId) {
     const ls = teamLanes(teamId);
     // An overlap is a file both of two checkouts of the same repo have changed, as each sees the other (touchedBy).
-    const overlaps = l => [...filesOf(l)].filter(f => ls.some(o => o.tree !== l.tree && repoKey(o) === repoKey(l)
-      && touchedBy(o, l).has(f) && touchedBy(l, o).has(f)));
+    // Each pair's two sets are built once, not once for every file: this runs for every lane at every change of state.
+    const overlaps = l => {
+      const pairs = ls.filter(o => o.tree !== l.tree && repoKey(o) === repoKey(l)).map(o => [touchedBy(o, l), touchedBy(l, o)]);
+      return pairs.length ? [...filesOf(l)].filter(f => pairs.some(([theirs, mine]) => theirs.has(f) && mine.has(f))) : [];
+    };
     return ls.map(l => ({ id: l.id, login: l.login, name: l.name, avatar: l.avatar, session: l.session, cmd: l.cmd, repo: l.repo, branch: l.branch,
       git: l.git, tree: l.tree, cols: l.cols, rows: l.rows, open: l.open, status: l.status, lastActive: l.lastActive, prompt: l.prompt || '',
       typedBy: l.typedBy || '', typedAt: l.typedAt || null, startedAt: l.startedAt, local: [...l.local],
-      files: [...filesOf(l)], overlaps: overlaps(l) }));
+      files: [...filesOf(l)], overlaps: overlaps(l), conflicts: l.conflicts || [] }));
   }
-  const toTeam = (teamId, msg) => {
+  // With `session`: only to windows showing that session (ws.sees), and to every window that never said which it shows.
+  const toTeam = (teamId, msg, session) => {
     const data = JSON.stringify(msg);
     for (const w of watchers) {
       if (w.team !== teamId || w.readyState !== w.OPEN) continue;
+      if (session !== undefined && w.sees && !w.sees.has(session)) continue;
       if (w.bufferedAmount > MAX_BUFFERED) w.terminate();
       else w.send(data);
     }
@@ -348,7 +353,9 @@ function startHub({ port = 7681, host = '0.0.0.0', dataDir, owners, tls, passIss
   const broadcastState = teamId => {
     lastBroadcast.set(teamId, Date.now());
     const team = teams.get(teamId);
-    toTeam(teamId, { t: 'state', lanes: views(teamId), watchers: presence(teamId), members: team?.members || [], memories: team?.memories || [], sessions: team?.sessions || [], stopped: stoppedViews(teamId) });
+    // replays: this hub sends a window the screen of an agent whose session comes into view (`look`), so the window
+    // needn't keep a terminal for every agent on the team.
+    toTeam(teamId, { t: 'state', replays: true, lanes: views(teamId), watchers: presence(teamId), members: team?.members || [], memories: team?.memories || [], sessions: team?.sessions || [], stopped: stoppedViews(teamId) });
   };
   const teamView = t => ({ id: t.id, name: t.name, owner: t.owner, members: t.members, agents: teamLanes(t.id).length });
 
@@ -375,6 +382,11 @@ function startHub({ port = 7681, host = '0.0.0.0', dataDir, owners, tls, passIss
     if (lane.git?.behind) {
       parts.push(`Your branch "${lane.branch}" is ${lane.git.behind} commit${lane.git.behind === 1 ? '' : 's'} behind: main or its pushed copy has ` +
         'commits it doesn\'t (from Protoplasma). Pull or rebase before making more changes, and before pushing.');
+    }
+    if (lane.conflicts?.length) {
+      const main = lane.mainBranch || 'main', more = lane.conflicts.length - MAX_CONTEXT_FILES;
+      parts.push(`Your branch "${lane.branch}" would conflict with ${main} if it were merged today (from Protoplasma), in: `
+        + `${lane.conflicts.slice(0, MAX_CONTEXT_FILES).join(', ')}${more > 0 ? ` and ${more} more` : ''}. Merge ${main} into your branch and settle those before a pull request.`);
     }
     return parts.join('\n\n') || null;
   }
@@ -552,6 +564,8 @@ function startHub({ port = 7681, host = '0.0.0.0', dataDir, owners, tls, passIss
       }
       case 'PreToolUse': {
         lane.status = 'working'; // also after a permission was answered: the agent has gone on to its next tool
+        // A question for the person, or a plan to approve: the agent waits on them, though it asks no permission.
+        if (ASK_TOOLS.includes(ev.tool_name)) { lane.status = 'needs you'; return null; }
         if (ev.tool_name === 'Bash' || ev.tool_name === 'exec_command') {
           const command = shellOf(ev.tool_input?.command ?? ev.tool_input?.cmd);
           const reason = pushRisk(lane, command) || shellWriteRisk(lane, command, ev.cwd);
@@ -581,7 +595,7 @@ function startHub({ port = 7681, host = '0.0.0.0', dataDir, owners, tls, passIss
         if (editing) rels.forEach(rel => recordEdit(lane, rel));
         return null;
       case 'PermissionRequest': lane.status = 'needs you'; return null;
-      case 'Stop': lane.status = 'idle'; return null;
+      case 'Stop': case 'Interrupt': lane.status = 'idle'; return null; // Interrupt: Codex's, when the person stops a turn
       default: return null;
     }
   }
@@ -804,6 +818,7 @@ function startHub({ port = 7681, host = '0.0.0.0', dataDir, owners, tls, passIss
           if (clash) return json(409, { error: `There's already a session called ${clash.name}.` });
           for (const s of stopped.get(team.id) || []) if (s.session === session.name) s.session = name;
           for (const l of teamLanes(team.id)) if (l.session === session.name) l.session = name;
+          for (const w of watchers) if (w.team === team.id && w.sees?.delete(session.name)) w.sees.add(name); // windows showing it keep getting its output
           session.aliases = [...new Set([...(session.aliases || []), session.name])].slice(-50);
           session.key = keyOf(session); // its branch and folders keep the original name
           session.name = name;
@@ -864,6 +879,7 @@ function startHub({ port = 7681, host = '0.0.0.0', dataDir, owners, tls, passIss
   // ---- WebSockets: agents (/lane) and app windows (/watch) ----
   const gitStats = g => g && typeof g === 'object'
     ? { added: g.added | 0, removed: g.removed | 0, files: g.files | 0, behind: g.behind | 0, ahead: g.ahead | 0, unpushed: g.unpushed | 0 } : null;
+  const fileNames = v => (Array.isArray(v) ? v.slice(0, 50).map(f => str(f, 300)).filter(Boolean) : []); // e.g. what would conflict with main
   const changedFiles = g => new Set(Array.isArray(g?.changed) ? g.changed.slice(0, MAX_CHANGED).map(f => str(f, 300)).filter(Boolean) : []);
   const size = (v, min, max, fallback) => Math.min(max, Math.max(min, v | 0 || fallback)); // terminal cols and rows
   function onLane(ws, user, team, hello) {
@@ -892,7 +908,7 @@ function startHub({ port = 7681, host = '0.0.0.0', dataDir, owners, tls, passIss
       mainBranch: str(hello.git?.mainBranch, 100),
       roots: (Array.isArray(hello.roots) ? hello.roots.slice(0, 4) : []).map(r => str(r, 1000)).filter(Boolean),
       cols: size(hello.cols, 20, 500, 120), rows: size(hello.rows, 5, 200, 36), open: !!hello.open, status: str(hello.cmd, 40) === 'claude' ? 'idle' : 'running', lastActive: new Date().toISOString(), startedAt: before?.startedAt || new Date().toISOString(), files: new Set(), changed: changedFiles(hello.git), local: changedFiles(hello.git?.local ? { changed: hello.git.local } : hello.git),
-      git: gitStats(hello.git), history: typeof hello.history === 'string' ? hello.history.slice(-SCROLLBACK) : '', hookSecret: hello.hookSecret, ws };
+      git: gitStats(hello.git), conflicts: fileNames(hello.git?.conflicts), history: typeof hello.history === 'string' ? hello.history.slice(-SCROLLBACK) : '', hookSecret: hello.hookSecret, ws };
     // One per checkout: the same path on two of someone's Macs is two checkouts.
     lane.tree = crypto.createHash('sha256').update(`${lane.login}\n${str(hello.machine, 64)}\n${lane.root}`).digest('hex').slice(0, 12);
     // Back after a dropped connection: it's still doing what it was (its next hook or report updates it).
@@ -913,13 +929,13 @@ function startHub({ port = 7681, host = '0.0.0.0', dataDir, owners, tls, passIss
     if (lane.repo && (same(session.createdBy, user.login) || same(team.owner, user.login))) Object.assign(session, { repo: lane.repo, repoBy: user.login });
     saveTeams();
     broadcastState(team.id);
-    toTeam(team.id, { t: 'out', lane: lane.id, d: `\x1bc${lane.history}` }); // a reset first: watchers may hold its screen already
+    toTeam(team.id, { t: 'out', lane: lane.id, d: `\x1bc${lane.history}` }, lane.session); // a reset first: watchers may hold its screen already
 
     ws.on('message', raw => {
       const m = parse(raw);
       if (m?.t === 'out' && typeof m.d === 'string') {
         lane.history = appendScrollback(lane.history, m.d);
-        toTeam(team.id, { t: 'out', lane: lane.id, d: m.d });
+        toTeam(team.id, { t: 'out', lane: lane.id, d: m.d }, lane.session);
       } else if (m?.t === 'size') {
         const was = `${lane.cols}x${lane.rows}`;
         lane.cols = size(m.cols, 20, 500, lane.cols);
@@ -927,6 +943,7 @@ function startHub({ port = 7681, host = '0.0.0.0', dataDir, owners, tls, passIss
         if (`${lane.cols}x${lane.rows}` !== was) broadcastState(team.id);
       } else if (m?.t === 'git') {
         lane.git = gitStats(m);
+        lane.conflicts = fileNames(m.conflicts);
         lane.changed = changedFiles(m);
         lane.local = Array.isArray(m.local) ? changedFiles({ changed: m.local }) : lane.changed;
         lane.files = new Set([...lane.files].filter(f => lane.changed.has(f))); // edits since committed to main, or undone, no longer count
@@ -937,15 +954,25 @@ function startHub({ port = 7681, host = '0.0.0.0', dataDir, owners, tls, passIss
         lane.status = m.status;
         lane.lastActive = new Date().toISOString();
         broadcastState(team.id);
+      } else if (m?.t === 'key' && lane.hooked) {
+        // What the screen did after a person's deciding key (lane.js `decided`), which no hook reports. It kept printing:
+        // a permission or question was answered and the agent is back at work. It went quiet after Esc or Ctrl-C: the
+        // turn was interrupted, and no Stop hook follows that. The next hook corrects either.
+        const next = m.moving ? lane.status === 'needs you' && 'working' : ['working', 'needs you'].includes(lane.status) && 'idle';
+        if (!next) return;
+        lane.status = next;
+        lane.lastActive = new Date().toISOString();
+        broadcastState(team.id);
       }
     });
     // A stopped agent's last screen stays viewable for a while, so teammates can see what it did.
     ws.on('close', () => {
       if (lanes.get(lane.id) !== lane) return;
       lanes.delete(lane.id);
-      const { id, session, login, name, avatar, cmd, cols, rows, history, startedAt, status, prompt, typedBy, typedAt, files } = lane;
-      // touched and local: what it changed and hadn't pushed, for whoever continues its work.
-      const list = [{ id, session, login, name, avatar, cmd, cols, rows, history, endedAt: new Date().toISOString(), startedAt, status, prompt, typedBy, typedAt, files: [...files],
+      const { id, session, login, name, avatar, cmd, cols, rows, history, startedAt, status, prompt, typedBy, typedAt, files, hooked } = lane;
+      // touched and local: what it changed and hadn't pushed, for whoever continues its work. hooked: so one that comes
+      // back (a dropped connection, a Mac waking up) still has its status from its hooks, not from its own guesses.
+      const list = [{ id, session, login, name, avatar, cmd, cols, rows, history, endedAt: new Date().toISOString(), startedAt, status, prompt, typedBy, typedAt, hooked, files: [...files],
         touched: [...filesOf(lane)], local: [...lane.local] },
         ...(stopped.get(team.id) || []).filter(s => s.id !== id)];
       stopped.set(team.id, list.slice(0, MAX_STOPPED));
@@ -987,20 +1014,31 @@ function startHub({ port = 7681, host = '0.0.0.0', dataDir, owners, tls, passIss
     send(ask.from, { t: 'file:put', ask: ask.ask, text, error: text === undefined ? str(m.error || 'That file is too big to share.', 300) : undefined });
   }
 
-  function onWatcher(ws, user, team) {
-    Object.assign(ws, { team: team.id, login: user.login, user, session: null });
+  function onWatcher(ws, user, team, hello) {
+    // sees: the sessions whose terminals this window shows. It gets agents' output only for those, and each agent's
+    // screen as its session comes into view (`look`). A window that doesn't say (apps before this) gets everything.
+    Object.assign(ws, { team: team.id, login: user.login, user, session: null, sees: Array.isArray(hello?.sees) ? new Set() : null });
     watchers.add(ws);
     broadcastState(team.id); // doubles as the newcomer's first message
-    for (const l of teamLanes(team.id)) send(ws, { t: 'out', lane: l.id, d: l.history });
+    if (!ws.sees) for (const l of teamLanes(team.id)) send(ws, { t: 'out', lane: l.id, d: l.history });
     // A window drives look (switching session) and replay (opening a stopped agent) from clicks, so a handful a second is
     // plenty. Each look that changes session runs broadcastState (rebuild + a fan-out to every teammate), so a tight loop
     // of them would peg the single-threaded hub: they get a per-socket budget. file:get has its own (fileRate).
     let acts = 0, actsSince = Date.now();
     const flooding = () => { if (Date.now() - actsSince >= 1000) { acts = 0; actsSince = Date.now(); } return ++acts > 30; };
+    let views = 0, viewsSince = Date.now();
+    const viewing = () => { if (Date.now() - viewsSince >= 10_000) { views = 0; viewsSince = Date.now(); } return ++views > 40; };
     ws.on('message', raw => {
       const m = parse(raw);
       if (m?.t === 'look') {
         if (flooding()) return;
+        // Bringing a session into view replays its agents' screens (up to SCROLLBACK each), so it has a budget of its
+        // own: more than a person clicking around needs, and too few to make the hub pour out screens.
+        if (ws.sees && Array.isArray(m.sees) && !viewing()) {
+          const sees = new Set(m.sees.slice(0, 8).map(s => str(s, 60)));
+          for (const l of teamLanes(team.id)) if (sees.has(l.session) && !ws.sees.has(l.session)) send(ws, { t: 'out', lane: l.id, d: `\x1bc${l.history}` });
+          ws.sees = sees;
+        }
         const session = typeof m.session === 'string' ? str(m.session, 60) : null;
         if (session !== ws.session) { ws.session = session; broadcastState(team.id); }
         return;

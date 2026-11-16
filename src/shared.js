@@ -6,6 +6,9 @@ const SCROLLBACK = 256 * 1024;
 /** Claude Code tools that change files. Edits through these are tracked for overlap warnings. */
 const EDIT_TOOLS = ['Edit', 'Write', 'MultiEdit', 'NotebookEdit'];
 
+/** Tools that put a question to the person (Claude Code's two, and Codex's in both its forms): the agent then waits on them. */
+const ASK_TOOLS = ['AskUserQuestion', 'ExitPlanMode', 'request_user_input', 'request_user_input_async'];
+
 /**
  * Appends terminal output to a scrollback buffer. Trims only past 2x the limit, so appends are amortised O(1)
  * instead of copying the whole buffer on every chunk. The kept part starts after a line end, so a late joiner's replay
@@ -33,4 +36,4 @@ const fingerprint = der => require('crypto').createHash('sha256').update(der).di
 /** An agent's id, made from its hook secret, so only whoever holds the secret can connect under it. */
 const laneIdOf = hookSecret => `h-${require('crypto').createHash('sha256').update(String(hookSecret)).digest('hex').slice(0, 32)}`;
 
-module.exports = { SCROLLBACK, EDIT_TOOLS, appendScrollback, slug, fingerprint, laneIdOf };
+module.exports = { SCROLLBACK, EDIT_TOOLS, ASK_TOOLS, appendScrollback, slug, fingerprint, laneIdOf };

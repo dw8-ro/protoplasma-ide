@@ -51,7 +51,7 @@ contextBridge.exposeInMainWorld('proto', {
   setUnsaved: count => ipcRenderer.send('unsaved', count),
   onMenu: listen('menu'),
 
-  agents: () => ipcRenderer.invoke('agents:status'),
+  agents: other => ipcRenderer.invoke('agents:status', other),
   startLane: opts => ipcRenderer.invoke('startLane', opts),
   write: (id, d) => ipcRenderer.send('lane:write', id, d),
   resize: (id, cols, rows) => ipcRenderer.send('lane:resize', id, cols, rows),

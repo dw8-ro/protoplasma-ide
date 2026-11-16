@@ -584,7 +584,10 @@ docs/             screenshots (sources), readme/ (the README's images, dark and 
   on first run). It's enforced since 16 Nov: `.npmrc` sets `ignore-scripts=true`, and `npm run setup`
   (`scripts/allowed-scripts.js`) runs `npm rebuild <name>` for each allowed package, then the root `postinstall`. Every
   workflow runs `npm run setup` after `npm ci`. When a pinned package's version changes, setup stops and says so:
-  read what its install scripts do in the new version, then update `allowScripts`.
+  read what its install scripts do in the new version, then update `allowScripts`. npm 11.20 and later read
+  `allowScripts` from package.json themselves; with a personal `allow-scripts` in `~/.npmrc` (David's allows
+  `@anthropic-ai/claude-code`) npm warns it's ignored here, which is harmless. Once CI's npm is known to enforce it,
+  the `.npmrc` and setup step could go.
 - **Sign-in app:** `CLIENT_ID` in hub.js and `githubClientId` in app/config.json. The hosted hub (and a Mac's hub,
   which gets it from config.json) refuses tokens any other GitHub app issued, and personal tokens: `githubUser` compares
   GitHub's `X-OAuth-Client-Id` answer header. Change one without the other and nobody can sign in.

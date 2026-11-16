@@ -82,6 +82,7 @@
     <div><span class="tag">simpler · U7</span><b>A shorter bar under each terminal</b><span>Whose agent and which CLI move up into the label ("Me · Claude Code"). The bar is just status, changes, branch and actions.</span></div>
     <div><span class="tag">simpler · U4</span><b>One "Open beside"</b><span>"New pane" becomes Open beside: another agent of this session, or another session, from one menu.</span></div>
     <div><span class="tag">more useful · U10</span><b>Overlaps say what to do</b><span>An overlap alert reads "Compare versions" and opens the file with the Conflicts list beside it.</span></div>
+    <div><span class="tag">simpler · new</span><b>Start on your own</b><span>No team to set up. A first launch opens a private "Just me" space; making a team is for later, and Move to a team carries a session there with its folder and branch.</span></div>
     <div><span class="tag">safer · new</span><b>Red for what you can't take back</b><span>Sign out, Leave or Delete team, Remove someone and Delete session are red. Leave/Delete team has its own row, away from Switch team.</span></div>
   </section>
 
@@ -168,6 +169,29 @@
     </div>
   </section>
 
+  <section class="screen" aria-labelledby="soloTitle">
+    <div class="screen-head"><h2 id="soloTitle">Start on your own: "Just me" (new)</h2></div>
+    <div class="pair">
+      <figure><img src="img/after-solo.jpg" alt="A first launch: the Sessions page in the Just me space, with New ready" loading="lazy" width="1600" height="1049"></figure>
+      <figure><img src="img/after-solo-settings.jpg" alt="Settings, Team, in the Just me space: invite people on this Wi-Fi, or make a team to work with people anywhere" loading="lazy" width="1600" height="1049"></figure>
+    </div>
+    <div class="notes">
+      <div><h3>What changed</h3><ul>
+        <li>Someone with no team lands on Sessions straight after signing in. The title bar says "Just me". Their first choice is what the agent should do.</li>
+        <li>It's private: a space on their own Mac that nothing outside sees, until they invite someone.</li>
+        <li>Settings → Team offers the two ways to work with people: invite them here (same Wi-Fi), or make a team (anywhere).</li>
+        <li>If a teammate adds them to a team, an alert says "You were added to Acme". One click opens it.</li>
+        <li>Anyone who already has a team sees no change: the app opens their last team, as before.</li>
+      </ul></div>
+      <div><h3>Moving work into a team</h3><ul>
+        <li><b>Move to a team…</b> sits in each session's menu and its Session panel.</li>
+        <li>The session is made in the team with the same name and goal. Agents you start there work in the same folder and branch, so the work carries on, changes not yet committed included.</li>
+        <li>Teammates get your work once you Commit &amp; Push; the move reminds you if anything isn't pushed.</li>
+        <li>The old session is marked done. Its plan, notes and comments stay with it.</li>
+      </ul></div>
+    </div>
+  </section>
+
   <section class="screen" aria-labelledby="dangerTitle">
     <div class="screen-head"><h2 id="dangerTitle">Settings: Team and Account (new since your first look)</h2></div>
     <div class="pair">
@@ -186,13 +210,13 @@
   <section class="ask" aria-labelledby="askTitle">
     <h2 id="askTitle">Still to decide</h2>
     <ol>
-      <li><b>The team picker (U2).</b> Proposed: open your last team, or your only one, straight away. Someone brand new gets a team made for them, and This Mac and nearby teams move under "More". Not built yet, because it changes the first thing new people see.</li>
+      <li><b>The team picker (U2): done another way.</b> Nobody needs a team to start: see "Just me" above. The team window stays as it was, for switching and making teams.</li>
       <li><b>Hand off and Continue: settled.</b> They stay as a word on the bar, so the tool is in sight for everyone.</li>
       <li><b>Session cards.</b> Keep the hairline, or go borderless on a soft fill like the buttons?</li>
     </ol>
   </section>
 
-  <footer>Screens from <code>npm run screenshot</code> with the staged team (User 1 to User 3). e2e 146 of 146 with every change on this page. Before = commit 6182f5f, after = this branch.</footer>
+  <footer>Screens from <code>npm run screenshot</code> with the staged team (User 1 to User 3). e2e 149 of 149 and the customer simulation 93 of 93 with every change on this page. Before = commit 6182f5f, after = this branch.</footer>
 </div>
 
 <script>

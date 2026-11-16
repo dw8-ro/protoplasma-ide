@@ -530,6 +530,14 @@ docs/             screenshots (sources), readme/ (the README's images, dark and 
 - **Plan and Memory** open in the side panel (`#planPanel`, `#memoryPanel` in `#panel`, `panelTab` `plan`/`memory`,
   from their rows under Session), so the agents stay on the stage. `tab` is only what the stage shows: agents, a
   stopped agent's screen, pull requests or issues.
+- **Just me** (renderer `isSolo`, `startSolo`, `checkInvites`, `moveSession`): someone with no team at all (every hub
+  answered) lands in a private This Mac team made for them (`<login>'s team`, its key in localStorage `solo`), shown as
+  "Just me" while nobody else is on it. Its hub stays on 127.0.0.1 until they invite someone. While in it, the app
+  lists teams on window focus and once a minute, and a team not opened before (`seenTeams`) shows as an alert. **Move
+  to a team…** makes the session in another team with the same name and goal (a renamed one under its key, then
+  renamed) and copies its saved source, so agents there use the same folder and branch; the old one is marked done.
+- **Destructive buttons** (sign out, leave or delete a team, remove someone, delete a session) are `.btn.danger` or a
+  menu item with `danger: true`, and kept apart from everyday buttons.
 - **Settings** is a non-modal `<dialog>`, so the sidebar and main area are made `inert` while it's open.
 - **Preferences** live in localStorage `prefs` (`DEFAULT_PREFS`). An input with `data-pref="key"` saves itself.
 - **Pane mode** (panes.js): up to 3 sessions side by side, saved per team as `panes:<teamKey>`.

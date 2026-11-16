@@ -247,6 +247,7 @@ $('#signout').onclick = async () => {
   me = null;
   repos = null; reposError = ''; // the next person's repos aren't these
   listedTeams = new Map();
+  invites = [];
   setHTML($('#teamList'), '');
   $('#teamsNote').textContent = $('#teamName').value = '';
   if (prefs.shareFiles) { prefs.shareFiles = false; savePrefs(); } // sharing is each person's own choice
@@ -334,8 +335,29 @@ async function startSolo() {
     const team = await proto.createTeam({ name: `${me.login}'s team`, online: false });
     store.set('solo', team.key);
     await openTeam(team);
+    checkInvites(); // an invite that came before the first launch
   } catch (e) { $('#createErr').textContent = errorText(e); } // the team window stays, as before
 }
+
+// In your own space the team window is closed, so nothing would notice a teammate adding you to their team. A team
+// you haven't opened yet shows as an alert instead: checked when the window comes to the front, and once a minute.
+// ponytail: polling every hub once a minute while solo (it wakes a sleeping online hub); a push from the hub when
+// someone is invited would be exact, but needs a connection before you're on any of its teams.
+let invites = [];
+const seenTeams = () => { try { return new Set(JSON.parse(store.get('seenTeams') || '[]')); } catch { return new Set(); } };
+async function checkInvites() {
+  if (!me || !isSolo(currentTeam)) return;
+  try {
+    const { teams } = await proto.teams({ nearby: prefs.findNearby });
+    if (!isSolo(currentTeam)) return;
+    for (const t of teams) listedTeams.set(t.key, t);
+    const seen = seenTeams();
+    invites = teams.filter(t => !isSolo(t) && !seen.has(t.key));
+    render();
+  } catch {} // offline: try again later
+}
+setInterval(checkInvites, 60_000);
+addEventListener('focus', checkInvites);
 
 let listedTeams = new Map();
 function renderTeamList(teams) {
@@ -398,6 +420,8 @@ async function openTeam(team) {
     $('#peopleErr').textContent = '';
     currentTeam = team;
     store.set('team', team.key);
+    const seen = seenTeams(); seen.add(team.key); store.set('seenTeams', JSON.stringify([...seen].slice(-200)));
+    invites = invites.filter(t => t.key !== team.key);
     clearTeamView();
     $('#settings').close();
     $('#teamSwitch').hidden = false;
@@ -1113,9 +1137,12 @@ function renderAlerts(lanes) {
   const handed = sessionRecords.filter(r => r.handoff && same(r.handoff.to, me.login) && Date.now() - Date.parse(r.handoff.at) < 86_400_000)
     .map(r => { const theirs = lanes.find(l => l.session === r.name && same(l.login, r.handoff.from));
       return `<button class="alert" data-session="${esc(r.name)}"${theirs ? ` data-lane="${esc(theirs.id)}"` : ''}><b>${esc(r.handoff.from)} handed you their work</b><span>${esc(r.name)}</span></button>`; });
-  setHTML($('#alerts'), [...handed, ...waiting, ...clashes].slice(0, 4).join(''));
+  const added = isSolo(currentTeam) ? invites.map(t => `<button class="alert" data-team="${esc(t.key)}"><b>You were added to ${esc(t.name)}</b><span>Open it to work with ${esc(t.owner)}</span></button>`) : [];
+  setHTML($('#alerts'), [...added, ...handed, ...waiting, ...clashes].slice(0, 4).join(''));
 }
 $('#alerts').onclick = e => {
+  const team = e.target.closest('[data-team]');
+  if (team && listedTeams.has(team.dataset.team)) return openTeam(listedTeams.get(team.dataset.team));
   const a = e.target.closest('[data-session]');
   if (!a) return;
   openSession(a.dataset.session, a.dataset.lane || null);
@@ -1203,7 +1230,7 @@ function renderSessions(lanes) {
       ${fileList(s.lanes)}
       <div class="card-people">${n ? people(s.lanes) : `<span>${esc(s.repo)}</span>`}${s.at ? `<span class="ago">${ago(s.at)}</span>` : ''}</div>
     </div>`;
-  }).join('') || `<p class="hint">${query || filterRepo !== null ? 'No sessions match.' : 'No sessions yet. Start one with New, or wait for a teammate to start theirs.'}</p>`);
+  }).join('') || `<p class="hint">${query || filterRepo !== null ? 'No sessions match.' : isSolo(currentTeam) ? 'No sessions yet. Press New, say what the agent should do, and pick a repo or folder.' : 'No sessions yet. Start one with New, or wait for a teammate to start theirs.'}</p>`);
 }
 $('#sessions').onclick = e => {
   const menu = e.target.closest('[data-menu]');

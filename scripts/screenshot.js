@@ -171,7 +171,7 @@ boot(async (win, hub) => {
   await sleep(1500);
   await shot('light.png', { light: true });
   if (process.env.SHOTS) { // review only: a first launch, in your own space
-    await js(`$('input[data-pref=theme][value=dark]').click(); openTeam([...listedTeams.values()].find(isSolo)); 0`);
+    await js(`$('input[data-pref=theme][value=dark]').click(); const solo = [...listedTeams.values()].find(isSolo); (solo ? openTeam(solo) : startSolo()).then(() => 0)`);
     await sleep(1500); await shot('solo.png');
     await js(`openSettings('team')`); await sleep(500); await shot('solo-settings.png');
   }

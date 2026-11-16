@@ -69,7 +69,7 @@ tests cover the table (every entry has what the code reads) and the OpenCode plu
 ### 3. Simpler to use (the redesign)
 **Partly built on 15 Nov 2026**, without the review page, because David was away and said to go on: U1 (one
 question, given to the agent), U3, U5, U9 and the Online-team message (R16). Each is its own small change, easy to
-take back. Not built: U2, U4, U6, U7, U10. Those change where things are on screen, so they're better shown to David
+take back. On 16 Nov: U6 (Plan and Memory open in the side panel, the agents stay on screen). Not built: U2, U4, most of U7 and U10. Those change where things are on screen, so they're better shown to David
 first.
 
 The order David likes: a review page first, then code.

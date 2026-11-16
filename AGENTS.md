@@ -521,6 +521,9 @@ docs/             screenshots (sources), readme/ (the README's images, dark and 
   - A git status poll runs every 3 s, because `fs.watch` misses commits in worktrees.
   - Monaco's Cmd-S, Cmd-K, Shift-Cmd-L and Cmd-I are re-routed to the app's menu actions, and Shift-Cmd-M comments on
     lines.
+- **Plan and Memory** open in the side panel (`#planPanel`, `#memoryPanel` in `#panel`, `panelTab` `plan`/`memory`,
+  from their rows under Session), so the agents stay on the stage. `tab` is only what the stage shows: agents, a
+  stopped agent's screen, pull requests or issues.
 - **Settings** is a non-modal `<dialog>`, so the sidebar and main area are made `inert` while it's open.
 - **Preferences** live in localStorage `prefs` (`DEFAULT_PREFS`). An input with `data-pref="key"` saves itself.
 - **Pane mode** (panes.js): up to 3 sessions side by side, saved per team as `panes:<teamKey>`.

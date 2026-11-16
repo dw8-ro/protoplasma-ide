@@ -281,6 +281,15 @@
   .panel-tabs button { height: 26px; padding: 0 10px; border: 0; border-radius: 6px; background: none; color: var(--faint); cursor: pointer; font-weight: 500; font-size: 12.5px; }
   .panel-tabs button.on { background: var(--raised); color: var(--text); }
   .panel-body { flex: 1; min-height: 0; overflow: auto; padding: 12px; }
+  /* Plan and Memory open in the panel, from their rows under Session, so the agents stay on screen. */
+  .panel-head { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
+  .panel-head b { font-weight: 600; }
+  .panel .memory-form { grid-template-columns: minmax(0, 1fr); }
+  .panel .memory-form .btn { justify-self: start; }
+  .panel .step-form select { width: auto; }
+  .panel .step:hover { background: var(--raised); }
+  .panel .memory { padding: 12px; }
+  .panel .memory-meta { flex-wrap: wrap; }
   .person { margin-bottom: 16px; }
   .person-head { display: flex; align-items: center; gap: 9px; }
   .person-head b { flex: 1; font-weight: 600; overflow: hidden; text-overflow: ellipsis; }
@@ -823,7 +832,12 @@
         </div>
         <div id="replayPanel" class="replay" hidden><div id="replayScreen"></div><p id="replayGone" class="gh-empty" hidden>That agent's screen isn't kept any more.</p></div>
         <div id="ghPanel" class="gh-panel" hidden></div>
-        <div id="planPanel" class="gh-panel" hidden>
+      </div>
+      <aside id="panel" class="panel">
+        <div class="panel-tabs" role="tablist"><button data-panel="session" class="on" role="tab">Session</button><button data-panel="environment" role="tab">Environment</button></div>
+        <div id="panelBody" class="panel-body"></div>
+        <div id="planPanel" class="panel-body" hidden>
+          <div class="panel-head"><button class="btn small" data-panel="session">Back</button><b>Plan</b></div>
           <form id="stepForm" class="memory-form step-form">
             <input id="stepText" maxlength="200" placeholder="A step, like Lock the seat row before writing" aria-label="Step" autocomplete="off">
             <select id="stepOwner" aria-label="Owner"></select>
@@ -832,7 +846,8 @@
           <p id="stepErr" class="error" role="alert"></p>
           <div id="stepList" class="steps-list"></div>
         </div>
-        <div id="memoryPanel" class="gh-panel" hidden>
+        <div id="memoryPanel" class="panel-body" hidden>
+          <div class="panel-head"><button class="btn small" data-panel="session">Back</button><b>Memory</b></div>
           <form id="memoryForm" class="memory-form">
             <input id="memoryText" maxlength="500" placeholder="Something every agent on the team should know" aria-label="Note" autocomplete="off">
             <input id="memoryFile" list="fileList" maxlength="300" placeholder="Pin to a file (optional)" aria-label="File" autocomplete="off">
@@ -843,10 +858,6 @@
           <p id="memoryErr" class="error" role="alert"></p>
           <div id="memoryList"></div>
         </div>
-      </div>
-      <aside id="panel" class="panel">
-        <div class="panel-tabs" role="tablist"><button data-panel="session" class="on" role="tab">Session</button><button data-panel="environment" role="tab">Environment</button></div>
-        <div id="panelBody" class="panel-body"></div>
         <form id="commentForm" class="comment-form"><div id="commentRef" class="comment-ref" hidden></div><input id="commentText" maxlength="500" placeholder="Comment for the people in this session" aria-label="Comment" autocomplete="off"></form>
         <div id="roomWatching" class="panel-foot"></div>
       </aside>

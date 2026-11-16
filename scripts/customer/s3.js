@@ -1,7 +1,7 @@
 const { js, click, clickText, type, key, until, check, run, sleep, hook } = require('./drive');
 run('3. Plan, notes, comments and renaming', async () => {
   const davidLane = await js('david', 'return [...local.keys()][0]');
-  await click('max', '[data-tab="plan"]');
+  await click('max', '[data-panel="plan"]');
   check('Plan opens from the session panel', await until('max', `!$('#planPanel').hidden`, 3000));
   await click('max', '#stepText'); await type('max', 'Validate the email field'); await key('max', 'enter');
   check('Max adds a plan step', await until('max', `/Validate the email field/.test($('#stepList').textContent)`, 5000), await js('max', `return $('#stepErr').textContent`));
@@ -13,9 +13,7 @@ run('3. Plan, notes, comments and renaming', async () => {
   if (tick) { await click('max', '#stepList input[type=checkbox], #stepList [data-done], #stepList button'); }
   check('a step can be ticked off', await until('max', `recordFor('Login page')?.steps?.[0]?.done === true`, 5000), tick);
 
-  await click('david', '#backToAgents').catch(() => {});
-  await js('david', `tab = 'memory'; render(); return 1`).catch(() => {});
-  await click('david', '[data-tab="memory"]').catch(() => {});
+  await click('david', '[data-panel="memory"]');
   check('Memory opens', await until('david', `!$('#memoryPanel').hidden`, 3000));
   await click('david', '#memoryText'); await type('david', 'Run npm test before pushing'); await key('david', 'enter');
   check('David adds a team note', await until('david', `/Run npm test before pushing/.test($('#memoryList').textContent)`, 5000), await js('david', `return $('#memoryErr').textContent`));
@@ -23,12 +21,13 @@ run('3. Plan, notes, comments and renaming', async () => {
   const ctx2 = await hook('david', { lane: davidLane, hook_event_name: 'UserPromptSubmit', prompt: 'go on' });
   check('and agents get it with each prompt', /npm test/.test(ctx2?.hookSpecificOutput?.additionalContext || ''));
 
-  await click('max', '#backToAgents').catch(() => {});
+  await click('max', '#planPanel [data-panel="session"]');
+  check('Plan and Memory open beside the agents, which stay on screen', await js('max', `return !$('#lanes').hidden && $('#planPanel').hidden`) && await js('david', `return !$('#lanes').hidden && !$('#memoryPanel').hidden`));
   await click('max', '#commentText'); await type('max', 'I\'m taking the email validation'); await key('max', 'enter');
   check('Max leaves a comment, and David sees it', await until('david', `/taking the email validation/.test($('#panelBody').textContent + JSON.stringify(sessionRecords))`, 5000));
 
   // Rename while both agents run.
-  await js('david', `tab = 'agents'; panelTab = 'environment'; render(); return 1`);
+  await js('david', `panelTab = 'environment'; render(); return 1`);
   await clickText('david', '#panelBody button, #panelBody .panel-row', 'Rename session');
   check('Rename session asks for a new name', await until('david', `$('#renameDlg').open`, 3000));
   await js('david', `$('#renameInput').select(); return 1`);

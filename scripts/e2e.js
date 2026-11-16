@@ -355,8 +355,9 @@ async function run(win, hub) {
     check('Code again goes back to just the agents', await until(`!$('#room').classList.contains('coding') && $('#code').hidden && $('#dockTabs').hidden`));
 
     // ---- a plan, renaming with agents running, comments on lines, conflicts, and pane mode (as in Amoeba)
-    await js(`openSession('Fix Login'); tab = 'plan'; render(); $('#stepText').value = 'Lock the seat row'; $('#stepForm').requestSubmit(); 0`);
+    await js(`openSession('Fix Login'); panelTab = 'plan'; render(); $('#stepText').value = 'Lock the seat row'; $('#stepForm').requestSubmit(); 0`);
     check('a session gets a plan with steps', await until(`recordFor('Fix Login')?.steps?.length === 1 && /Lock the seat row/.test($('#stepList').textContent)`));
+    check('the plan opens in the side panel, with the agents still on screen', await js(`(() => { const p = $('#planPanel'); return !p.hidden && !!p.closest('#panel') && p.clientWidth > 0 && p.scrollWidth <= p.clientWidth && !$('#lanes').hidden && $('#panelBody').hidden; })()`));
     await js(`$('#stepList input[type=checkbox]').click(); 0`);
     check('a step can be ticked off', await until(`recordFor('Fix Login').steps[0].done === true`));
     await js(`go('sessions')`);
@@ -386,11 +387,11 @@ async function run(win, hub) {
     // ---- notes that keep up with the code
     // This session has no GitHub repo, so the Memory form won't pin a note to a file: add it as the form would.
     await js(`(async () => { const hash = await proto.code.hash(await rootFor(current), 'README.md');
-      memories = await proto.addMemory(currentTeam.key, { text: 'Keep the intro short', file: 'README.md', repo: roomRepo, hash }); tab = 'memory'; render(); })(); 0`);
+      memories = await proto.addMemory(currentTeam.key, { text: 'Keep the intro short', file: 'README.md', repo: roomRepo, hash }); panelTab = 'memory'; render(); })(); 0`);
     check('a note on a file keeps what the file held', await until(`memories.some(m => m.text === 'Keep the intro short' && /^[\\w-]{16}$/.test(m.hash || ''))`, 10000));
     await js(`proto.addMemory(currentTeam.key, { text: 'Written against an older README', file: 'README.md', repo: roomRepo, hash: 'older-readme-0000' }).then(list => { memories = list; checkNotes.at = 0; render(); }); 0`);
     check('a note whose file has changed since says so, and one that still matches doesn\'t', await until(`(() => { const rows = [...document.querySelectorAll('#memoryList .memory')].map(r => r.textContent); const row = t => rows.find(r => r.includes(t)) || ''; return /File changed since/.test(row('older README')) && !!row('Keep the intro short') && !/File changed since/.test(row('Keep the intro short')); })()`, 10000), await js(`$('#memoryList').textContent.replace(/\\s+/g, ' ')`));
-    await js(`(async () => { for (const m of memories.filter(m => /Keep the intro short|older README/.test(m.text))) memories = await proto.removeMemory(currentTeam.key, m.id); tab = 'agents'; render(); })(); 0`);
+    await js(`(async () => { for (const m of memories.filter(m => /Keep the intro short|older README/.test(m.text))) memories = await proto.removeMemory(currentTeam.key, m.id); panelTab = 'session'; render(); })(); 0`);
     await until(`!memories.some(m => /Keep the intro short|older README/.test(m.text))`);
     await js(`$('[data-explorer="conflicts"]').click(); 0`);
     check('the Explorer has a Conflicts tab', await until(`code.explorer === 'conflicts' && !$('#codeConflicts').hidden && $('#conflictCount').textContent === '0' && /Nothing here/.test($('#codeConflicts').textContent)`));
@@ -445,7 +446,7 @@ async function run(win, hub) {
     await js(`openSession('s1'); $('#panelBody [data-act=done]').click()`);
     check('Mark done', await until(`recordFor('s1')?.done === true`));
     check('a finished session leaves the sidebar but stays on the Sessions page', await js(`go('sessions'); !$('#workspaces [data-session="s1"]') && /Done/.test($('#sessions [data-session="s1"]').textContent)`));
-    await js(`window.confirm = () => true; openSession('s1'); tab = 'memory'; render(); $('#panelBody [data-act=delete]').click()`);
+    await js(`window.confirm = () => true; openSession('s1'); render(); $('#panelBody [data-act=delete]').click()`);
     check('Delete removes it', await until(`!recordFor('s1')`));
     check('and you land back on the Sessions page', await until(`view === 'sessions' && !$('#sessionsPage').hidden && $('#room').hidden && !$('#sessions [data-session="s1"]')`));
     await js(`$('#sessions [data-menu="Fix Login"]').click()`);

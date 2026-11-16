@@ -99,7 +99,7 @@ let sessionRecords = [];   // saved sessions: { name, task, createdBy, createdAt
 let view = 'sessions';     // sessions | people | session
 let focus = null;          // agent shown in the session view
 let split = null;          // a second agent shown beside it ("New pane")
-let panelTab = 'session';  // session | environment
+let panelTab = 'session';  // session | environment, and plan | memory, which open from Session's rows
 let panelHidden = false;
 let filterRepo = null;     // workspace the Sessions page is narrowed to ('' means folders with no GitHub repo)
 let board = [];            // every agent on screen: the hub's, plus local ones it hasn't reported yet
@@ -950,6 +950,7 @@ function openSession(name, laneId = null) {
   if (name !== current) { code.on = false; setCommentRef(null); } // a session opens on its agents; the code comes up when you open a file
   if (laneId) Object.assign(code, { dock: 'agent', dockHidden: false }); // and an agent asked for by name is brought forward
   view = 'session';
+  if (name !== current && panelTab !== 'environment') panelTab = 'session'; // another session opens on its people, not its plan
   current = name;
   tab = 'agents';
   focus = laneId;
@@ -1312,18 +1313,14 @@ function renderRoom(lanes) {
   $('#shareBtn').hidden = !ownsTeam(currentTeam);
   $('#panel').hidden = panelHidden;
   $('#backBar').hidden = tab === 'agents';
-  $('#stageTitle').textContent = { memory: 'Memory', plan: 'Plan', pulls: 'Pull requests', issues: 'Issues' }[tab]
+  $('#stageTitle').textContent = { pulls: 'Pull requests', issues: 'Issues' }[tab]
     || (ended ? `${whose(ended)} ${agentName(ended.cmd)}, stopped ${ago(ended.endedAt)}` : tab === 'replay' ? 'Stopped agent' : '');
   $('#replayPanel').hidden = tab !== 'replay';
   $('#continueReplay').hidden = !ended || same(ended.login, me.login);
   $('#replayScreen').hidden = !ended;
   $('#replayGone').hidden = tab !== 'replay' || !!ended;
   $('#lanes').hidden = tab !== 'agents';
-  $('#memoryPanel').hidden = tab !== 'memory';
-  $('#planPanel').hidden = tab !== 'plan';
-  if (tab === 'plan') renderPlan();
   $('#ghPanel').hidden = tab !== 'pulls' && tab !== 'issues';
-  if (tab === 'memory') renderMemory();
   $('#empty').hidden = inRoom.length > 0;
   const last = resumable(current);
   $('#resumeBtn').hidden = !last;
@@ -1339,8 +1336,14 @@ function renderRoom(lanes) {
 
 // The panel beside the stage. Session: everyone here and their agents. Environment: the code they're working in.
 function renderPanel(inRoom, rec) {
-  for (const b of $('.panel-tabs').children) b.setAttribute('aria-selected', b.classList.toggle('on', b.dataset.panel === panelTab));
+  const under = panelTab === 'environment' ? 'environment' : 'session';
+  for (const b of $('.panel-tabs').children) b.setAttribute('aria-selected', b.classList.toggle('on', b.dataset.panel === under));
   $('#commentForm').hidden = panelTab !== 'session';
+  $('#panelBody').hidden = panelTab === 'plan' || panelTab === 'memory';
+  $('#planPanel').hidden = panelTab !== 'plan';
+  $('#memoryPanel').hidden = panelTab !== 'memory';
+  if (panelTab === 'plan') return renderPlan();
+  if (panelTab === 'memory') return renderMemory();
   if (panelTab === 'environment') return setHTML($('#panelBody'), environment(inRoom, rec));
   const notes = roomNotes().length;
   // You come first, so there's always somewhere to add an agent.
@@ -1353,8 +1356,8 @@ function renderPanel(inRoom, rec) {
       <div class="person-meta"><span>${same(login, currentTeam.owner) ? 'Owner' : 'Member'}</span><span>${theirs.length ? `${(STATUS[sessionStatus(theirs)] || [])[1]?.toLowerCase() || ''}${at ? `, ${ago(at)}` : ''}` : 'no agents here'}</span></div>
       ${theirs.map(l => agentCard(l, agentLabel(l, inRoom))).join('')}
     </div>`;
-  }).join('') + stoppedRows() + `<button class="panel-row" data-tab="plan"><b>Plan</b><span>${stepsDone(rec) || 'No steps yet'}</span></button>`
-    + `<button class="panel-row" data-tab="memory"><b>Memory</b><span>${notes ? `${notes} note${notes === 1 ? '' : 's'}` : 'No notes yet'}</span></button>`
+  }).join('') + stoppedRows() + `<button class="panel-row" data-panel="plan"><b>Plan</b><span>${stepsDone(rec) || 'No steps yet'}</span></button>`
+    + `<button class="panel-row" data-panel="memory"><b>Memory</b><span>${notes ? `${notes} note${notes === 1 ? '' : 's'}` : 'No notes yet'}</span></button>`
     + '<div class="panel-label">Comments</div>' + comments(rec));
 }
 // Agents that stopped in this session. The hub keeps the last of their output for a while.
@@ -1499,7 +1502,7 @@ function environment(inRoom, rec) {
   ].join('');
 }
 
-$('.panel-tabs').onclick = e => { if (e.target.dataset.panel) { panelTab = e.target.dataset.panel; render(); } };
+$('#panel').addEventListener('click', e => { const to = e.target.closest('[data-panel]'); if (to) { panelTab = to.dataset.panel; render(); } });
 $('#panelBody').onclick = e => {
   const file = e.target.closest('[data-open-file]');
   if (file) return openFile(file.dataset.openFile, { line: Number(file.dataset.line) || undefined });
@@ -1628,7 +1631,7 @@ async function checkNotes(notes) {
     const now = await proto.code.hash(root, m.file).catch(() => '');
     if (noteChanged.get(m.id) !== (!!now && now !== m.hash)) { noteChanged.set(m.id, !!now && now !== m.hash); changed = true; }
   }
-  if (changed && tab === 'memory') renderMemory();
+  if (changed && panelTab === 'memory') renderMemory();
 }
 function renderMemory() {
   const canRemove = m => [m.author, currentTeam.owner].some(l => l.toLowerCase() === me.login.toLowerCase());

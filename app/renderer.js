@@ -328,23 +328,27 @@ async function refreshTeams() {
 // Someone with no team yet starts in a private space ("Just me"), so the first thing they do is work, not set up a
 // team. Underneath it's a This Mac team only they are on: its hub listens on this Mac alone until they invite someone
 // (teams.js `share`), and nothing goes to the online hub. Making or joining a real team is there whenever they want it.
-const isSolo = t => !!t && t.key === store.get('solo') && !t.members.length;
+// Kept per account: two people taking turns on one Mac each have their own space.
+const soloKey = () => `solo:${me?.login || ''}`;
+const isSolo = t => !!t && t.key === store.get(soloKey()) && !t.members.length;
 const teamName = t => (isSolo(t) ? 'Just me' : t.name);
 async function startSolo() {
   try {
     const team = await proto.createTeam({ name: `${me.login}'s team`, online: false });
-    store.set('solo', team.key);
+    store.set(soloKey(), team.key);
     await openTeam(team);
     checkInvites(); // an invite that came before the first launch
   } catch (e) { $('#createErr').textContent = errorText(e); } // the team window stays, as before
 }
 
 // In your own space the team window is closed, so nothing would notice a teammate adding you to their team. A team
-// you haven't opened yet shows as an alert instead: checked when the window comes to the front, and once a minute.
-// ponytail: polling every hub once a minute while solo (it wakes a sleeping online hub); a push from the hub when
-// someone is invited would be exact, but needs a connection before you're on any of its teams.
+// you haven't opened yet shows as an alert instead: checked when the window comes to the front (where someone told
+// they were invited looks first), and every 10 minutes, so a solo app rarely wakes the online hub from its sleep.
+// ponytail: a push from the hub when someone is invited would be at once, but needs a connection before you're on
+// any of its teams.
 let invites = [];
-const seenTeams = () => { try { return new Set(JSON.parse(store.get('seenTeams') || '[]')); } catch { return new Set(); } };
+const seenKey = () => `seenTeams:${me?.login || ''}`;
+const seenTeams = () => { try { return new Set(JSON.parse(store.get(seenKey()) || '[]')); } catch { return new Set(); } };
 async function checkInvites() {
   if (!me || !isSolo(currentTeam)) return;
   try {
@@ -356,7 +360,7 @@ async function checkInvites() {
     render();
   } catch {} // offline: try again later
 }
-setInterval(checkInvites, 60_000);
+setInterval(checkInvites, 10 * 60_000);
 addEventListener('focus', checkInvites);
 
 let listedTeams = new Map();
@@ -420,7 +424,7 @@ async function openTeam(team) {
     $('#peopleErr').textContent = '';
     currentTeam = team;
     store.set('team', team.key);
-    const seen = seenTeams(); seen.add(team.key); store.set('seenTeams', JSON.stringify([...seen].slice(-200)));
+    const seen = seenTeams(); seen.add(team.key); store.set(seenKey(), JSON.stringify([...seen].slice(-200)));
     invites = invites.filter(t => t.key !== team.key);
     clearTeamView();
     $('#settings').close();
@@ -1275,6 +1279,7 @@ async function moveSession(name, target) {
     if (!rec?.done) await proto.setSessionDone(from.key, name, true);
   } catch (e) { return alert(errorText(e)); }
   await openTeam(target);
+  if (currentTeam?.key !== target.key) return alert(`"${name}" is in ${teamName(target)} now, but that team couldn't be opened${$('#err').textContent ? `: ${$('#err').textContent}` : ''}. Open it from the team list (the team name at the top).`);
   for (let i = 0; i < 100 && currentTeam?.key === target.key && !gotState; i++) await new Promise(r => setTimeout(r, 100)); // opened before its sessions arrive, the room would close again
   if (currentTeam?.key === target.key) openSession(name);
 }
@@ -1619,7 +1624,7 @@ $('#myAgent').onclick = () => { focus = split = null; tab = 'agents'; code.dock 
 // One way to put two things side by side: another agent of this session, or another session (pane mode). For a
 // session: back to the panes this one was in, if it was in some; otherwise this session beside an empty pane.
 $('#newPane').onclick = e => {
-  const others = hubLanes.filter(l => l.session === current && l.id !== (focus || [...local.keys()].find(id => hubLanes.some(o => o.id === id && o.session === current))));
+  const others = hubLanes.filter(l => l.session === current && l.id !== focus); // renderRoom has picked the one shown
   const session = () => { let saved = []; try { saved = JSON.parse(store.get(panesKey()) || '[]'); } catch {} openPanes(saved.includes(current) ? saved : [current, null]); };
   showMenu(e.currentTarget, [
     ...(others.length ? [{ label: 'An agent in this session' }, ...others.map(l => ({ text: `${local.has(l.id) ? 'Me' : l.name}: ${agentName(l.cmd)}`, hint: split === l.id ? 'Open' : '',

@@ -261,6 +261,12 @@ test('a window gets agents\' output only for the sessions it shows, and their sc
   a.ws.send(JSON.stringify({ t: 'out', d: 'A-renamed' }));
   for (let i = 0; i < 100 && !picky.got.includes('A:A-renamed'); i++) await new Promise(r => setTimeout(r, 20));
   assert.ok(picky.got.includes('A:A-renamed'), 'a renamed session stays in view');
+  // Past its look budgets (quick flipping between sessions), a window still gets the output of what it now shows.
+  for (let i = 0; i < 45; i++) picky.ws.send(JSON.stringify({ t: 'look', session: null, sees: i % 2 ? [] : ['renamed-in-view'] }));
+  picky.ws.send(JSON.stringify({ t: 'look', session: 'elsewhere', sees: ['elsewhere'] }));
+  b.ws.send(JSON.stringify({ t: 'out', d: 'B-after' }));
+  for (let i = 0; i < 100 && !picky.got.includes('B:B-after'); i++) await new Promise(r => setTimeout(r, 20));
+  assert.ok(picky.got.includes('B:B-after'), 'over budget, it skips replays but follows what is on screen');
   await Promise.all([closed(picky.ws), closed(plain.ws), closed(a.ws), closed(b.ws)]);
 });
 

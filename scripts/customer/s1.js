@@ -15,8 +15,9 @@ run('1. First day: create a team, invite a teammate', async () => {
   check('inviting max works and shows him as a member', await until('david', `!$('#inviteDlg').open && /max/.test($('#memberList').textContent)`, 8000),
     await js('david', `return { err: $('#inviteErr').textContent, list: $('#memberList').textContent.replace(/\\s+/g, ' ') }`));
   // Max: his team list refreshes on its own (or when he looks at it).
-  const seen = await until('max', `/You were added to Acme/.test($('#alerts').textContent)`, 70000);
-  check('Max is told about the team he was invited to, without doing anything', seen, await js('max', `return { team: currentTeam?.name, alerts: $('#alerts').textContent, listed: [...listedTeams.values()].map(t => t.name) }`));
+  await js('max', 'dispatchEvent(new Event("focus")); return 1'); // Max, told he's invited, brings the app to the front
+  const seen = await until('max', `/You were added to Acme/.test($('#alerts').textContent)`, 15000);
+  check('Max is told about the team he was invited to when he looks', seen, await js('max', `return { team: currentTeam?.name, alerts: $('#alerts').textContent, listed: [...listedTeams.values()].map(t => t.name) }`));
   if (!seen) await js('max', 'showTeams(me); return 1');
   if (seen) await clickText('max', '#alerts .alert', 'Acme');
   else { await until('max', `[...listedTeams.values()].some(t => t.name === 'Acme')`, 8000); await clickText('max', '#teamList .team', 'Acme'); }

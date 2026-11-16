@@ -104,7 +104,7 @@ async function gitStatus(cwd, { env = process.env, fetch = false } = {}) {
   }
   for (const file of added.slice(0, MAX_CHANGED)) changed.push(file); // (a spread of a huge list would overflow the stack)
   // Would this branch's commits conflict with main's, merged today? Only asked when each has commits the other lacks.
-  stats.conflicts = main && ahead && behind ? await mainConflicts(cwd, main, line, env) : [];
+  stats.conflicts = main && ahead && behind ? await mainConflicts(cwd, main, base, line, env) : [];
   const local = sinceUpstream === null ? changed : [...new Set([...(sinceUpstream || '').split('\0').filter(Boolean), ...added])];
   // untracked: the new files (not sent to the hub; see code:readLane).
   return { ...stats, changed: changed.slice(0, MAX_CHANGED), local: local.slice(0, MAX_CHANGED), untracked: added.slice(0, MAX_CHANGED) };
@@ -115,9 +115,9 @@ async function gitStatus(cwd, { env = process.env, fetch = false } = {}) {
  * git writes the merged files it tries out as loose objects (unreachable ones, which its own gc clears).
  */
 const clashes = new Map(); // folder -> { pair: "<HEAD's commit>\n<main's>", files }
-async function mainConflicts(cwd, main, line, env) {
+async function mainConflicts(cwd, main, base, line, env) {
   const pair = await line('rev-parse', 'HEAD', main);
-  if (!pair) return [];
+  if (!pair || pair.split('\n')[1] === base) return []; // main hasn't moved since this branch left it (only its own pushed copy did)
   if (clashes.get(cwd)?.pair !== pair) {
     clashes.set(cwd, { pair, files: await new Promise(resolve => execFile('git',
       [...SAFE_GIT, '-c', 'core.quotePath=false', 'merge-tree', '--write-tree', '--name-only', '--no-messages', '-z', 'HEAD', main],

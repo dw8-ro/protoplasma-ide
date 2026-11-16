@@ -1031,14 +1031,16 @@ function startHub({ port = 7681, host = '0.0.0.0', dataDir, owners, tls, passIss
     ws.on('message', raw => {
       const m = parse(raw);
       if (m?.t === 'look') {
-        if (flooding()) return;
-        // Bringing a session into view replays its agents' screens (up to SCROLLBACK each), so it has a budget of its
-        // own: more than a person clicking around needs, and too few to make the hub pour out screens.
-        if (ws.sees && Array.isArray(m.sees) && !viewing()) {
+        // What the window shows is always taken, so its live output follows the screen even past the budgets below:
+        // the app tells the hub once per change and never repeats it. Bringing a session into view also replays its
+        // agents' screens (up to SCROLLBACK each), which has a budget of its own: more than a person clicking around
+        // needs, and too few to make the hub pour out screens. Past it, a terminal starts from the next output.
+        if (ws.sees && Array.isArray(m.sees)) {
           const sees = new Set(m.sees.slice(0, 8).map(s => str(s, 60)));
-          for (const l of teamLanes(team.id)) if (sees.has(l.session) && !ws.sees.has(l.session)) send(ws, { t: 'out', lane: l.id, d: `\x1bc${l.history}` });
+          if (!viewing()) for (const l of teamLanes(team.id)) if (sees.has(l.session) && !ws.sees.has(l.session)) send(ws, { t: 'out', lane: l.id, d: `\x1bc${l.history}` });
           ws.sees = sees;
         }
+        if (flooding()) return;
         const session = typeof m.session === 'string' ? str(m.session, 60) : null;
         if (session !== ws.session) { ws.session = session; broadcastState(team.id); }
         return;

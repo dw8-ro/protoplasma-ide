@@ -660,8 +660,9 @@ function startHub({ port = 7681, host = '0.0.0.0', dataDir, owners, tls, passIss
       if (!lane || !secretMatches(bearer(req), lane.hookSecret)) return json(401);
       const ev = parse(await readBody(req, MAX_HOOK_BODY));
       const snapshot = () => `${lane.status}|${lane.files.size}|${lane.prompt}`;
-      const before = snapshot();
+      const before = snapshot(), was = lane.status;
       const out = ev && onHook(lane, ev);
+      if (lane.status !== was) lane.statusAt = Date.now(); // a `key` from before this doesn't undo it
       if (snapshot() !== before || Date.now() - (lastBroadcast.get(lane.team) || 0) > STATE_REFRESH_MS) {
         broadcastState(lane.team);
       }
@@ -990,7 +991,10 @@ function startHub({ port = 7681, host = '0.0.0.0', dataDir, owners, tls, passIss
       } else if (m?.t === 'key' && lane.hooked) {
         // What the screen did after a person's deciding key (lane.js `decided`), which no hook reports. It kept printing:
         // a permission or question was answered and the agent is back at work. It went quiet after Esc or Ctrl-C: the
-        // turn was interrupted, and no Stop hook follows that. The next hook corrects either.
+        // turn was interrupted, and no Stop hook follows that. The next hook corrects either. A hook that changed the
+        // status after the key wins: the Enter that sent a prompt is still being watched when the agent's permission
+        // request comes in, and the printing around it isn't an answer (`ago`: how long before this the key was).
+        if ((lane.statusAt || 0) > Date.now() - Math.min(10_000, Math.max(0, Number(m.ago) || 0))) return;
         const next = m.moving ? lane.status === 'needs you' && 'working' : ['working', 'needs you'].includes(lane.status) && 'idle';
         if (!next) return;
         lane.status = next;

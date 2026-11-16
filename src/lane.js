@@ -335,7 +335,7 @@ function startLane({ hub, hookBase, team, token, credentials = () => ({ token })
     clearTimeout(watching);
     keyAt = Date.now();
     moved = false;
-    watching = setTimeout(() => { watching = null; if (moved || stop) send({ t: 'key', moving: moved }); }, WATCH_MS);
+    watching = setTimeout(() => { watching = null; if (moved || stop) send({ t: 'key', moving: moved, ago: Date.now() - keyAt }); }, WATCH_MS);
   }
   // Report git progress (and branch switches) as the agent works, only when something changed.
   let polls = 0, polling = false, fetching = false, unchanged = 0;

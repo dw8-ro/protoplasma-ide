@@ -172,6 +172,13 @@ test('what the screen did after a person\'s key ends a stale status, only for an
   await hook(l.id, { hook_event_name: 'UserPromptSubmit', prompt: 'go' });
   await hook(l.id, { hook_event_name: 'Interrupt' }); // Codex says so itself
   assert.equal(await reaches(l.id, 'idle'), 'idle');
+  // Seen with a real Claude Code: the Enter that sent a prompt is still watched when its permission request comes in,
+  // and the printing around it is no answer. A key from before the hook leaves Needs you as it is.
+  await hook(l.id, { hook_event_name: 'PermissionRequest' });
+  assert.equal(await reaches(l.id, 'needs you'), 'needs you');
+  l.ws.send(JSON.stringify({ t: 'key', moving: true, ago: 2500 }));
+  await handled(l, 103);
+  assert.equal(await statusOf(l.id), 'needs you', 'a key pressed before the request doesn\'t answer it');
   await closed(l.ws);
 });
 

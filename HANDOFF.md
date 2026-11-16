@@ -18,7 +18,14 @@ The review page David approved: claude.ai artifact "Protoplasma Visual Pass" (so
 - **David's design rule (16 Nov):** minimal but sufficient. Easy for newcomers, every tool still there for experts:
   simplify by choosing what shows first, never by removing a tool.
 - **Checks:** `npm run e2e` 149 of 149, the customer simulation 93 of 93, `npm test` 123 of 123. README pictures and the demo gif regenerated.
-- **Next:** the code review of everything since 0.6.1 (see the notes file for its outcome), then David's live checks
+- **Code review (16 Nov, `af8ba6f`):** one high-effort pass over everything not on `origin/main` (the 15 Nov work and
+  the redesign), in one session rather than by independent reviewers. Six findings, all fixed: a window over the hub's
+  `look` budget stopped getting output for what it showed (hub.js; a test in hub-live.test.js), Move to a team failed
+  silently when the team wouldn't open, Just me was kept per Mac instead of per account, the invite check woke the
+  online hub every minute (now on focus and every 10 minutes), merge-tree ran when only the pushed branch had moved,
+  and a dead fallback in Open beside. Not covered: the two hub commits already on `origin/main` (`6912c45`, `5e896c4`).
+  After the fixes: `npm test` 123 of 123, `npm run e2e` 149 of 149, the customer simulation 93 of 93.
+- **Next:** David's live checks
   ("Status tells the truth" in [docs/first-install.md](docs/first-install.md), and the first install with Max), then
   0.7.0 (`npm version minor`; pushing `main` redeploys the hub).
 - **Open decision:** only `dw8-ro` can create Online teams. With Just me, a newcomer who wants to work with someone

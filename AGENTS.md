@@ -299,7 +299,8 @@ docs/             screenshots (sources), readme/ (the README's images, dark and 
   - Reconnects after 3 s for codes below 4000, or every 30 s after 4003. It doesn't retry after 4000 or 4001.
   - On exit while offline, sends one last hello with the final screen.
 - **`gitStatus(cwd, {env})`:**
-  - Polled every 5 s (agents in one folder share each poll: `sharedStatus`), with `fetchGit` beside every 12th poll; in a folder someone picked (`picked`, not an app-made
+  - Polled every 5 s (agents in one folder share each poll: `sharedStatus`; every 15 s once the agent has printed
+    nothing for a minute and three polls found nothing new: `SETTLED_MS`, `SLOW`), with `fetchGit` beside every 12th poll; in a folder someone picked (`picked`, not an app-made
     clone), not while the agent asks whether to trust it.
     `fetchGit` leaves out `GIT_SSH_COMMAND` when the repo sets `core.sshCommand`, which would otherwise be overridden
     (a key per host, several accounts).

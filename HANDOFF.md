@@ -41,8 +41,7 @@ What it still needs, in order:
   The demo gif too (`npm run demo`).
 - **No independent review** of this work was run (the usage limit). hub.js, teams.js `slimHook` and main.js's "Other
   command" are the parts to read first.
-- **Not built:** most of R9 (agents in one folder now share a git poll; polling less often when nothing changes
-  isn't done), the rest of phase 3 (the team picker, one "beside", a shorter bar, what to do
+- **Not built:** the rest of phase 3 (the team picker, one "beside", a shorter bar, what to do
   about an overlap; Plan and Memory in the side panel is in since 16 Nov), and the rest of phase 5.
 - **Electron stays at 44.10.2. Don't take 44.11.x as it is:** its canvas refuses the font string xterm's WebGL renderer
   draws letters with (`" normal 25px …"`, with a leading space), so every terminal's text comes out tiny in full-size

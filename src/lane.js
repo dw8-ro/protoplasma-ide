@@ -16,6 +16,7 @@ const PING_MS = 20_000; // a connection that misses a ping's answer for this lon
 const FLUSH_MS = 16; // TUIs redraw in many tiny writes; batch them into one message per frame
 const GIT_POLL_MS = 5000;
 const FETCH_EVERY = 12; // polls, so about once a minute
+const SETTLED_MS = 60000, SLOW = 3; // a quiet agent whose folder stopped changing is looked at every third poll
 const MAX_CHANGED = 200; // uncommitted paths reported to the hub
 const MAX_CONFLICTS = 50; // files reported as conflicting with main
 // An agent whose hooks aren't sure to run (Codex until they're trusted, OpenCode, any other command: see agents.js)
@@ -205,6 +206,7 @@ function startLane({ hub, hookBase, team, token, credentials = () => ({ token })
 
   // Local scrollback, sent with every hello so a (re)started hub still gets the current screen.
   let ws, history = '', unsent = '', flushTimer = null, exited = false;
+  let lastOut = Date.now(); // when the agent last printed anything
   let asking = false, recent = ''; // waiting on the trust prompt, and the latest output (plain text) to spot it in
   const byActivity = !agent.sure; // Codex too, until its hooks are trusted (the hub then ignores these)
   let activity = null, quiet = null, lastInput = 0;
@@ -272,6 +274,7 @@ function startLane({ hub, hookBase, team, token, credentials = () => ({ token })
     unsent = '';
   };
   term.onData(d => {
+    lastOut = Date.now();
     history = appendScrollback(history, d);
     unsent += d;
     flushTimer ??= setTimeout(flush, FLUSH_MS);
@@ -309,17 +312,21 @@ function startLane({ hub, hookBase, team, token, credentials = () => ({ token })
     watching = setTimeout(() => { watching = null; if (moved || stop) send({ t: 'key', moving: moved }); }, WATCH_MS);
   }
   // Report git progress (and branch switches) as the agent works, only when something changed.
-  let polls = 0, polling = false, fetching = false;
+  let polls = 0, polling = false, fetching = false, unchanged = 0;
   const pollGit = setInterval(async () => {
     if (asking && picked) return; // nothing runs in a picked folder its agent hasn't been told to trust yet (see SAFE_GIT)
     if (polls++ % FETCH_EVERY === 0 && !fetching) { fetching = true; fetchGit(cwd, env).finally(() => { fetching = false; }); } // beside the poll, not in it
+    // ponytail: a change made outside a quiet agent (your own editor, a pull) shows after up to 15 s, not 5.
+    // Watching .git and the folder would show it at once, at the cost of a watcher per folder.
+    if (unchanged >= SLOW && Date.now() - lastOut > SETTLED_MS && polls % SLOW) return;
     if (polling) return;
     polling = true;
     const next = await sharedStatus(cwd, env).finally(() => { polling = false; });
     if (exited || !next?.branch) return;
     const { untracked, ...stats } = next;
     newFiles = untracked;
-    if (JSON.stringify(stats) === JSON.stringify(lastGit)) return;
+    if (JSON.stringify(stats) === JSON.stringify(lastGit)) return void unchanged++;
+    unchanged = 0;
     lastGit = stats;
     send({ t: 'git', ...lastGit });
   }, GIT_POLL_MS);

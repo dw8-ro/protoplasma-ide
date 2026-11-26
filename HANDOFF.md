@@ -5,10 +5,22 @@ did: [docs/sessions/2026-10-29.md](docs/sessions/2026-10-29.md) (the second secu
 [docs/sessions/2026-10-26.md](docs/sessions/2026-10-26.md) (19–26 Oct) and
 [docs/sessions/2026-10-18.md](docs/sessions/2026-10-18.md) (the first security audit).
 
-## 25 Nov 2026: an independent review of 0.7.0, everything it found fixed, ready to release
+## Latest release: v0.7.0 (26 Nov 2026, `93a86ab`)
 
-**Start here.** Branch `claude/protoplasma-improvements-7e34b3` (worktree `protoplasma-improvements-7e34b3`) is the
-redesign branch (`75aaaf3`) plus the fixes below, **uncommitted**, waiting for David's go-ahead to commit and release.
+**Released.** `1cc879f` (the redesign branch plus every fix below) and `93a86ab` (0.7.0) pushed to `main`, tag `v0.7.0`.
+The new `release.yml` worked on its first run: `build` then `sign`, both green; `Protoplasma-0.7.0-mac-arm64.zip`
+(150 MB) published. CI and Package green. Railway redeployed the hub from `1cc879f` (SUCCESS, `/` answers 200).
+`node scripts/update-check.js 0.6.1` passed 12 of 12 (a first try was cut off by a dropped download).
+- **For David on GitHub now:** the `release` environment was created by that run with no protection. Settings →
+  Environments → `release`: add yourself as a required reviewer and move `MAC_CERT_P12` and `MAC_CERT_PASSWORD` into it
+  (then delete the repo-level copies). Until then a tag releases without approval, as before.
+- **Next:** the plan's 0.7.1, proven on real Macs ([docs/plan.md](docs/plan.md), "Road to 1.0").
+- After pulling, run `npm run setup` once in every checkout (allowScripts is enforced).
+
+## 25 Nov 2026: an independent review of 0.7.0, everything it found fixed (released as 0.7.0)
+
+Branch `claude/protoplasma-improvements-7e34b3` (worktree `protoplasma-improvements-7e34b3`) was the redesign branch
+(`75aaaf3`) plus the fixes below; committed as `1cc879f`.
 The review, every finding, its evidence and its fix: [docs/sessions/2026-11-25-review.md](docs/sessions/2026-11-25-review.md)
 (raw notes beside it). It describes weaknesses fixed in this release, so commit it with the release, not before.
 - **The review:** eight areas, a reviewer each and a skeptic that tried to refute every finding: the live hub sign-in
@@ -171,7 +183,7 @@ What it still needs, in order:
 - **Seen once and not explained:** on the first launch of a freshly downloaded Electron, e2e's "creates a This Mac
   team…" step failed; it passed on every later run.
 
-## Latest release: v0.6.1 (8 Nov 2026, `a52368f`): small fixes, lighter teammates' terminals, and research on Rust
+## v0.6.1 (8 Nov 2026, `a52368f`): small fixes, lighter teammates' terminals, and research on Rust
 
 Released from the worktree branch `claude/protoplasma-main-function-9da099` (pushed as `HEAD:main`, then the tag).
 Notes: [docs/release-notes/0.6.1.md](docs/release-notes/0.6.1.md). `src/shared.js` changed, so the online hub

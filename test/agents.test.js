@@ -92,6 +92,14 @@ test('OpenCode\'s plugin reports what Claude Code\'s hooks do, and acts on the a
     await hooks.event({ event: { type: 'message.updated' } });
     assert.equal(seen.length, 0, 'nothing else is reported');
 
+    // A subagent's session: its prompt and its finishing aren't the agent's, but its permission questions are.
+    await hooks.event({ event: { type: 'session.created', properties: { info: { id: 'kid', parentID: 's1' } } } });
+    await hooks['chat.message']({ sessionID: 'kid' }, { parts: [{ type: 'text', text: 'search the repo' }] });
+    await hooks.event({ event: { type: 'session.idle', properties: { sessionID: 'kid' } } });
+    assert.equal(seen.length, 0, 'a subagent\'s prompt and idle aren\'t reported');
+    await hooks.event({ event: { type: 'permission.updated', properties: { sessionID: 'kid' } } });
+    assert.equal(seen.pop().hook_event_name, 'PermissionRequest', 'its permission question still needs the person');
+
     relay.close();
     await hooks['tool.execute.before']({ tool: 'bash', sessionID: 's1' }, { args: { command: 'ls' } }); // the app is away: it carries on
   } finally { delete process.env.PROTO_HOOK_URL; delete process.env.PROTO_HOOK_SECRET; relay.close(); }

@@ -1,0 +1,7 @@
+# verify-renderer-ui verdicts
+
+## renderer-ui-1: confirmed, medium
+At HEAD, index.html:958 is `<input id="task" maxlength="300">`, labelled "What should the agent do?". renderer onsubmit (about line 878) sends the same trimmed `task` as `prompt: first` when #sendTask is ticked (ticked by default) and the CLI has `prompts`. Pasted text over 300 characters is cut silently by maxlength, and an <input> drops line breaks. On 5e896c4 the field was "Goal for its agents (Optional)" and was never sent as a prompt, so this is new on the branch. The hub's str(body.task, 300) explains the cap. Fix: a textarea with no cap, the full text as prompt, and the first 300 characters as the goal (renderer's `task !== rec.task` check and the startAgent `task` should use the capped copy).
+
+## renderer-ui-2: confirmed, low
+isInstalled('other') is true once 'other' is missing from `agents`, because `undefined !== false`. So after Other command is cleared, defaultAgent() returns 'other' (prefs.agent, saved by the data-pref radio). In syncAgents, with no radio checked yet (first open after a launch), `again` and openNewAgent's `preferred` match nothing. If exactly one agent is installed, #agentField is hidden, and onsubmit throws "No agent to start yet" every time. Other command is new on the branch (absent from 5e896c4). The "+" button / add-agent path also calls addAgent('other') with an empty command. Fix: defaultAgent checks `agents.some(a => a.cmd === prefs.agent && a.installed)`.

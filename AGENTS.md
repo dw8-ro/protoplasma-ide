@@ -20,7 +20,7 @@ Function names below are stable. Line numbers drift, so search by name.
 |---|---|---|
 | `npm install`, then `npm run setup` | Installs dependencies without running any of their install scripts (`.npmrc` `ignore-scripts=true`), then runs only the ones `allowScripts` in package.json names, at its pinned versions, and the project's postinstall (node-pty's `spawn-helper` made executable). Without `setup`, agents don't start. | Node 24 |
 | `npm start` | Runs the app from source. Updates are off in source runs. | |
-| `npm test` | 123 integration tests in `test/*.test.js`: real hub, real lanes, real git. About a minute. | git ≥ 2.28, macOS. No network or Electron needed. |
+| `npm test` | 130 integration tests in `test/*.test.js`: real hub, real lanes, real git. About a minute. | git ≥ 2.28, macOS. No network or Electron needed. |
 | `npm run e2e` | Drives the real Electron app through every main flow and prints `PASS`/`FAIL` per step, ending with `N/M passed`. 15-minute cap. | The `claude` CLI on the login-shell PATH and a GUI session. One step needs `gh auth status` to succeed (online). |
 | `npm run dist` | Packages `dist.noindex/Protoplasma-darwin-arm64/Protoplasma.app`, unsigned. | |
 | `npm run playground` | Two app copies (David on port 7801, Max on 7802) on a local hub and repo, each with an HTTP control API | |
@@ -69,8 +69,8 @@ app/index.html    CSP, all CSS (tokens and themes), icon sprite, all markup and 
 app/config.json   githubClientId (OAuth app, device flow), onlineHub (the Railway URL)
 scripts/          e2e.js, playground.js + playground-app.js, stage.js, screenshot.js, demo.js + gif.js, readme-art.js +
                   readme-art/ (the README image pages and diagram), sign.sh, icon.js
-test/             hub.test.js (44), hub-live.test.js (18), workspace.test.js (13), files.test.js (13), lan.test.js (17),
-                  identity.test.js (7), updates.test.js (6), agents.test.js (4), conflicts.test.js (1)
+test/             hub.test.js (44), hub-live.test.js (20), workspace.test.js (13), files.test.js (13), lan.test.js (17),
+                  identity.test.js (8), updates.test.js (6), agents.test.js (4), conflicts.test.js (3), quota.test.js (2)
 .github/workflows ci.yml (npm test on every push to main and PR), package.yml (dist check), release.yml (tag → release)
 Dockerfile        the hosted hub image (only src/hub.js + src/shared.js + ws)
 install.sh        the one-line installer
@@ -170,7 +170,8 @@ docs/             screenshots (sources), readme/ (the README's images, dark and 
     Stop hook). The next hook corrects either.
 - **`onWatcher`:** a window whose hello has `sees` (an array) is selective: it starts with no output at all, and each
   `look {session, sees}` says which sessions' terminals it shows now (at most 8). It then gets `out` only for those,
-  and the current screen (`\x1bc` and the history) of every agent in a session that just came into view. A rename
+  and the current screen (`\x1bc` and the history) of every agent in a session that just came into view, until that window
+  has `MAX_BUFFERED` unsent (`replayTo`: the rest start from their next output). A rename
   renames inside `ws.sees` too. Also handles `look` (presence), `replay` (a stopped agent's last screen), `in` (typing, only into lanes
   started with `open`), and the `file:get`/`file:put` relay through `relayFile`. Only the lane owner's login may answer
   a file request.
@@ -204,7 +205,7 @@ docs/             screenshots (sources), readme/ (the README's images, dark and 
     characters.
   - `subcommandAt` skips git's own options.
   - It asks on: config that changes where a plain push goes (`PUSH_CONFIG`: `remote.*.push`, `remote.*.pushurl`,
-    `push.default`, set with `-c` or `git config`; the pre-push hook needs no change, since it sees the real refs), a force push, `--all`/`--mirror`, deleting any remote branch (naming main/master/the default branch,
+    `remote.*.mirror`, `push.default`, set with `-c`, `--config-env`, `GIT_CONFIG_KEY_n` or `git config`, quoted or not; the pre-push hook needs no change, since it sees the real refs), a force push, `--all`/`--mirror`, deleting any remote branch (naming main/master/the default branch,
     or a teammate on it, when that's what it is), and pushing to main/master or the lane's `mainBranch` (the branch
     `origin/HEAD` names, reported by lane.js `gitStatus`). It follows `git checkout`/`switch` within the same command.
 - **Shell-write check** (`shellWriteRisk` via `writtenBy`): finds the paths a command writes, then asks if another
@@ -225,7 +226,9 @@ docs/             screenshots (sources), readme/ (the README's images, dark and 
   Errors are `{error}` with status 400, 401, 403, 404, 409, 413, 503 or 500.
 - **Sessions:** `findSession` matches the exact name, then `slug(name)`, the stored `key`, or an alias. A renamed session
   keeps `key` (the original slug), so its branch and folders don't move, and its old names go into `aliases` (at most
-  50). Creating a session whose name matches an existing one joins it.
+  50). Creating a session whose name matches an existing one joins it, except with `move: true` (Move to a team),
+  which answers 409 instead when the name, or the name it will show (`as`), is taken, so a moved session never lands in
+  someone else's. Moving one back to where it came from takes up its own record, left there done.
 - **Notes:** a note pinned to a file may carry `hash` (16 base64url characters from files.js `fileHash`: what the file
   held when it was written). Apps compare it with their own copy to show **File changed since**; the hub never reads
   files.
@@ -326,12 +329,14 @@ docs/             screenshots (sources), readme/ (the README's images, dark and 
     committed yet don't count. The hub passes it on (`lane.conflicts`, 50 names at most), tells the lane's agent in its
     prompt context, and the app shows "N conflicts with main" on the card and the bar, with the files under Environment.
   - `branchConflicts`: the same against the other sessions' pushed branches (`branchConflicts`: `origin/session/*`,
-    newest first, at most 10, skipping its own and any with nothing main lacks), as `[{branch, files}]`, each pair of
+    newest first, at most 10, skipping its own, any with nothing main lacks, and any whose changes main already has after a squash or rebase
+    merge: merging it into main changes nothing), as `[{branch, files}]`, each pair of
     commits asked once. The hub caps it (`branchClashes`) and tells the agent; the app shows "Conflicts with <session>"
     and lists the files under Environment by session name.
   - Returns null when git fails.
-  - **It writes two things:** it sets the upstream of a `session/*` branch when the remote branch exists, and
-    `merge-tree` leaves the merged files it tried as loose objects nothing refers to (git's own gc clears them).
+  - **It writes one thing:** it sets the upstream of a `session/*` branch when the remote branch exists. `merge-tree`
+    writes into a temporary object store (`quarantined`: `GIT_OBJECT_DIRECTORY`, the repo's own objects as alternates),
+    deleted after, so nothing piles up in a clone every session folder shares.
 - **Standalone:** `PROTO_TOKEN=<token> node src/lane.js <hub> <team> <session> [--open] [cmd args…]`. The tests and e2e
   use it.
 
@@ -585,7 +590,9 @@ docs/             screenshots (sources), readme/ (the README's images, dark and 
 - **Dependencies:** `allowScripts` in package.json lists the packages whose install scripts may run, at pinned
   versions: node-pty (its prebuild check and post-install), and Electron (which has none today: it downloads its binary
   on first run). It's enforced since 16 Nov: `.npmrc` sets `ignore-scripts=true`, and `npm run setup`
-  (`scripts/allowed-scripts.js`) runs `npm rebuild <name>` for each allowed package, then the root `postinstall`. Every
+  (`scripts/allowed-scripts.js`) runs `npm rebuild <its folder>` for each allowed package (by path: `npm rebuild <name>`
+  would also run every nested or aliased copy with that folder name), then the root `postinstall`. It refuses a folder
+  whose package has another name (an npm alias). Every
   workflow runs `npm run setup` after `npm ci`. When a pinned package's version changes, setup stops and says so:
   read what its install scripts do in the new version, then update `allowScripts`. npm 11.20 and later read
   `allowScripts` from package.json themselves; with a personal `allow-scripts` in `~/.npmrc` (David's allows
@@ -609,7 +616,8 @@ docs/             screenshots (sources), readme/ (the README's images, dark and 
   hooks go through it, and a hub's answer may only add context or ask the person (`safeHookReply`): never allow, deny,
   block, stop or change a tool call. What goes to the hub is cut to what it reads (`slimHook`): never the text a tool
   writes or a whole prompt. A new hook answer in the hub needs adding there too. Codex can't ask, so the relay
-  itself turns an ask into one refusal, after which the same step within 10 minutes goes through; the
+  itself turns an ask into one refusal, after which the same step within 10 minutes goes through (keyed on the step the hub was sent and its reason, so a
+  different step with the same reason is refused again); the
   refusal is the app's, from an ask, never a hub's (`refuseOnce`, for every agent the table doesn't mark `asks`).
 - **Other command:** runs what this Mac's own setting says, as words, with no shell and no hook secret. Never take
   the command from a session, a hub or a teammate: that would run their text on this Mac.
@@ -728,8 +736,13 @@ docs/             screenshots (sources), readme/ (the README's images, dark and 
     - that the tag is on `origin/main`;
     - that the tag equals `v<package.json version>`.
 
-    It then runs `npm ci`, `npm test` and `npm run dist`. `scripts/sign.sh` signs with the certificate, `ditto` makes
-    the zip, and `gh release create` publishes it. Its notes are generated from the commits, with
+    Its `build` job, which has no secrets, runs `npm ci`, `npm run setup`, `npm test` and `npm run dist`, and passes
+    the unsigned app on as a tar (an artifact's own zip loses symlinks). Its `sign` job installs nothing, checks out
+    only `scripts/sign.sh` and `docs/release-notes`, and runs in the `release` environment, where the signing secrets
+    and required reviewers belong: `scripts/sign.sh` signs with the certificate, `ditto` makes the zip, and
+    `gh release create` publishes it. So dependency code never runs where the signing key is. The sign job unpacks only `Protoplasma.app`, into its own
+    folder, and refuses a tar holding anything else. If `sign` fails before publishing, Re-run all jobs on the same tag
+    (the unsigned app is kept 7 days): no new version is needed for that. Its notes are generated from the commits, with
     `docs/release-notes/<version>.md` above them when that file exists: write it before tagging.
   - **Without pushing a tag** (a cloud session can't): bump the version on `main` (`npm version patch`, push `main`),
     then run Release from the Actions page on `main` (`workflow_dispatch`). It releases package.json's version, refuses

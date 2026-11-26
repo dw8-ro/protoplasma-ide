@@ -1,0 +1,300 @@
+{
+ "find:fixes-ci-docs": {
+  "findings": [
+   {
+    "title": "Sign job unpacks the build job's tar over its own checkout, so code from the build job can replace scripts/sign.sh and read the signing certificate",
+    "file": ".github/workflows/release.yml",
+    "line": 82,
+    "severity": "medium",
+    "description": "The split is meant to guarantee that dependency code never runs where the signing key is (AGENTS.md, release notes). But `sign` checks out scripts/sign.sh, then runs `tar -xzf app.tgz` in the same folder, then runs `scripts/sign.sh` with MAC_CERT_P12 and MAC_CERT_PASSWORD in its env. app.tgz is made by `build`, where every dependency's code and install scripts run. That code controls what goes into app.tgz, and bsdtar overwrites existing files by default.",
+    "failure_scenario": "A compromised dependency or allowed install script runs in `build` and adds `scripts/sign.sh` (or a second `Protoplasma-x-mac-arm64.zip`) to app.tgz next to Protoplasma.app. In `sign`, the tar replaces the checked-out sign.sh. The replaced script then runs with the .p12 and its password and can send them out. Anyone holding that certificate can sign updates that every installed copy accepts (sameSigner). Any planted extra zip also gets uploaded by the `Protoplasma-*-mac-arm64.zip` glob.",
+    "evidence": "Tested in a scratch folder (work2/fixes-ci-docs/tartest). The checked-out scripts/sign.sh said 'good'. An archive made with `tar -czf app.tgz -C build Protoplasma.app scripts` held a sign.sh that said 'evil'. After `tar -xzf ../app.tgz`, `cat scripts/sign.sh` printed 'evil'. The workflow runs `- run: tar -xzf app.tgz` and then `scripts/sign.sh Protoplasma.app` in the same workspace.",
+    "suggested_fix": "Refuse any entry that isn't the app, and unpack into its own folder: `if tar -tzf app.tgz | grep -qv '^Protoplasma\\.app\\(/\\|$\\)'; then echo 'unexpected files in app.tgz'; exit 1; fi; mkdir out && tar -xzf app.tgz -C out`. Then sign and ditto `out/Protoplasma.app`. Another option is to check out sign.sh with `path: src` and call `src/scripts/sign.sh`."
+   },
+   {
+    "title": "The unsigned-app artifact is kept for 1 day, but the sign job waits for a reviewer",
+    "file": ".github/workflows/release.yml",
+    "line": 62,
+    "severity": "low",
+    "description": "`retention-days: 1` is set on the upload. HANDOFF and plan.md tell David to add himself as a required reviewer on the `release` environment, and a job can wait up to 30 days for that approval. If he approves more than a day later, the artifact has expired and `sign` fails. plan.md then says a failed release needs a new commit and a new version.",
+    "failure_scenario": "The tag is pushed in the evening and the sign job is approved the next evening. download-artifact fails with 'artifact not found'. Re-running only `sign` fails the same way. Following plan.md, David bumps to 0.7.1, although 'Re-run all jobs' would have rebuilt and released 0.7.0, since nothing was published.",
+    "evidence": "release.yml build step: `retention-days: 1`. sign job: `environment: release`. plan.md: 'If it fails, the fix needs a new commit and a new version (0.7.1)'. HANDOFF step 2: 'add yourself as a required reviewer'.",
+    "suggested_fix": "Use `retention-days: 7` or more. Also say in plan.md and HANDOFF that if `sign` fails before anything is published, 'Re-run all jobs' is enough."
+   },
+   {
+    "title": "AGENTS.md test counts don't match the tests after the fixes",
+    "file": "AGENTS.md",
+    "line": 23,
+    "severity": "low",
+    "description": "The fixes added tests (conflicts, hub-live, identity), but AGENTS.md still gives the old counts. The repo map also leaves out quota.test.js.",
+    "failure_scenario": "A session checks a run against AGENTS.md's '123 integration tests', sees 130, and concludes tests were added or duplicated by mistake. Or it trusts the per-file counts while looking for a missing test.",
+    "evidence": "AGENTS.md:23 says '123 integration tests'. AGENTS.md:72-73 says hub-live.test.js (18), identity.test.js (7), conflicts.test.js (1), with no quota.test.js. Counting test( calls gives hub-live 20, identity 8, conflicts 3, quota 2, 130 in all, which matches HANDOFF's '130 of 130'.",
+    "suggested_fix": "Update line 23 to 130 and the repo map counts, and add quota.test.js (2)."
+   },
+   {
+    "title": "Docs still say Electron stays at 44.10.2, and still list Monaco 0.57's DOMPurify as an open issue",
+    "file": "docs/plan.md",
+    "line": 46,
+    "severity": "low",
+    "description": "package.json now has electron ~44.11.6 and monaco-editor ^0.58.0, and Monaco's min/vs now bundles DOMPurify 3.4.17. Several passages that read as current guidance still say the opposite.",
+    "failure_scenario": "A later session reads plan.md phase 1 or HANDOFF's 'Known and left' list. It either takes Electron back to 44.10.2 or spends time chasing a DOMPurify upgrade that has already been done.",
+    "evidence": "docs/plan.md:46: 'Electron stays at `~44.10.2`.' HANDOFF.md:166: 'Electron stays at 44.10.2. Don't take 44.11.x as it is'. HANDOFF.md:354-358 (Known and left): 'Monaco 0.57.0 bundles DOMPurify 3.4.15 ... Take a Monaco release with a newer DOMPurify when one comes out'. Searching node_modules/monaco-editor/min/vs finds 3.4.17.",
+    "suggested_fix": "Mark these passages as superseded (Electron 44.11.4 and later fixed the canvas font, so 0.7.0 ships 44.11.6), and move the DOMPurify item to done with Monaco 0.58.0."
+   }
+  ],
+  "checked_and_sound": [
+   "scripts/allowed-scripts.js: `npm rebuild <absolute dir>` works. npm 11.20's rebuild.js accepts `directory` specs and matches on `node.path === spec.fetchSpec`. A scratch script using npm's own arborist on the worktree picked exactly node_modules/node-pty and node_modules/electron. The alias name check (pkg.name !== name) is right.",
+   "The allowScripts pin electron@44.11.6 matches the installed version (44.11.6) and the lockfile. Electron 44.11.6 has no install scripts, as the README and AGENTS.md say. node-pty 1.1.0 is unchanged.",
+   "release.yml: TAG reaches sign as a job output (steps.tag.outputs.tag, then needs.build.outputs.tag). The artifact name (unsigned-app) and path (app.tgz in the working folder) match between upload and download. The macOS tar keeps the app's symlinks. scripts/sign.sh is 100755 in git, so the sparse checkout keeps its exec bit. The non-cone patterns cover sign.sh and docs/release-notes. `gh release create --repo` needs no git remote. The job's `contents: write` replaces the top-level `read`. download-artifact within the same run needs no `actions: read`. The workflow_dispatch path still checks main and an unused tag with ls-remote, which works without stored credentials because the repo is public.",
+   "package.yml still runs on release.yml changes and checks the asar for monaco min/vs/loader.js, which Monaco 0.58.0 still ships. code.js loads min/vs, and the dist --ignore still drops esm and dev.",
+   "scripts/e2e.js: `app` is imported from electron (line 5), and check() takes a third detail argument, so the new focus lines and diagnostics are valid.",
+   "package.json version is 0.6.1, so HANDOFF's `npm version minor` gives 0.7.0 as intended.",
+   "README protocol table: lane.js sends `key {moving, ago}`. The renderer's focus-driven invite check is limited to once a minute (checkInvites.at), as the release notes say.",
+   "Findings were saved as they were found to /private/tmp/claude-501/-Users-david-Desktop-David-s-Folder-Projects-Protoplasma--claude-worktrees-protoplasma-improvements-7e34b3/858bd7f3-2d12-4f3d-b312-168e5e09dac9/scratchpad/review2/fixes-ci-docs.md"
+  ]
+ },
+ "find:fixes-app": {
+  "findings": [
+   {
+    "title": "Move to a team: the 409's advice \"Rename this one, then move it again\" can never work",
+    "file": "app/renderer.js",
+    "line": 1304,
+    "severity": "medium",
+    "description": "moveSession sends `name: key`, where key = rec.key whenever the session has been renamed (rec.key !== slug(name)). A hub rename keeps the original key (`session.key = keyOf(session)`). So after the rename the 409 tells you to do, the move sends the same original key again. Hub findSession matches on slug, key and aliases, so it finds the same target session and answers 409 again. Renaming the target's session doesn't help either, because it keeps its key and gains an alias. The fix is also half-done for a session that was already renamed. The 409 check only covers `key`. If the target already has a session called `name`, saveSession creates `key` there, then renameSession(key -> name) answers 409. That leaves a stray session in the target, named after the key, and the source session is never marked done.",
+    "failure_scenario": "1) Move \"lobby\" from Just me to Team B. Just me keeps its copy, marked done. 2) Move it back to Just me: the hub's findSession matches the done \"lobby\" and answers 409, \"Rename this one, then move it again\". 3) Rename it in B to \"lobby2\": rec.key stays \"lobby\", so moveSession again sends name \"lobby\" and gets 409. The same loop happens for any target that has an unrelated session called \"lobby\". The only way out is deleting the target's session, which the message doesn't mention. Release notes 0.7.0 line 67 repeats the advice that doesn't work.",
+    "evidence": "renderer.js moveSession: `const key = rec?.key && rec.key !== slug(name) ? rec.key : name; await proto.saveSession(target.key, { name: key, task, move: true })`. hub.js ~858: `const existed = findSession(team, name); if (existed && body.move === true) return json(409, ...)`. findSession matches `keyOf(x) === want || aliases`. The hub rename route sets `session.key = keyOf(session)` and pushes the old name into aliases.",
+    "suggested_fix": "Have the hub check both the key and the display name (or send both, e.g. `{name: key, as: name, move: true}`), and let the 409 name the real way out. For example, offer to move it under a new key: save under a fresh unique name, then rename. That needs the folder key passed separately, the way folderKey is already passed to startLane. Or tell the person to delete or rename the session on the other side and accept that the key is kept. Also make the key-then-rename pair atomic: check `name` before creating `key`."
+   },
+   {
+    "title": "The cleanAgent fix (renderer-solo-5) leaves out lastActive, the field the review's own scenario used",
+    "file": "app/renderer.js",
+    "line": 96,
+    "severity": "low",
+    "description": "The new coercion forces name, login, cmd, status, branch, repo, tree and prompt to strings. lastActive still passes through unchanged. So do session records' createdAt and doneAt: the new sessions filter only checks that `name` is a string. sessionList builds `at` from l.lastActive, rec.doneAt and rec.createdAt, and renderSessions' default sort calls `b.at.localeCompare(a.at)`. The comment says the change stops a number from blanking the window, but this path still throws. The review's suggested fix named lastActive explicitly.",
+    "failure_scenario": "A hub on a Mac (hostile, buggy or older) sends one lane with `lastActive: 123`, or one session record with `createdAt: 1`, in a team with two or more sessions. renderSessions' sort throws 'b.at.localeCompare is not a function' on every state frame, and the window stays blank or stale while that team is open.",
+    "evidence": "diff: `['name','login','cmd','status','branch','repo','tree','prompt'].map(...)`, with no lastActive. renderer.js ~1215: `at: ls.map(l => l.lastActive).concat(rec?.doneAt || rec?.createdAt || '').filter(Boolean).sort().pop() || ''`. ~1252: `(a, b) => rank(a) - rank(b) || b.at.localeCompare(a.at)`. Review docs/sessions/2026-11-25-review.md:429 names this exact case: 'lastActive: 123 ... at.localeCompare is not a function'.",
+    "suggested_fix": "Add 'lastActive' (and 'typedBy') to the coerced keys, and force `at` to a string in sessionList (String(...) or a typeof filter). Alternatively coerce createdAt and doneAt when filtering m.sessions."
+   },
+   {
+    "title": "movedOn checks names in localStorage only: stale keys hide the folder prompt for good, and a rename in the other team slips past it",
+    "file": "app/renderer.js",
+    "line": 1048,
+    "severity": "low",
+    "description": "movedOn counts any `source:<other team>:<name>` key with the same repo. Your own key is cleared only when you delete the session yourself. So a key survives when a teammate deleted the session, when you left the team or it was deleted, and for the done copy a move leaves behind. After that, \"Also remove its folder on this Mac?\" is never offered again for that name and repo: the folder is kept with no prompt. It also misses the opposite case. The rename form moves the source key to the new name (renameForm copies sourceKey(old) to sourceKey(next)). Once the moved copy is renamed in the other team, `endsWith(':' + name)` no longer matches, and deleting the original offers to remove a folder that team still uses. Only main's new guard stops that, and only while an agent is running. `endsWith(':lobby')` also matches an unrelated session called \"a:lobby\".",
+    "failure_scenario": "Move \"lobby\" from Just me to Team B, then rename it in B to \"lobby v2\". Later, delete the done \"lobby\" in Just me while no agent runs in B. movedOn is false and the confirm appears. removeSessionFolder deletes <clone>@lobby, which B's session works in. The branch is kept and uncommitted or ignored work refuses the delete, so the loss is limited, but B's next agent has to recreate the worktree. In the other direction, after a teammate deletes a session in a team you share, your stale source key stops Just me's same-named session from ever offering to remove its folder.",
+    "evidence": "renderer.js 1048: `Object.keys(localStorage).some(k => k.startsWith('source:') && k !== sourceKey(name) && k.endsWith(`:${name}`) && JSON.parse(...).repo === source.repo)`. renameForm.onsubmit: `store.set(key(next), value); store.set(key(old), '')`. deleteSession clears only `sourceKey(name)` for the current team.",
+    "suggested_fix": "Make main the authority, since it already knows the folder. In sessions:removeFolder, or in a new check, refuse or skip when any live lane's cwd is under the folder (as now). For the prompt, match on the folder key rather than the display name: store the key in the source JSON and compare `source.key`/folder path. Accept the leak and note it with `ponytail:`."
+   },
+   {
+    "title": "move:true is ignored by hubs running older code, which then silently join the same-named session",
+    "file": "src/hub.js",
+    "line": 858,
+    "severity": "low",
+    "description": "Only the new hub returns the 409 for `move: true`. A team hosted on a teammate's Mac that runs 0.6.x ignores the field and joins the existing session of that name, which the fix exists to prevent. So does the online hub until it's redeployed. The renderer doesn't check the reply to see that a new record was created, so the move then marks the source done and opens someone else's session.",
+    "failure_scenario": "Max hosts a team on his Mac with 0.6.1 and already has a session \"lobby\". David (0.7.0) uses Move to a team on his own \"lobby\" into Max's team. Max's hub joins it. David's agents there work in his folder under Max's session (goal, plan, steps) and his Just me copy is marked done.",
+    "evidence": "hub.js 858: `if (existed && body.move === true) return json(409, ...)` exists only in the new code. renderer moveSession ignores the records that saveSession returns.",
+    "suggested_fix": "In moveSession, check the returned records before going on. The record named `key` should be new: its createdBy is me, and it wasn't in the target before. Otherwise stop and alert. Alternatively list the target's sessions first and refuse in the renderer."
+   },
+   {
+    "title": "(Pre-existing, not from the fixes) the hub's session DELETE never refuses while agents are running",
+    "file": "src/hub.js",
+    "line": 888,
+    "severity": "low",
+    "description": "The guard calls `running(session.name)`, but running is defined as `(team, x) => teamLanes(team.id).some(l => l.session === x.name)`. With one argument, team.id is undefined: teamLanes(undefined) matches no lane (every lane has a team id), and x is undefined but `.some` on an empty list never reads it. So the 409 'Stop its agents first.' can never fire.",
+    "failure_scenario": "The session's creator or the team owner deletes a session from another window or an older app while a teammate's agents are running in it. The hub removes it and its stopped-agent records. The running agents' terminals then show under a session with no record.",
+    "evidence": "hub.js 172: `const running = (team, x) => teamLanes(team.id).some(l => l.session === x.name)`. 316: `teamLanes = teamId => [...lanes.values()].filter(l => l.team === teamId)`. 888: `if (running(session.name)) return json(409, ...)`.",
+    "suggested_fix": "`if (running(team, session)) return json(409, { error: 'Stop its agents first.' });` and add an api() test in hub.test.js."
+   }
+  ],
+  "checked_and_sound": [
+   "teams.js refuseOnce keyed on sha256(slim)+reason: slimHook keeps only hook_event_name, cwd, tool_name and tool_input.{file_path, notebook_path, cmd, command}, so no ids, timestamps, workdir or timeout reach the key. A byte-identical Codex or OpenCode retry gives the same key. Codex's and OpenCode's apply_patch are cut to the file-header lines, so retrying a patch on the same files matches even if its content changed. The lan.test.js case does test a different step with the same reason.",
+   "main.js sessions:save: the `...(o.move && { move: true })` pass-through is coerced to a boolean, and teams.saveSession forwards the body unchanged to the hub, which checks `body.move === true`.",
+   "main.js sessions:removeFolder guard: path is imported; lane.cwd comes from github.sessionFolder's dir, the same `<clone>@<slug>` as sessionFolderPath; a null dir (folder gone) can't match; exited lanes leave `lanes` in onExit; Delete session is disabled while the session's own agents run, so the guard only catches other teams' agents, as intended.",
+   "renderer cleanAgent: no render code uses `??` on the coerced fields, and the hub's views() sends every key, so turning a missing field into '' changes no fallback; `git` as null vs undefined is only used for truthiness (`l.git?.x`, `lanes.filter(l => l.git)`).",
+   "members via nameList: isSolo uses `t.members.length` and still works.",
+   "checkInvites busy/at: busy is reset in finally, early returns inside the try go through finally, the 10-minute interval is unaffected, and focus is limited to once a minute.",
+   "Just me invite confirm: there is only one proto.invite call site, isSolo becomes false once someone is invited, and sessionRecords belongs to the team being invited into.",
+   "New session: typedTask (up to 12000) goes to the first prompt, the same as main's firstPrompt cap; the goal is sliced to the hub's 300; sessionNameFrom cuts the name to 5 words and 40 characters; the session name input stays at maxlength 60.",
+   "defaultAgent: agents:status always returns a boolean `installed` (including the Other entry); with an empty list it returns prefs.agent, as before; a cleared Other command now falls back to an installed agent.",
+   "No new top-level names in renderer.js that clash with code.js or panes.js (movedOn and typedTask are local; checkInvites.busy/.at are function properties)."
+  ]
+ },
+ "find:fixes-hub-lane": {
+  "findings": [
+   {
+    "title": "send() now terminates a window that is only receiving one burst of screen replays, which causes a reconnect loop",
+    "file": "src/hub.js",
+    "line": 104,
+    "severity": "medium",
+    "description": "send() checks bufferedAmount > MAX_BUFFERED (16 MB) before every message. The `look` handler (line ~1108) and the no-`sees` connect path (line ~1091) call send() in a synchronous loop, one `out` per lane, each carrying up to 512K chars of history. Nothing drains between iterations, so bufferedAmount ends up as the size of the whole burst minus the kernel buffer, however fast the client reads. Once that passes 16 MB the socket is terminated with 1006 and every queued byte is thrown away. The window never got its screens. Before the fix these sends went through. toTeam's identical check is harmless because live output arrives in small 16 ms batches.",
+    "failure_scenario": "A team has roughly 15 to 25 busy agents across the sessions one window shows (up to 8, e.g. pane mode with 3 sessions). The window sends `look`, the hub queues more than 16 MB in one tick and terminates the socket. The renderer reconnects and sends the same `look`, and the hub terminates it again. Those terminals never fill, and the hub serialises about 20 MB on every round.",
+    "evidence": "Repro at scratchpad/work2/fixes-hub-lane/probe2.js: a hub on 127.0.0.1 with 20 lanes in session 's', each with about 506K chars of escape-heavy history, and a normally reading watcher that sends look {sees:['s']}. Result: `WATCHER CLOSED code 1006 after outs 0`, peak server-side bufferedAmount 17.3 MB. With 16 lanes the watcher stays open (peak 16.2 MB). Code: `const send = (ws, msg) => ws.readyState === ws.OPEN && (ws.bufferedAmount > MAX_BUFFERED ? ws.terminate() : ws.send(JSON.stringify(msg)));` and `if (!viewing()) for (const l of teamLanes(team.id)) if (sees.has(l.session) && !ws.sees.has(l.session)) send(ws, { t: 'out', ... d: `\\x1bc${l.history}` });`",
+    "suggested_fix": "Apply the drop to sockets that have stopped reading, not to one burst: check the threshold once before the replay loop (or in a separate sendOrDrop used only for single messages), and once over the limit skip the remaining replays (those terminals start from the next output) instead of terminating."
+   },
+   {
+    "title": "The new push-redirect forms are missed once quoted, and an alias set for later skips the push check entirely",
+    "file": "src/hub.js",
+    "line": 468,
+    "severity": "medium",
+    "description": "wordsOf strips quotes only at a word's two ends. `GIT_CONFIG_KEY_0=\"remote.origin.push\"` therefore becomes `GIT_CONFIG_KEY_0=\"remote.origin.push`, setting() slices after '=' and gets `\"remote.origin.push`, and the anchored PUSH_CONFIG (^remote\\.) doesn't match it. `--config-env=\"remote.origin.push=T\"` fails the same way. The fix also covers `-c alias.x=...push` but not the same alias set with `git config alias.x ...`. After that, `git x` isn't read as a push at all. Other redirects of the kind the test treats as one (pushurl) are also missed: url.*.pushInsteadOf, remote.pushDefault, branch.*.pushRemote and GIT_CONFIG_PARAMETERS.",
+    "failure_scenario": "On a team with members, an agent on session/fix runs `git config alias.ship \"push --force origin HEAD:main\" && git ship`, or `GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=\"remote.origin.push\" GIT_CONFIG_VALUE_0=\"HEAD:main\" git push`. Main is pushed (force-pushed in the first case) with no ask.",
+    "evidence": "scratchpad/work2/fixes-hub-lane/push.js (hub on 127.0.0.1, a team with a member, a lane on session/fix, PreToolUse Bash hooks): every one of these answers no decision: the quoted KEY_0 form, `git --config-env=\"remote.origin.push=T\" push`, the alias form, `git config url.git@evil:x/.pushInsteadOf ...`, `git config remote.pushDefault evil`, and the GIT_CONFIG_PARAMETERS form. The unquoted KEY_0 form answers `ask`.",
+    "suggested_fix": "In setting(), strip quotes from the result (`.replace(/[\"']/g, '')`) before testing. Add `alias\\..+` (when its value contains push), `url\\..+\\.(push)?insteadof`, `remote\\.pushdefault` and `branch\\..+\\.pushremote` to the keys that ask. Treat a `GIT_CONFIG_PARAMETERS=` word that contains a PUSH_CONFIG key as a redirect. Add the quoted forms to hub.test.js."
+   },
+   {
+    "title": "The move 409 says to rename the session, which can never clear it, and moving a session back is now impossible",
+    "file": "src/hub.js",
+    "line": 858,
+    "severity": "low",
+    "description": "moveSession sends `name: key`, the session's first slug, which stays the same across renames so the folder and branch don't move. Hub findSession matches `keyOf(x) === slug(name)` and aliases, and a rename keeps both the key and the old name as an alias. So after the advised rename, on either side, the same 409 comes back. Moving a session back to the team it came from always hits its own old done record, which moveSession leaves behind. Before the fix that move joined that record, which in this case was correct.",
+    "failure_scenario": "Move 'fix-login' from Just me to Team X. Just me keeps a done 'fix-login'. Later, Move to Just me from Team X gets 409 'That team already has a session called \"fix-login\". Rename this one, then move it again.' The person renames it in Team X to 'fix-login 2' and moves again. The renderer still sends name 'fix-login' (rec.key), so it gets 409 again. The only way out is deleting the old record.",
+    "evidence": "renderer moveSession: `const key = rec?.key && rec.key !== slug(name) ? rec.key : name; await proto.saveSession(target.key, { name: key, ..., move: true })`. Hub: `if (existed && body.move === true) return json(409, ...)`, where findSession matches `slug(x.name) === want || keyOf(x) === want || aliases`.",
+    "suggested_fix": "Let a move join a record that is the same session: done, the same key, and created by the mover (or the source record the renderer names). Otherwise word the 409 without suggesting a rename, e.g. 'delete or rename the one there first', since only the target-side record can be changed to clear it."
+   },
+   {
+    "title": "The merge-tree quarantine adds a synchronous git spawn in Electron's main process, and the landed check is recomputed on every HEAD move",
+    "file": "src/lane.js",
+    "line": 128,
+    "severity": "low",
+    "description": "quarantined() calls the synchronous git() (execFileSync) for `rev-parse --git-path objects` on every mergeTree or mergedTree. lane.js runs inside the app's main process, so each call blocks it briefly. branchConflicts recomputes whenever HEAD, the branch or main moves. Each own commit therefore re-runs up to 10 branches \u00d7 (mergedTree + mergeTree): up to 20 sync spawns, each with its own mkdtemp/rm, per agent. Yet mergedTree(main, at) and main^{tree} don't depend on HEAD.",
+    "failure_scenario": "Several agents commit often in a repo with 10 pushed session branches. Each commit runs about 20 extra sync git spawns and twice the merge-trees, which shows up as small main-process stalls. Each spawn is cheap (under 10 ms measured here), so the cost is mostly wasted work.",
+    "evidence": "`const objects = path.resolve(cwd, git(cwd, 'rev-parse', '--git-path', 'objects') || '.git/objects');` inside quarantined. `const landed = own && await mergedTree(cwd, main, at, env) === await line('rev-parse', `${main}^{tree}`);` inside the per-branch block keyed on `${head}\\n${at}\\n${mainAt}`.",
+    "suggested_fix": "Cache the objects path per cwd (it never changes) or get it with the async line(), and cache `landed` by `${at}\\n${mainAt}`."
+   },
+   {
+    "title": "OpenCode subagents no longer get team context",
+    "file": "src/opencode-plugin.mjs",
+    "line": 33,
+    "severity": "low",
+    "description": "chat.message now returns early for child sessions, so a subagent's requests never get UserPromptSubmit's additionalContext: session goal, plan, other agents and their files, and the behind warning. A subagent that edits files works without knowing a teammate changed them. Only the refuse-once PreToolUse answer is left. The child's context entry is also never reset, because context.delete is skipped, so notes from its tool calls pile up for the child's whole life.",
+    "failure_scenario": "An OpenCode agent hands an edit to its `general` subagent through the task tool. The subagent's system prompt has none of the team context, so it edits a file a teammate is changing. Its first edit is refused once and the retry goes through, never having seen the overlap warning the main session would have got.",
+    "evidence": "`'chat.message': async ({ sessionID } = {}, { parts } = {}) => { if (children.has(sessionID)) return; context.delete(sessionID); ... tell(sessionID, (await post({ hook_event_name: 'UserPromptSubmit', prompt })).additionalContext); }`",
+    "suggested_fix": "For children, still ask for the context but flag the request (e.g. `subagent: true`) so the hub doesn't record it as the person's prompt or change the lane's status. Or copy the parent session's current context into the child when session.created arrives with a parentID."
+   }
+  ],
+  "checked_and_sound": [
+   "merge-tree quarantine works with a linked worktree of a `git clone --shared` repo: objects are read through GIT_ALTERNATE_OBJECT_DIRECTORIES, the repo's own info/alternates is followed, the conflict is still found, the loose-object count is unchanged and no protoplasma-merge-* temp dir is left (scratchpad/work2/fixes-hub-lane/alt)",
+   "quarantined() removes its temp dir in finally. The execFile callbacks always resolve (timeouts included), so no rejection skips the cleanup",
+   "The landed check (mergedTree(main, branch) === main^{tree}) is correct for squash and rebase merges. Operator precedence: `own && ((await a) === (await b))`",
+   "conflicts.test.js's 'no objects left behind' check would fail on the old code: HEAD moves, so mainConflicts and branchConflicts both re-run merge-tree",
+   "send() terminating cannot throw. On lanes (`in`) and on the file relay (one message up to 1M chars) the 16 MB check is effectively never reached. Later sends to a terminated socket are skipped because readyState isn't OPEN",
+   "claimsOn returns three and leaves the 4th and later untold for the next edit of that file. The hub-live test checks 3 then 1",
+   "mentions() without includes() no longer matches a.ts inside data.ts. A full path still matches through its '/name' boundary",
+   "The `move` flag passes through main.js (`...(o.move && { move: true })`) and teams.js saveSession to the hub",
+   "CLIENT_ID is a constant (not read from env at load), so the identity test comparing it with config.json githubClientId is stable",
+   "Dropping the --show-origin/-l exemption causes no false positive for `git config -l`, `--list --show-origin` or `--show-origin --get ...`",
+   "The OpenCode plugin's child-session handling skips idle and prompt events from children while still reporting their permission requests and tool calls",
+   "addressOf's last-value change is neutral on Railway (X-Real-IP is set by the proxy). Node joins duplicate headers with ', ', so a client's own header comes first"
+  ]
+ },
+ "verify:fixes-ci-docs": {
+  "verdicts": [
+   {
+    "id": "fixes-ci-docs-1",
+    "verdict": "confirmed",
+    "severity": "medium",
+    "reasoning": "release.yml lines 72-88: `sign` does a sparse checkout of scripts/sign.sh and docs/release-notes. It then downloads app.tgz into the same workspace and runs `tar -xzf app.tgz` (line 82) there. After that it runs `scripts/sign.sh Protoplasma.app` with MAC_CERT_P12 and MAC_CERT_PASSWORD in its env. app.tgz comes from `build`, where npm ci, the allowed install scripts, the tests and the packager all run, so dependency code controls what goes into the tar. I reproduced it in work2/verify-fixes-ci-docs/t: an archive holding Protoplasma.app plus scripts/sign.sh ('evil'), unpacked over a workspace whose scripts/sign.sh said 'good', leaves 'evil' in place. bsdtar overwrites by default. sign.sh writes the decoded .p12 to a temp folder and uses the password, so a replaced script gets both. Nothing else checks what the archive contains. An extra Protoplasma-*-mac-arm64.zip in the tar would also be picked up by the gh release glob. So the split's stated guarantee (dependency code never runs where the signing key is) does not hold. A compromised build could already ship a malicious app that then gets signed. Stealing the certificate adds lasting control on top of that, because sameSigner trusts every later update signed with it.",
+    "fix_notes": "Before unpacking, refuse any entry outside Protoplasma.app: `tar -tzf app.tgz | grep -qv '^Protoplasma\\.app\\(/\\|$\\)' && { echo 'unexpected files in app.tgz'; exit 1; }`. Then unpack into its own folder (`mkdir out && tar -xzf app.tgz -C out`), and sign and ditto `out/Protoplasma.app`. A further option is to check out sign.sh with `path: src` and call `src/scripts/sign.sh`."
+   },
+   {
+    "id": "fixes-ci-docs-2",
+    "verdict": "confirmed",
+    "severity": "low",
+    "reasoning": "release.yml line 61 sets `retention-days: 1`. `sign` runs in `environment: release`, and plan.md:132 and HANDOFF.md:30 tell David to add himself as a required reviewer, so the job waits for his approval. If he approves more than a day later, download-artifact finds no artifact, and re-running only `sign` fails the same way. plan.md:137-138 says a failure needs a new commit and a new version (0.7.1). In this case 'Re-run all jobs' would be enough. On a tag run the build's check compares GITHUB_REF_NAME with TAG and still passes. On a workflow_dispatch run the ls-remote check passes because nothing was published or tagged.",
+    "fix_notes": "Set retention-days to 7 or more. Add a line to plan.md and HANDOFF: if `sign` fails before anything is published, 'Re-run all jobs' on the same tag is enough, with no new version."
+   },
+   {
+    "id": "fixes-ci-docs-3",
+    "verdict": "confirmed",
+    "severity": "low",
+    "reasoning": "AGENTS.md:23 says '123 integration tests'. The repo map at AGENTS.md:72-73 lists hub-live (18), identity (7) and conflicts (1), and leaves out quota.test.js, which is tracked in git. Counting test( calls in the working tree gives hub-live 20, identity 8, conflicts 3 and quota 2, 130 in all, which matches HANDOFF.md:21 ('130 of 130'). The diff doesn't touch those AGENTS.md lines, so the fixes added tests (+5) without updating the counts, and quota was already missing.",
+    "fix_notes": "Change AGENTS.md:23 to 130. In the repo map, set hub-live.test.js (20), identity.test.js (8) and conflicts.test.js (3), and add quota.test.js (2)."
+   },
+   {
+    "id": "fixes-ci-docs-4",
+    "verdict": "confirmed",
+    "severity": "low",
+    "reasoning": "The diff bumps electron from ~44.10.2 to ~44.11.6 (and allowScripts to electron@44.11.6) and monaco-editor from ^0.57.0 to ^0.58.0. node_modules/monaco-editor/min/vs now contains DOMPurify 3.4.17. HANDOFF.md:18 and the 0.7.0 release notes describe this correctly. Other passages still contradict it: HANDOFF.md:166-169 ('Electron stays at 44.10.2. Don't take 44.11.x as it is'), docs/plan.md:46 ('Electron stays at `~44.10.2`'), and HANDOFF.md:354-358, whose 'Known and left' list still has Monaco 0.57.0 / DOMPurify 3.4.15 as open. So HANDOFF now disagrees with itself.",
+    "fix_notes": "Mark HANDOFF.md:166-169 and plan.md:46 as superseded: 44.11.4 fixed the canvas font, and 0.7.0 ships 44.11.6. Strike the DOMPurify item in HANDOFF's 'Known and left' list as done with Monaco 0.58.0 (DOMPurify 3.4.17)."
+   }
+  ]
+ },
+ "verify:fixes-app": {
+  "verdicts": [
+   {
+    "id": "fixes-app-1",
+    "verdict": "confirmed",
+    "severity": "medium",
+    "reasoning": "I reproduced this on a local hub on 127.0.0.1 with fake identities (scratchpad/work2/verify-fixes-app/move.js). Steps and results: create \"lobby\" in solo, move it to b with move:true (200), mark the solo copy done, then move it back to solo with move:true. That answers 409: \"Rename this one, then move it again\". Next, rename it in b to \"lobby2\". The record becomes {name:'lobby2', key:'lobby', aliases:['lobby']}, so renderer moveSession sends name 'lobby' again and gets 409. Renaming the target's copy (lobby -> lobby-old) also still gives 409, because it keeps key 'lobby' and gains the alias, and findSession matches both. The second half is real too. Team c had only \"lobby2\". POST {name:'lobby', move:true} answered 200 and created \"lobby\", then rename lobby -> lobby2 answered 409 (\"There's already a session called lobby2\"). That leaves a stray \"lobby\" in c, and because the renderer's try throws before setSessionDone, the source is never marked done. Release notes 0.7.0 line 67 repeat the advice that doesn't work.",
+    "fix_notes": "Make the hub check the display name as well as the key before creating anything. For example, send {name: key, as: name, move: true} and refuse with 409 if findSession matches either one, then create and rename in one request. The 409 text should name the real way out: delete the other team's session of that name, or move this one under a new name, which needs the folder key passed separately the way folderKey already is. Update release-notes line 67 to match."
+   },
+   {
+    "id": "fixes-app-2",
+    "verdict": "confirmed",
+    "severity": "low",
+    "reasoning": "cleanAgent (renderer.js:96) coerces only name, login, cmd, status, branch, repo, tree and prompt. lastActive is left out, although both the review and its skeptic named it. Session records are filtered only on typeof name === 'string', so createdAt and doneAt pass through unchecked. sessionList (1215) builds `at` with .sort().pop(), which can return a non-string. The cases that do throw: a lane-only session whose lane has lastActive 123, a lastActive like 9 or {} that sorts after an ISO date, or a record with createdAt:1 and no lanes. renderSessions (1252) then calls `b.at.localeCompare` on it, and render() runs from onmessage with no try. One correction to the finding: with lastActive 123 plus an ISO createdAt, the string sort pops the ISO date and nothing throws. The other cases do throw. Only a hub on someone's Mac can send this.",
+    "fix_notes": "Add 'lastActive' (and 'startedAt') to cleanAgent's coerced keys. In sessionList, keep only strings, e.g. `.filter(x => typeof x === 'string' && x)`, or coerce rec.createdAt and rec.doneAt in the m.sessions filter."
+   },
+   {
+    "id": "fixes-app-3",
+    "verdict": "confirmed",
+    "severity": "low",
+    "reasoning": "movedOn (renderer.js:1048) checks localStorage keys by display name only. renameForm (1093-1094) sets the old source key to '' rather than removing it. JSON.parse('{}').repo is then undefined, so once the moved copy is renamed in the other team, movedOn returns false. Deleting the original then offers to remove <clone>@<key>, the folder the renamed copy still uses through its kept key. main's new sessions:removeFolder guard (main.js:232) only refuses while a lane's cwd is under the folder. The loss is limited: removeSessionWorktree refuses uncommitted work and non-build ignored files, and it keeps the branch. In the other direction, a source key that outlives the session (a teammate deleted it, or you left the team) makes movedOn return true, so the prompt is never offered and the folder leaks. The `endsWith(':' + name)` check also matches an unrelated session called 'a:lobby'.",
+    "fix_notes": "Match on the folder, not the name. Store the folder key (or path) in the source JSON and compare that. Or have main decide, checking any team's known session that maps to the folder. Otherwise accept it and mark it with a `ponytail:` comment."
+   },
+   {
+    "id": "fixes-app-4",
+    "verdict": "confirmed",
+    "severity": "low",
+    "reasoning": "The move:true 409 exists only in the new hub.js (line 858). An older hub ignores the extra body field, and its ensureSession joins the existing session. moveSession ignores the records saveSession returns, so it goes on to mark the source done and open the joined session. The online hub redeploys with the release, so what remains exposed is mainly a team hosted on a teammate's Mac running 0.6.x. I didn't run an old hub; this is clear from the code.",
+    "fix_notes": "In moveSession, check the returned records: the session named `key` should be new (createdBy me, and absent from the target before the move). Otherwise stop and alert. Or list the target's sessions first and refuse in the renderer."
+   },
+   {
+    "id": "fixes-app-5",
+    "verdict": "refuted",
+    "severity": "none",
+    "reasoning": "Inside the `if (sub === 'sessions')` block, hub.js:786 declares a local `const running = name => teamLanes(team.id).some(l => l.session === name)`. That shadows the two-argument module helper at line 172. The DELETE branch at 888 calls `running(session.name)`, which resolves to the local one-argument version with team in scope, so 'Stop its agents first.' does fire while agents are running.",
+    "fix_notes": "No change needed. Renaming the local helper (e.g. runningNamed) would make the shadowing less confusing."
+   }
+  ]
+ },
+ "verify:fixes-hub-lane": {
+  "verdicts": [
+   {
+    "id": "fixes-hub-lane-1",
+    "verdict": "confirmed",
+    "severity": "medium",
+    "reasoning": "I reran scratchpad/work2/fixes-hub-lane/probe2.js against the worktree hub, with escape-heavy 512K-char histories of about 1.2 MB of JSON each. With N=8 the peak bufferedAmount was 7.6 MB and with N=12 it was 11.9 MB; in both the watcher stayed open and got every out. With N=20 the watcher closed with 1006 after 0 outs, at a peak of 17.3 MB. send() checks bufferedAmount > MAX_BUFFERED before each message, and the look loop at hub.js:1108 calls it synchronously once per lane, so one burst trips the check even when the client reads promptly. The renderer reconnects and sends the same look again (sees: onScreen), so the loop is real. It needs about 14 or more busy agents with full scrollback in the sessions one window shows. That is uncommon but reachable: MAX_LANES is 30 per person and pane mode shows 3 sessions. A real failure for big teams, so medium, at the low end.",
+    "fix_notes": "Check bufferedAmount once before the replay loops (look, and the no-sees connect path at line ~1091), or stop sending replays once past the limit instead of calling terminate(); those terminals then fill from the next output. Keep terminate for single sends to a socket that has stopped reading."
+   },
+   {
+    "id": "fixes-hub-lane-2",
+    "verdict": "confirmed",
+    "severity": "low",
+    "reasoning": "I reran push.js against a local hub (team with a member, lane on session/fix). The unquoted GIT_CONFIG_KEY_0=remote.origin.push form answers ask. The quoted GIT_CONFIG_KEY_0=\"remote.origin.push\" and git --config-env=\"remote.origin.push=T\" push both answer with no decision. The cause: wordsOf strips quotes only at a word's ends, setting() keeps the leading quote, and the anchored PUSH_CONFIG then fails. That part is a half-done fix. git config alias.ship \"push --force origin HEAD:main\" && git ship also passes, but that gap existed before the fix (only the -c alias form was ever covered). pushInsteadOf, remote.pushDefault and branch.*.pushRemote change which remote gets the push, not which branch, so they are weaker. The review already rated this family low: it is the accepted word heuristic, and these forms need an agent that is deliberately getting around the check.",
+    "fix_notes": "In setting(), strip quotes from the result (s.replace(/[\"']/g,'')) before testing it against PUSH_CONFIG. Optionally treat a `git config alias.<x> <value containing push>` set like the -c alias case. Add the quoted KEY_0 and --config-env cases to hub.test.js."
+   },
+   {
+    "id": "fixes-hub-lane-3",
+    "verdict": "confirmed",
+    "severity": "low",
+    "reasoning": "Checked by reading the code. renderer moveSession sends name = rec.key (the first slug) with move: true, and main.js passes move through. The hub POST /sessions answers 409 whenever findSession finds a match and move === true. findSession matches slug(name), keyOf(x) and aliases, and a rename keeps the key and adds the old name as an alias. So renaming either side, as the 409 advises, never clears it. Moving a session back to the team it came from always hits that team's own done record, which setSessionDone leaves behind. Before the fix, that move joined the old record. No test covers move: true.",
+    "fix_notes": "Let a move join an existing record that is done, has the same key and was created by the mover (or the owner). Otherwise reword the 409 so it doesn't suggest a rename, e.g. 'Delete the old one there first'. Add a hub.test.js case for moving a session back."
+   },
+   {
+    "id": "fixes-hub-lane-4",
+    "verdict": "confirmed",
+    "severity": "low",
+    "reasoning": "quarantined() calls lane.js's synchronous git() (execFileSync, about 5 ms each as I measured it here) for every mergeTree and mergedTree, inside Electron's main process. The new `landed` check compares mergedTree(main, at) with main^{tree}, and neither depends on HEAD, yet it reruns whenever the HEAD/at/main triple changes. With 10 session branches, that is up to about 20 extra sync spawns per commit per folder (sharedStatus shares the look per folder). About 100 ms of main-process blocking in total, spread over the check. This is wasted work rather than a failure, and the hello path already makes a few sync git calls.",
+    "fix_notes": "Cache the objects path per cwd (it never changes) or get it with the async line(). Cache `landed` keyed by `${at}\\n${mainAt}`, separately from the HEAD-keyed conflict files."
+   },
+   {
+    "id": "fixes-hub-lane-5",
+    "verdict": "refuted",
+    "severity": "none",
+    "reasoning": "It is true that chat.message now returns early for child sessions, so a subagent gets no UserPromptSubmit context (goal, plan, other agents). But the failure scenario is wrong. The subagent's tool calls still post PreToolUse, and an overlap ask comes back as a refusal through teams.js refuseOnce, which keeps the hub's permissionDecisionReason and adds 'Ask the person before going ahead...'. So the subagent does see the overlap warning on its first edit. Claude Code's Task subagents don't fire UserPromptSubmit either, so this matches the Claude path, and the parent got the context and wrote the subagent's task. The child's notes piling up is no change: before the fix, chat.message also fired only once per child, so its context was likewise never reset during its life.",
+    "fix_notes": "No change needed. If wanted, copy the parent's current context into a child at session.created with a parentID."
+   }
+  ]
+ }
+}

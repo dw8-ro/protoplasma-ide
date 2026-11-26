@@ -371,10 +371,17 @@ async function run(win, hub) {
     await until(`local.get(${JSON.stringify(second)}).session === 'Fix Login'`);
     // This step failed now and then until 16 Nov: the session's folder finishing its load showed the open file again,
     // and that took focus from the comment field (code.js showActive).
+    // Where the cursor lands is only checkable while the window has focus (another app in front left these two steps
+    // failing, though the app put the cursor right), so the window takes it for them.
+    app.focus({ steal: true }); // macOS: in front of whatever app has it
+    win.focus();
+    win.webContents.focus();
     await js(`openSession('Fix Login'); openFile('README.md')`);
     await until(`code.active === 'README.md' && !!editor.getModel()`);
     await js(`editor.setSelection(new monaco.Selection(1, 1, 1, 4)); editor.getAction('protoplasma.comment').run(); 0`);
-    check('Comment on this points the next comment at those lines', await until(`commentRef?.file === 'README.md' && commentRef.line === 1 && !$('#commentRef').hidden && document.activeElement === $('#commentText')`));
+    check('Comment on this points the next comment at those lines', await until(`commentRef?.file === 'README.md' && commentRef.line === 1 && !$('#commentRef').hidden && document.activeElement === $('#commentText')`),
+      // Where focus went instead, if it did: the field's own state and the window's say whether it's this app's doing.
+      await js(`JSON.stringify({ ref: !!commentRef, active: (a => a && (a.id || a.className || a.tagName))(document.activeElement), shown: !!$('#commentText').offsetParent, windowFocus: document.hasFocus(), panelTab, panelHidden })`));
     check('and the file being shown again behind it leaves you in the comment', await js(`showActive().then(() => document.activeElement === $('#commentText'))`));
     await js(`$('#commentText').value = 'Say what this repo is for'; $('#commentForm').requestSubmit(); 0`);
     check('the comment shows the line it is about, and the editor marks the line', await until(`recordFor('Fix Login')?.comments?.at(-1)?.line === 1 && /README\.md:1/.test($('#panelBody').textContent) && editor.getModel().getAllDecorations().some(d => d.options.glyphMarginClassName === 'comment-glyph')`));

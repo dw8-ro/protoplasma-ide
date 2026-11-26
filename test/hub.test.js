@@ -293,11 +293,14 @@ test('pushing to main or force-pushing needs a person to confirm', async () => {
   // Config that says where a plain push goes, inline or set for later pushes (a push to main that never names main).
   for (const command of ['git -c remote.origin.push=HEAD:refs/heads/main push origin', 'git config remote.origin.push HEAD:refs/heads/main && git push',
     'git config --add remote.origin.push HEAD:main', 'git config set remote.origin.push HEAD:main', 'git -c push.default=matching push',
-    'git config remote.origin.pushurl git@evil:x/y.git', 'git -C ../app config push.default matching']) {
+    'git config remote.origin.pushurl git@evil:x/y.git', 'git -C ../app config push.default matching', 'git config remote.origin.mirror true',
+    'git config --show-origin remote.origin.push HEAD:main', 'git --config-env=remote.origin.push=TARGET push',
+    'GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=remote.origin.push GIT_CONFIG_VALUE_0=HEAD:main git push',
+    'GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0="remote.origin.push" GIT_CONFIG_VALUE_0="HEAD:main" git push', 'git --config-env="remote.origin.push=T" push']) {
     assert.match((await push(onBranch, command))?.permissionDecisionReason || '', /changes where git pushes/, command);
   }
   for (const command of ['git config --get remote.origin.push', 'git config get push.default', 'git config --unset remote.origin.push',
-    'git config user.name Alice', 'git -c core.editor=vim commit']) {
+    'git config user.name Alice', 'git -c core.editor=vim commit', 'git config -l', 'git config --list --show-origin']) {
     assert.equal(await push(onBranch, command), null, `fine: ${command}`);
   }
   // Deleting any remote branch needs a person, a session branch included: teammates in the session push to it too.

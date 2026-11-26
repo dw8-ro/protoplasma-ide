@@ -25,8 +25,12 @@ export const Protoplasma = async ({ directory } = {}) => {
   };
   const context = new Map(); // session id -> what the team wants the model to know with its requests this turn
   const tell = (session, text) => { if (text) context.set(session, [context.get(session), text].filter(Boolean).join('\n\n')); };
+  // Subagents (OpenCode's task tool) run in sessions of their own. Their prompts, written by the model, aren't the
+  // person's, and one finishing isn't the agent going idle. Their tool calls and permission questions still count.
+  const children = new Set();
   return {
     'chat.message': async ({ sessionID } = {}, { parts } = {}) => {
+      if (children.has(sessionID)) return;
       context.delete(sessionID);
       const prompt = (parts || []).filter(p => p.type === 'text' && !p.synthetic).map(p => p.text).join('\n');
       tell(sessionID, (await post({ hook_event_name: 'UserPromptSubmit', prompt })).additionalContext);
@@ -41,9 +45,11 @@ export const Protoplasma = async ({ directory } = {}) => {
       if (answer.permissionDecision === 'deny') throw new Error(answer.permissionDecisionReason || 'Protoplasma stopped this step. Ask the person first.');
     },
     event: async ({ event } = {}) => {
-      const type = event?.type;
-      if (type === 'permission.asked' || type === 'permission.updated') await post({ hook_event_name: 'PermissionRequest' });
+      const type = event?.type, info = event?.properties?.info;
+      if (type === 'session.created' && info?.parentID) children.add(info.id);
+      else if (type === 'permission.asked' || type === 'permission.updated') await post({ hook_event_name: 'PermissionRequest' });
       else if (type === 'permission.replied') await post({ hook_event_name: 'PreToolUse' }); // answered: back at work
+      else if (children.has(event?.properties?.sessionID)) return;
       else if (type === 'session.idle') await post({ hook_event_name: 'Stop' });
       else if (type === 'session.error' && event.properties?.error?.name === 'MessageAbortedError') await post({ hook_event_name: 'Interrupt' });
     },

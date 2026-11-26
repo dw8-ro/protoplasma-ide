@@ -164,7 +164,7 @@ Any other agent CLI works too: put its command in Settings → Agents → **Othe
 
 1. **A branch per session.** A session started from a GitHub repo gets its own git worktree on `session/<name>`, branched from the latest default branch, or continuing a teammate's pushed branch. It has no upstream, so a bare `git push` can't land on `main`. Names that differ only in case or punctuation are the same session.
 2. **Overlap warnings**, described under [Collisions caught early](#collisions-caught-early).
-3. **A push guard.** When the team has other people, Claude Code asks you before pushing to `main`, `master` or the repo's default branch, force-pushing, or deleting a remote branch. Codex can't be asked from a hook, so it's stopped the first time and told to check with you, and the same step goes through when it tries again. OpenCode has no hooks, so in repos the app cloned, a `pre-push` hook stops Codex's and OpenCode's pushes as well. It's a safeguard against mistakes rather than a lock: `git push --no-verify` skips it. If your team needs a guarantee, also protect `main` on GitHub. People pushing from their own terminal aren't affected.
+3. **A push guard.** When the team has other people, Claude Code asks you before pushing to `main`, `master` or the repo's default branch, force-pushing, or deleting a remote branch. Codex and OpenCode can't be asked from a hook, so the step is stopped the first time with the reason and the agent is told to check with you; the same step goes through when it tries again, and a different one is stopped again. In repos the app cloned, a `pre-push` hook stops Codex's and OpenCode's pushes as well. It's a safeguard against mistakes rather than a lock: `git push --no-verify` skips it. If your team needs a guarantee, also protect `main` on GitHub. People pushing from their own terminal aren't affected.
 4. **A behind notice.** Each lane fetches about once a minute. A branch missing commits from `main`, or from its own pushed copy, shows `↓3`, and Claude Code and Codex are told to pull before changing more.
 5. **Shared session branches.** Everyone in a session works on `session/<name>`, each in their own checkout. **Commit & Push** puts your commit on top of whatever a teammate pushed first. If you both changed the same lines, it stops and offers **Pull**: their work comes in, the files you both changed are marked C, and once you've fixed them in the editor, **Commit & Push** finishes the merge.
 
@@ -174,7 +174,7 @@ Work reaches `main` the usual way, through a pull request. These layers make col
 
 - **Sign-in** asks for read-only access to your public GitHub profile and nothing else. Repo access stays with the GitHub CLI on your Mac.
 - **What the hub keeps:** team names, members, notes, and sessions with their goals, repos, who started them, plans and comments (a comment on lines of code keeps the text of those lines).
-- **What passes through it:** while an agent runs, its terminal output, its branch, the names of the files its checkout changed, and its folder's path. From Claude Code's and Codex's hooks the hub gets only which tool is about to run, the name of the file it changes or the command it runs (up to 20,000 characters), and the first 300 characters of the latest prompt: the app on your Mac takes everything else out first, so the text an agent writes into a file never leaves it this way. Up to 512 KB of each agent's output is held in memory, with the last screen of the 20 most recently stopped agents per team. None of it is written to disk.
+- **What passes through it:** while an agent runs, its terminal output, its branch, the names of the files its checkout changed, and its folder's path. From Claude Code's and Codex's hooks (and OpenCode's plugin) the hub gets only which tool is about to run, the name of the file it changes or the command it runs (up to 20,000 characters), and the first 300 characters of the latest prompt: the app on your Mac takes everything else out first, so the text an agent writes with its edit tools never leaves it this way (a shell command is sent whole, up to that limit, so a file it writes with `cat > file` goes as part of the command). Up to 512 KB of each agent's output is held in memory, with the last screen of the 20 most recently stopped agents per team. None of it is written to disk.
 - **Your GitHub sign-in** goes only to GitHub, the online hub and the hub on your own Mac. A team hosted on a teammate's Mac is reached over an encrypted connection, pinned to that Mac's certificate, with a pass from the online hub that works only on that Mac's hub and expires within 12 hours. Passes are only issued for a Mac whose owner registered it, so something on the network pretending to be a teammate's Mac gets nothing it can use. Looking for such teams is off until you turn it on in Your teams, and a team on your Mac can't be reached from the network until you invite someone to it.
 - **Your code** is read and written on your Mac only, and the hub never stores it. Teammates see which files changed; what your agent prints in its terminal is visible to the whole team. With **Share the files your agents change** on (Settings → Agents, off by default), a teammate can open those files read-only; each one passes through the hub and isn't kept.
 - **Teams** are invite-only, and removing someone disconnects them at once. People are recognised by their GitHub account's id, so renaming your account keeps your place, and whoever later takes your old username doesn't get it.
@@ -188,6 +188,7 @@ Work reaches `main` the usual way, through a pull request. These layers make col
 git clone https://github.com/dw8-ro/protoplasma-ide.git
 cd protoplasma-ide
 npm install
+npm run setup
 npm start
 ```
 
@@ -216,7 +217,7 @@ scripts/  end-to-end check, screenshots, README images, demo and icon tooling
 <summary><b>Install scripts</b></summary>
 <br>
 
-`package.json`'s `allowScripts` records the two packages whose install scripts the app relies on: Electron (it downloads its binary) and node-pty (its prebuild; the `postinstall` then marks `spawn-helper` executable). It **isn't enforced yet**. There's no `@lavamoat/allow-scripts` or `.npmrc`, so `npm install` and `npm ci` run every dependency's install scripts. It's a note of intent, not a sandbox; enforcing it with lavamoat is a planned hardening.
+No dependency runs its install scripts on `npm install` or `npm ci`: `.npmrc` sets `ignore-scripts=true`. `npm run setup` then runs only those of the packages `package.json`'s `allowScripts` names, at the versions it pins (node-pty's prebuild, then the `postinstall` that marks its `spawn-helper` executable; Electron has none and downloads its binary on first run), so run it after every `npm install` or `npm ci`, or agents don't start. When a pinned package's version changes, setup stops and says so: read what its install scripts do in the new version, then update `allowScripts`.
 </details>
 
 <details>
@@ -228,7 +229,7 @@ scripts/  end-to-end check, screenshots, README images, demo and icon tooling
 - `githubClientId`: from a GitHub OAuth app with device flow enabled. It's public, not a secret.
 - `onlineHub`: the URL of your hosted hub. Leave it empty to use teams on your own Mac only.
 
-To host a hub, deploy the `Dockerfile` (Railway or any container host) with a volume at `/data`, and set `DATA_DIR=/data` and `PROTO_OWNERS` to the GitHub logins allowed to create teams. A hub only accepts sign-ins from Protoplasma's own GitHub app; set `PROTO_CLIENT_ID` to your own app's client ID (or leave it blank to accept any GitHub token) if you build the app with a different one. The volume also keeps `pass-key.pem`, which signs passes for teams on people's Macs, and `hubs.json`, the hub certificates people registered for their Macs.
+To host a hub, deploy the `Dockerfile` (Railway or any container host) with a volume at `/data`, and set `DATA_DIR=/data` and `PROTO_OWNERS` to the GitHub logins allowed to create teams. A hub only accepts sign-ins from Protoplasma's own GitHub app; set `PROTO_CLIENT_ID` to your own app's client ID (or leave it blank to accept any GitHub token) if you build the app with a different one. Behind a proxy other than Railway's, set `PROTO_ADDRESS_HEADER` to the header the proxy puts the client's address in (on Railway, `X-Real-IP` is used without it); otherwise every client shares one budget of sign-in checks. The volume also keeps `pass-key.pem`, which signs passes for teams on people's Macs, and `hubs.json`, the hub certificates people registered for their Macs.
 </details>
 
 <details>
@@ -239,12 +240,12 @@ The first message on every WebSocket carries a team id and a GitHub token, or, f
 
 | Endpoint | Direction | Messages |
 | --- | --- | --- |
-| `/lane` | lane → hub | `hello {token, team, id, hookSecret, session, cmd, root, roots, repo, branch, git, cols, rows, open, history, machine}`, `out {d}`, `size {cols, rows}`, `git {branch, mainBranch, added, removed, files, behind, ahead, unpushed, changed, local}`, `status {status}`, `key {moving}` (after a person's Enter, Esc or Ctrl-C: whether the screen kept printing) |
+| `/lane` | lane → hub | `hello {token, team, id, hookSecret, session, cmd, root, roots, repo, branch, git, cols, rows, open, history, machine}`, `out {d}`, `size {cols, rows}`, `git {branch, mainBranch, added, removed, files, behind, ahead, unpushed, changed, local, conflicts, branchConflicts}`, `status {status}`, `key {moving, ago}` (after a person's Enter, Esc or Ctrl-C: whether the screen kept printing) |
 | | hub → lane | `in {d}` (only for agents teammates may type into) |
 | `/watch` | app → hub | `watch {token, team, sees}`, `look {session, sees}` (`sees`: the sessions whose terminals the window shows; it gets `out` only for those, and a window that never sends it gets everything), `in {lane, d}`, `replay {id}`, `file:get {lane, path, ask}` (a teammate's file), `file:put {req, text, error}` (answering for your own agent) |
 | | hub → app | `state {replays, lanes, watchers, members, memories, sessions, stopped}` (`replays`: this hub sends an agent's screen when its session comes into view), `out {lane, d}`, `replay {id, d}`, `file:get {req, lane, path, from}`, `file:put {ask, text, error}` |
 | `/teams` | app → hub | REST for teams, members, notes, sessions (renaming, goals, plan steps, hand-offs) and comments |
-| `/hooks/:lane` | Claude Code, Codex → hub | Hook events, cut down by the app to what the hub reads (`hook_event_name`, `cwd`, and for a tool call `tool_name` with its `file_path`, `notebook_path`, `command` or `cmd`; for a prompt its first 300 characters), authenticated with a per-lane secret |
+| `/hooks/:lane` | Claude Code, Codex, OpenCode → app's relay → hub | Hook events, cut down by the app to what the hub reads (`hook_event_name`, `cwd`, and for a tool call `tool_name` with its `file_path`, `notebook_path`, `command` or `cmd`; for a prompt its first 300 characters), authenticated with a per-lane secret |
 | `/hubs` | app → online hub | `POST {fp}`: registers the certificate of the hub on your Mac |
 | `/passes` | app → online hub | `POST {aud}`: a pass for the hub whose certificate fingerprint is `aud`, with `owners`, who registered it. `GET /passes/key`: the public key passes are signed with |
 

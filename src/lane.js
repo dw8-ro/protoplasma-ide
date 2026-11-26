@@ -123,19 +123,36 @@ async function mainConflicts(cwd, main, base, line, env) {
   if (clashes.get(cwd)?.pair !== pair) clashes.set(cwd, { pair, files: await mergeTree(cwd, main, env) });
   return clashes.get(cwd).files;
 }
-// The files git would stop on, merging `other` into HEAD (git 2.38 or later). Nothing in the folder changes.
-const mergeTree = (cwd, other, env) => new Promise(resolve => execFile('git',
+// merge-tree --write-tree writes the merged trees into the repo, which every session folder of a clone shares. They go
+// to a temporary object store instead (the repo's own objects read through alternates), deleted after.
+const objectsOf = new Map(); // folder -> its repo's object store (it never moves), asked once
+async function quarantined(cwd, env, fn) {
+  if (!objectsOf.has(cwd)) objectsOf.set(cwd, path.resolve(cwd, git(cwd, 'rev-parse', '--git-path', 'objects') || '.git/objects'));
+  const objects = objectsOf.get(cwd);
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'protoplasma-merge-'));
+  try { return await fn({ ...env, GIT_OBJECT_DIRECTORY: dir, GIT_ALTERNATE_OBJECT_DIRECTORIES: objects }); }
+  finally { fs.rmSync(dir, { recursive: true, force: true }); }
+}
+// The files git would stop on, merging `other` into HEAD (git 2.38 or later). Nothing in the folder or the repo changes.
+const mergeTree = (cwd, other, env) => quarantined(cwd, env, e => new Promise(resolve => execFile('git',
   [...SAFE_GIT, '-c', 'core.quotePath=false', 'merge-tree', '--write-tree', '--name-only', '--no-messages', '-z', 'HEAD', other],
-  { cwd, encoding: 'utf8', maxBuffer: 10e6, timeout: 20_000, env: gitEnv(env) },
+  { cwd, encoding: 'utf8', maxBuffer: 10e6, timeout: 20_000, env: gitEnv(e) },
   // Exit 1 is "conflicts": the merged tree's id, then the files. Anything else (clean, or a git that can't say): none.
-  (err, out) => resolve(err?.code === 1 ? String(out).split('\0').slice(1).filter(Boolean).slice(0, MAX_CONFLICTS) : [])));
+  (err, out) => resolve(err?.code === 1 ? String(out).split('\0').slice(1).filter(Boolean).slice(0, MAX_CONFLICTS) : []))));
+// The tree a clean merge of `b` into `a` would have, or '' when it conflicts or git can't say.
+const mergedTree = (cwd, a, b, env) => quarantined(cwd, env, e => new Promise(resolve => execFile('git',
+  [...SAFE_GIT, 'merge-tree', '--write-tree', a, b], { cwd, encoding: 'utf8', timeout: 20_000, env: gitEnv(e) },
+  (err, out) => resolve(err ? '' : String(out).trim()))));
 /**
  * The other sessions' pushed branches (`origin/session/*`, newest first, at most MAX_BRANCHES) this checkout's commits
  * would conflict with: [{ branch, files }]. A branch with nothing main lacks (merged, or not started) is left out, since
- * the check against main covers it. Each branch is asked again only when it, HEAD or main moves.
+ * the check against main covers it, and so is one whose changes main already has: a squash or rebase merge keeps the
+ * branch's own commits off main, but merging it into main then changes nothing. Each branch is asked again only when
+ * it, HEAD or main moves.
  */
 const MAX_BRANCHES = 10;
 const crossed = new Map(); // "<folder>\n<branch>" -> { pair: "<HEAD>\n<branch>\n<main>", files }
+const landedOn = new Map(); // "<folder>\n<branch>" -> { pair: "<branch>\n<main>", landed }: its changes already in main
 async function branchConflicts(cwd, branch, upstream, main, line, env) {
   const refs = (await line('for-each-ref', '--sort=-committerdate', '--format=%(refname:short) %(objectname)', 'refs/remotes/origin/session/'))
     .split('\n').map(l => l.split(' ')).filter(([ref, at]) => at && ref !== upstream && ref !== `origin/${branch}`).slice(0, MAX_BRANCHES);
@@ -146,7 +163,11 @@ async function branchConflicts(cwd, branch, upstream, main, line, env) {
     const key = `${cwd}\n${ref}`, pair = `${head}\n${at}\n${mainAt}`;
     if (crossed.get(key)?.pair !== pair) {
       const own = Number(await line('rev-list', '--count', `${main}..${at}`)) || 0;
-      crossed.set(key, { pair, files: own ? await mergeTree(cwd, at, env) : [] });
+      // Asked again only when that branch or main moves, not at every commit here.
+      const known = landedOn.get(key), landed = own && (known?.pair === `${at}\n${mainAt}` ? known.landed
+        : await mergedTree(cwd, main, at, env) === await line('rev-parse', `${main}^{tree}`));
+      landedOn.set(key, { pair: `${at}\n${mainAt}`, landed });
+      crossed.set(key, { pair, files: own && !landed ? await mergeTree(cwd, at, env) : [] });
     }
     const { files } = crossed.get(key);
     if (files.length) found.push({ branch: ref.replace(/^origin\//, ''), files });

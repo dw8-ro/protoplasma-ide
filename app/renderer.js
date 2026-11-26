@@ -92,7 +92,9 @@ let hubLanes = [];         // every agent on the team, as the hub reports them
 // field that isn't a list would make render() throw for as long as that team is open.
 const nameList = v => (Array.isArray(v) ? v.filter(x => typeof x === 'string') : []);
 const isAgent = l => !!l && typeof l === 'object' && typeof l.id === 'string';
-const cleanAgent = l => ({ ...l, session: String(l.session ?? ''), files: nameList(l.files), overlaps: nameList(l.overlaps), local: nameList(l.local),
+// The text fields render() reads too: a number or an object there would make it throw, and blank the window.
+const cleanAgent = l => ({ ...l, ...Object.fromEntries(['name', 'login', 'cmd', 'status', 'branch', 'repo', 'tree', 'prompt', 'lastActive', 'startedAt', 'endedAt'].map(k => [k, typeof l[k] === 'string' ? l[k] : ''])),
+  git: l.git && typeof l.git === 'object' && !Array.isArray(l.git) ? l.git : null, session: String(l.session ?? ''), files: nameList(l.files), overlaps: nameList(l.overlaps), local: nameList(l.local),
   touched: nameList(l.touched), conflicts: nameList(l.conflicts), branchConflicts: Array.isArray(l.branchConflicts) ? l.branchConflicts.filter(c => c && typeof c.branch === 'string').map(c => ({ branch: c.branch, files: nameList(c.files) })) : [] });
 let current = null;        // session shown in the room
 let tab = 'agents';        // agents | memory | pulls | issues
@@ -356,7 +358,9 @@ let invites = [];
 const seenKey = () => `seenTeams:${me?.login || ''}`;
 const seenTeams = () => { try { return new Set(JSON.parse(store.get(seenKey()) || '[]')); } catch { return new Set(); } };
 async function checkInvites() {
-  if (!me || !isSolo(currentTeam)) return;
+  if (!me || !isSolo(currentTeam) || checkInvites.busy) return;
+  checkInvites.busy = true;
+  checkInvites.at = Date.now();
   try {
     const { teams } = await proto.teams({ nearby: prefs.findNearby });
     if (!isSolo(currentTeam)) return;
@@ -365,9 +369,11 @@ async function checkInvites() {
     invites = teams.filter(t => !isSolo(t) && !seen.has(t.key));
     render();
   } catch {} // offline: try again later
+  finally { checkInvites.busy = false; }
 }
 setInterval(checkInvites, 10 * 60_000);
-addEventListener('focus', checkInvites);
+// Coming back to the window asks too (someone just said they invited you), but at most once a minute.
+addEventListener('focus', () => { if (Date.now() - (checkInvites.at || 0) > 60_000) checkInvites(); });
 
 let listedTeams = new Map();
 function renderTeamList(teams) {
@@ -480,6 +486,9 @@ $('#inviteForm').onsubmit = async e => {
   const login = $('#inviteLogin').value.trim().replace(/^@/, '');
   if (!GITHUB_LOGIN.test(login)) { $('#inviteErr').textContent = login ? 'GitHub usernames are letters, numbers and single hyphens, up to 39 characters.' : 'Enter a GitHub username.'; return; }
   const team = currentTeam;
+  // Just me is private until now: whoever is invited sees everything already in it.
+  const n = sessionRecords.length;
+  if (isSolo(team) && !confirm(`Invite ${login} into Just me?\n\nEverything in it so far becomes visible to them: ${n} session${n === 1 ? '' : 's'}, with their goals, plans, notes, comments and agents' screens. To share only some of your work, make a team instead and use Move to a team… on those sessions.`)) return;
   try {
     const { notice, ...next } = await proto.invite(team.key, login);
     if (currentTeam?.key === team.key) currentTeam = next;
@@ -535,12 +544,13 @@ function watch(conn) {
         hubReplays = m.replays === true;
         // A hub on a Mac could send anything; iterated fields default to arrays so a non-array can't throw out of render().
         hubLanes = (Array.isArray(m.lanes) ? m.lanes : []).filter(isAgent).map(cleanAgent);
-        const sessions = Array.isArray(m.sessions) ? m.sessions : [];
+        const sessions = (Array.isArray(m.sessions) ? m.sessions : []).filter(r => r && typeof r === 'object' && typeof r.name === 'string')
+          .map(r => ({ ...r, createdAt: typeof r.createdAt === 'string' ? r.createdAt : '', doneAt: typeof r.doneAt === 'string' ? r.doneAt : '' }));
         followRenames(sessions);
         for (const l of hubLanes) if (local.get(l.id)?.refused) delete local.get(l.id).refused;
         teamWatchers = Array.isArray(m.watchers) ? m.watchers : [];
         if (m.members && currentTeam) {
-          currentTeam = { ...currentTeam, members: Array.isArray(m.members) ? m.members : [] }; // someone joined, left or was removed
+          currentTeam = { ...currentTeam, members: nameList(m.members) }; // someone joined, left or was removed
           if ($('#settings').open) renderTeamPane();
         }
         memories = Array.isArray(m.memories) ? m.memories : [];
@@ -683,7 +693,8 @@ async function resumeAgent() {
 const refreshAgents = () => proto.agents(prefs.otherCommand).then(list => { agents = list; syncAgents(); if (currentTeam) render(); });
 const isInstalled = cmd => agents.find(a => a.cmd === cmd)?.installed !== false;
 // The agent Settings names, or one this Mac has when it hasn't got that one (someone with only Codex, say).
-const defaultAgent = () => (isInstalled(prefs.agent) ? prefs.agent : agents.find(a => a.installed)?.cmd || prefs.agent);
+// The saved choice only while it can still start (an Other command that was cleared can't).
+const defaultAgent = () => (agents.some(a => a.cmd === prefs.agent && a.installed) || !agents.length ? prefs.agent : agents.find(a => a.installed)?.cmd || prefs.agent);
 function syncAgents() {
   // The pickers are drawn from the list, so a new agent in src/agents.js (or an "Other command") shows up by itself.
   const was = $('input[name=cmd]:checked')?.value;
@@ -861,7 +872,8 @@ $('#agentForm').onsubmit = async e => {
   const known = session && sourceFor(session), repo = $('#repo').value.trim();
   // An existing session keeps whether it has its own branch; a new one follows the setting.
   const source = fromRepo ? { repo, worktree: known?.repo && same(known.repo, repo) ? known.worktree !== false : prefs.sessionBranches } : { cwd: $('#cwd').value };
-  const rec = recordFor(session), task = $('#task').value.trim();
+  // All of it goes to the agent as its first message; the session's goal keeps the first 300 characters (the hub's cap).
+  const rec = recordFor(session), typedTask = $('#task').value.trim(), task = typedTask.slice(0, 300);
   const button = $('#startAgent'), label = button.textContent;
   $('#agentErr').textContent = '';
   try {
@@ -875,7 +887,7 @@ $('#agentForm').onsubmit = async e => {
     // session you're adding an agent to, or the CLI can't be started with one.
     const cmd = $('input[name=cmd]:checked')?.value;
     if (!cmd) throw new Error('No agent to start yet. Try again in a moment.'); // the list of agents hasn't arrived
-    const first = $('#sendTask').checked && !$('#task').dataset.from && agents.find(a => a.cmd === cmd)?.prompts ? task : '';
+    const first = $('#sendTask').checked && !$('#task').dataset.from && agents.find(a => a.cmd === cmd)?.prompts ? typedTask : '';
     await startAgent({ session, cmd, open: $('#open').checked, source, task, prompt: first });
     if (fromRepo) store.set('repo', source.repo);
     store.set('sourceKind', fromRepo ? 'repo' : 'folder');
@@ -1033,7 +1045,11 @@ async function deleteSession(name) {
   store.set(lastAgentKey(name), '');
   // Its own folder (and only that: never a folder you picked yourself) can go too, if you say so.
   const folder = source?.repo && source.worktree !== false && await proto.sessionFolder(source.repo, key);
-  if (folder && confirm(`Also remove its folder on this Mac?\n\n${folder}\n\nThe session's branch is kept, and a folder with uncommitted changes is never removed. Ignored files in it (like node_modules or .env) are removed.`)) {
+  // Move to a team keeps the folder and branch: while another team's copy of this session works in it, it stays.
+  // ponytail: matched by name in this Mac's saved sources, so a rename there slips past; main's sessions:removeFolder
+  // still refuses while any agent runs in the folder, and git keeps uncommitted work.
+  const movedOn = () => { try { return Object.keys(localStorage).some(k => k.startsWith('source:') && k !== sourceKey(name) && k.endsWith(`:${name}`) && JSON.parse(localStorage.getItem(k) || '{}').repo === source.repo); } catch { return false; } };
+  if (folder && !movedOn() && confirm(`Also remove its folder on this Mac?\n\n${folder}\n\nThe session's branch is kept, and a folder with uncommitted changes is never removed. Ignored files in it (like node_modules or .env) are removed.`)) {
     proto.removeSessionFolder(source.repo, key).then(() => forgetFolder(folder), err => alert(errorText(err)));
   }
 }
@@ -1288,7 +1304,9 @@ async function moveSession(name, target) {
   if (!confirm(`Move "${name}" to ${teamName(target)}?\n\nIt's made there with the same goal, and your agents there work in this session's folder and branch, so nothing is lost.${unpushed ? ' Commit & Push first, so the people there get your work too.' : ''} Here it's marked done.`)) return;
   try {
     const key = rec?.key && rec.key !== slug(name) ? rec.key : name; // a renamed session's folder and branch keep its first name
-    await proto.saveSession(target.key, { name: key, task: rec?.task || '' });
+    // Refused if the name is taken there. ponytail: a hub from before 0.7.0 ignores `move` and joins a session of that
+    // name; the hosted hub and every 0.7 app's own hub have it.
+    await proto.saveSession(target.key, { name: key, task: rec?.task || '', move: true, as: name });
     if (key !== name) await proto.renameSession(target.key, key, name);
     if (source) store.set(sourceKey(name, target), JSON.stringify(source));
     if (!rec?.done) await proto.setSessionDone(from.key, name, true);

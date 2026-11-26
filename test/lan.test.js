@@ -188,7 +188,7 @@ test('Codex is refused once where Claude Code would be asked, and the same step 
   await new Promise(r => fake.listen(0, '127.0.0.1', r));
   const relay = await teams.hookRelay(async id => ({ 'h-codex': 'codex', 'h-claude': 'claude' }[id]
     ? { url: `http://127.0.0.1:${fake.address().port}`, cmd: { 'h-codex': 'codex', 'h-claude': 'claude' }[id] } : null));
-  const hook = async id => (await (await fetch(`${relay}/hooks/${id}`, { method: 'POST', body: '{}' })).text());
+  const hook = async (id, body = '{}') => (await (await fetch(`${relay}/hooks/${id}`, { method: 'POST', body })).text());
   try {
     reply = { hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'ask', permissionDecisionReason: 'Protoplasma: Max\'s agent already edited a.ts.', additionalContext: 'a note' } };
     assert.deepEqual(JSON.parse(await hook('h-claude')), reply, 'Claude Code is still asked');
@@ -197,6 +197,8 @@ test('Codex is refused once where Claude Code would be asked, and the same step 
     assert.match(first.permissionDecisionReason, /^Protoplasma: Max's agent already edited a\.ts\. Ask the person/);
     assert.equal(first.additionalContext, 'a note');
     assert.deepEqual(JSON.parse(await hook('h-codex')), { hookSpecificOutput: { hookEventName: 'PreToolUse', additionalContext: 'a note' } }, 'the retry goes through');
+    const other = JSON.stringify({ hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_input: { command: 'git push --force' } });
+    assert.equal(JSON.parse(await hook('h-codex', other)).hookSpecificOutput.permissionDecision, 'deny', 'a different step with the same reason is refused too');
     reply = { hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'ask', permissionDecisionReason: 'Protoplasma: a push to main' } };
     assert.equal(JSON.parse(await hook('h-codex')).hookSpecificOutput.permissionDecision, 'deny', 'another step is refused once too');
     assert.equal(await hook('h-codex'), '', 'and then goes through');

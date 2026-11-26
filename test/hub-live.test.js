@@ -324,5 +324,25 @@ test('an agent about to edit a file a teammate\'s plan step names is told, once'
   assert.match(await edit('src/net/session_store.ts'), /src\/net\/session_store\.ts is named in alice's plan step "Lock the seat row in session_store\.ts" in the session "claims"/);
   assert.equal(await edit('src/net/session_store.ts'), '', 'said once, not at every edit');
   assert.equal(await edit('src/store.ts'), '', 'a step of your own is yours to work on, and a name inside another name doesn\'t count');
+  assert.equal(await edit('store.ts'), '', 'nor a path inside another file\'s name');
+  for (const n of [1, 2, 3, 4]) await api('tok-alice', 'POST', `/teams/${team.id}/sessions/claims/steps`, { text: `Step ${n} on plan.md`, owner: 'alice' });
+  const count = text => (text.match(/plan step/g) || []).length;
+  assert.equal(count(await edit('plan.md')), 3, 'three at a time');
+  assert.equal(count(await edit('plan.md')), 1, 'and the rest at the next edit, not lost');
   await closed(l.ws);
+});
+
+test('moving a session into a team never joins a session of the same name there', async () => {
+  const route = `/teams/${team.id}/sessions`;
+  await api('tok-alice', 'POST', route, { name: 'Landing here', task: 'theirs' });
+  const moved = await api('tok-alice', 'POST', route, { name: 'landing here', task: 'mine', move: true });
+  assert.equal(moved.status, 409);
+  assert.match(moved.body.error, /already has a session called "Landing here"/);
+  assert.equal((await api('tok-alice', 'POST', route, { name: 'landing elsewhere', task: 'mine', move: true })).status, 200, 'a free name moves');
+  assert.equal((await api('tok-alice', 'POST', route, { name: 'landing-x', task: 'mine', move: true, as: 'Landing here' })).status, 409, 'nor under the name it will show');
+  // Moved away and back: the record it left behind, done, is taken up again.
+  await api('tok-alice', 'POST', `${route}/landing%20elsewhere`, { done: true });
+  const back = await api('tok-alice', 'POST', route, { name: 'landing elsewhere', task: 'mine', move: true });
+  assert.equal(back.status, 200);
+  assert.equal(back.body.find(s => s.name === 'landing elsewhere')?.done, false, 'open again');
 });

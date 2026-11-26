@@ -178,12 +178,15 @@ function safeHookReply(text) {
  * makes the refusal, from an ask, so a hub still can't refuse anything outright.
  */
 const RETRY_MS = 10 * 60 * 1000;
-const refused = new Map(); // `${lane}|${reason}` -> when Codex was first refused it
-function refuseOnce(id, reply, now = Date.now()) {
+const refused = new Map(); // `${lane}|${step}|${reason}` -> when the agent was first refused it
+function refuseOnce(id, reply, step, now = Date.now()) {
   const out = reply && JSON.parse(reply).hookSpecificOutput;
   if (out?.permissionDecision !== 'ask') return reply;
   for (const [key, at] of refused) if (now - at > RETRY_MS || refused.size > 500) refused.delete(key);
-  const { permissionDecision, permissionDecisionReason: reason, ...rest } = out, key = `${id}|${reason}`;
+  // Keyed on the step (what the hub was sent), not only the hub's reason: the hub gives every force push the same
+  // reason, so one force push asked about mustn't let a different one through.
+  const { permissionDecision, permissionDecisionReason: reason, ...rest } = out;
+  const key = `${id}|${crypto.createHash('sha256').update(String(step)).digest('base64url')}|${reason}`;
   if (refused.has(key)) return rest.additionalContext ? JSON.stringify({ hookSpecificOutput: rest }) : '';
   refused.set(key, now);
   return JSON.stringify({ hookSpecificOutput: { ...rest, permissionDecision: 'deny',
@@ -250,7 +253,7 @@ function hookRelay(hubFor) {
             if (r.statusCode !== 200) return res.writeHead(r.statusCode).end();
             const reply = safeHookReply(text);
             // An agent that a hook can't make ask (agents.js `asks`) is refused once instead.
-            res.writeHead(200, { 'content-type': 'application/json' }).end(to.cmd && !AGENTS[to.cmd]?.asks ? refuseOnce(id, reply) : reply);
+            res.writeHead(200, { 'content-type': 'application/json' }).end(to.cmd && !AGENTS[to.cmd]?.asks ? refuseOnce(id, reply, slim) : reply);
           });
       });
       out.on('error', fail);

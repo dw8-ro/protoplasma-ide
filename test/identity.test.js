@@ -127,6 +127,10 @@ test('made-up GitHub tokens only hold up the address sending them, and the hub h
   assert.equal((await api(DANA, 'GET', '/teams', undefined, '6.6.6.6')).status, 200, 'even from there');
 });
 
+test('the hub accepts tokens from the same GitHub app the app signs in with', () => {
+  assert.equal(require('../src/hub').CLIENT_ID, require('../app/config.json').githubClientId);
+});
+
 test('only a token Protoplasma\'s own GitHub app issued signs someone in', async () => {
   const real = globalThis.fetch, token = `gho_${'e'.repeat(36)}`;
   globalThis.fetch = async () => new Response(JSON.stringify({ login: 'erin', id: 8 }), { headers: { 'x-oauth-client-id': 'ours' } });

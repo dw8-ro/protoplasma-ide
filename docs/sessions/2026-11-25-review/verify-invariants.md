@@ -1,0 +1,7 @@
+# verify-invariants verdicts
+
+## invariants-1: confirmed, low
+README.md:177 ("the text an agent writes into a file never leaves it this way") and docs/release-notes/0.7.0.md:49-51 ("The text your agent writes into a file ... no longer pass through") overclaim. app/teams.js slimHook sends `command: shell(input.command)` (arrays joined, sliced to 20,000) for every tool except a tool named apply_patch, so `cat > f <<'EOF' ...` in Bash, or Codex's exec_command ["apply_patch", "*** Begin Patch..."], reaches the hub with the file text. The OpenCode plugin maps bash to Bash {command}, the same path. The in-app text (index.html "Not kept on the hub") already says commands pass through, so only the README and release notes need the narrower wording. Not on main as a claim (new text); the branch improves privacy overall. Heredoc stripping in slimHook is optional and would have to match partsOf exactly; the wording fix is the minimal one.
+
+## invariants-2: confirmed, low
+5e896c4 lane.js/hub.js have no conflicts/branchConflicts/ago; at HEAD lane.js:107-109 sets stats.conflicts/branchConflicts (sent in `git`), lane.js:338 sends `{t:'key', moving, ago}`, hub.js:999-1000 and 1017 read them. README.md:242 lists `git {...}` without them and `key {moving}` without ago. The /hooks row says "Claude Code, Codex → hub" but src/opencode-plugin.mjs posts to $PROTO_HOOK_URL (the relay, then the hub). README:177 and index.html name only Claude Code's and Codex's hooks. Docs only; fix as suggested.

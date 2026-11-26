@@ -97,3 +97,40 @@ test('a branch is told which other sessions\' pushed branches it would conflict 
   status = await gitStatus(mine, { fetch: true });
   assert.deepEqual([status.conflicts, status.branchConflicts], [['a.txt'], []]);
 });
+
+test('a session branch squash-merged into main is main\'s conflict now, not the branch\'s', async () => {
+  const root = path.join(tmp, 'squash'), origin = path.join(root, 'origin.git'), mine = path.join(root, 'mine'), theirs = path.join(root, 'theirs');
+  fs.mkdirSync(root);
+  git(root, 'init', '-q', '--bare', origin);
+  git(root, 'clone', '-q', origin, mine);
+  write(mine, 'a.txt', 'one\ntwo\nthree\n');
+  git(mine, 'add', '.');
+  git(mine, 'commit', '-q', '-m', 'start');
+  git(mine, 'push', '-q', '-u', 'origin', 'main');
+  git(root, 'clone', '-q', origin, theirs);
+  git(mine, 'checkout', '-q', '-b', 'session/x');
+  write(mine, 'a.txt', 'one\nTWO, mine\nthree\n');
+  git(mine, 'commit', '-q', '-am', 'mine');
+  git(theirs, 'checkout', '-q', '-b', 'session/y');
+  write(theirs, 'a.txt', 'one\nTWO, theirs\nthree\n');
+  git(theirs, 'commit', '-q', '-am', 'theirs');
+  git(theirs, 'push', '-q', '-u', 'origin', 'session/y');
+  assert.deepEqual((await gitStatus(mine, { fetch: true })).branchConflicts, [{ branch: 'session/y', files: ['a.txt'] }]);
+
+  // Squash-merged (GitHub's usual way): main gets one new commit with their change, and their own commit never joins it.
+  git(theirs, 'checkout', '-q', 'main');
+  git(theirs, 'merge', '-q', '--squash', 'session/y');
+  git(theirs, 'commit', '-q', '-m', 'theirs, squashed');
+  git(theirs, 'push', '-q', 'origin', 'main');
+  const status = await gitStatus(mine, { fetch: true });
+  assert.deepEqual([status.conflicts, status.branchConflicts], [['a.txt'], []]);
+
+  // The checks leave nothing in the clone: merge-tree's merged trees go to a temporary store.
+  write(mine, 'c.txt', 'new\n');
+  git(mine, 'add', 'c.txt');
+  git(mine, 'commit', '-q', '-m', 'more');
+  const loose = () => git(mine, 'count-objects', '-v').match(/^count: (\d+)/m)[1];
+  const before = loose();
+  assert.deepEqual((await gitStatus(mine)).conflicts, ['a.txt'], 'still worked out');
+  assert.equal(loose(), before, 'no objects left behind');
+});

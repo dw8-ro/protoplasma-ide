@@ -1,0 +1,5 @@
+# verify-fixes-ci-docs
+- fixes-ci-docs-1 CONFIRMED medium: sign job runs `tar -xzf app.tgz` in the checkout, then scripts/sign.sh with the cert. Reproduced: archive carrying scripts/sign.sh overwrites the checked-out one (prints "evil"). Fix: list-check entries, extract into out/.
+- fixes-ci-docs-2 CONFIRMED low: retention-days 1 vs required-reviewer wait; plan.md:137-138 says failure needs 0.7.1, but Re-run all jobs works (tag check passes, nothing published).
+- fixes-ci-docs-3 CONFIRMED low: AGENTS.md:23 says 123, map says hub-live 18/identity 7/conflicts 1, no quota.test.js; actual 20/8/3 + quota 2 = 130. AGENTS.md not touched by the diff for counts; HANDOFF:63,96 also say 123 (history).
+- fixes-ci-docs-4 CONFIRMED low: diff bumps electron ~44.10.2 -> ~44.11.6, monaco ^0.57 -> ^0.58 (bundles DOMPurify 3.4.17). HANDOFF:18 says so, but HANDOFF:166 "Electron stays at 44.10.2. Don't take 44.11.x", HANDOFF:354-358 DOMPurify 3.4.15 open item, plan.md:46 "Electron stays at ~44.10.2" contradict it.

@@ -1,13 +1,48 @@
-# Handoff: Protoplasma IDE, 16 November 2026 (evening)
+# Handoff: Protoplasma IDE, 25 November 2026
 
 Read this first in a new session, then [AGENTS.md](AGENTS.md) for how the code fits together. What the last sessions
 did: [docs/sessions/2026-10-29.md](docs/sessions/2026-10-29.md) (the second security audit),
 [docs/sessions/2026-10-26.md](docs/sessions/2026-10-26.md) (19–26 Oct) and
 [docs/sessions/2026-10-18.md](docs/sessions/2026-10-18.md) (the first security audit).
 
+## 25 Nov 2026: an independent review of 0.7.0, everything it found fixed, ready to release
+
+**Start here.** Branch `claude/protoplasma-improvements-7e34b3` (worktree `protoplasma-improvements-7e34b3`) is the
+redesign branch (`75aaaf3`) plus the fixes below, **uncommitted**, waiting for David's go-ahead to commit and release.
+The review, every finding, its evidence and its fix: [docs/sessions/2026-11-25-review.md](docs/sessions/2026-11-25-review.md)
+(raw notes beside it). It describes weaknesses fixed in this release, so commit it with the release, not before.
+- **The review:** eight areas, a reviewer each and a skeptic that tried to refute every finding: the live hub sign-in
+  commits, the hook relay and main process, build and release, the branch's hub changes, lanes and agents, Just me,
+  terminals and UI, and the "Keep these in sync" invariants. 23 findings, none high, 5 medium; all confirmed and all
+  fixed. Plus an upstream check (Electron, Monaco, Railway, Claude Code, Codex, GitHub).
+- **Also in:** Electron `~44.11.6` (44.11.4 fixed the canvas font bug that kept us on 44.10.2), Monaco 0.58.0 (a newer
+  DOMPurify), `@electron/asar` 4.3.4 (clears the `minimatch` Dependabot alert), and the release-job split: `release.yml`
+  builds in a job with no secrets and signs in a `sign` job that installs nothing, in the **`release` environment**.
+- **A second review of the fixes (26 Nov)** found 12 more, all fixed (see the review doc).
+- **Checks (26 Nov):** `npm test` 130 of 130; `npm run dist` builds with every runtime file in the asar; `npm run e2e`
+  149 of 149 on Electron 44.11.6, also with another app taking the front every 20 s.
+- **The comment-focus e2e flake is fixed.** "Comment on this points the next comment at those lines" and the step after
+  it failed whenever another app had focus during the run: the app put the cursor in the comment field, but where focus
+  lands can only be checked while the window has it. e2e now gives its window focus before those steps
+  (`app.focus({ steal: true })`), and the first one prints where focus went if it fails.
+- **To release (David says when):**
+  1. Commit (authored as dw8-ro, no AI lines), merge to `main`, push: the hosted hub redeploys (hub.js changed; check
+     Railway says SUCCESS and `/` answers).
+  2. **Before tagging, on GitHub:** Settings → Environments → `release`: add yourself as a required reviewer and move
+     `MAC_CERT_P12` and `MAC_CERT_PASSWORD` into it (the repo secrets work until then). The first run of the new
+     `release.yml` is this release, so watch it.
+  3. `npm version minor` (0.7.0), push the tag, approve the `sign` job, then `node scripts/update-check.js 0.6.1`.
+  4. `npm run setup` once in every checkout after pulling (allowScripts is enforced).
+- **Still David's:** delete `main-lsx6e3`, a `v*` tag ruleset, the account email settings; Codex's "Hooks need review"
+  for its two new hooks; the first real install with Max. Worth one run before release: `node scripts/status-check.js`
+  against Claude Code 2.1.332 (installed here: 2.1.289) and `node scripts/codex-hooks.js` on Codex 0.172.
+- **Known and left:** Railway's CDN can, per a known bug, give many users one address, so they'd share the 10-a-minute
+  sign-in budget (watch); GitHub's undocumented `X-OAuth-Client-Id` header (fails closed); don't enable short-lived
+  tokens on the OAuth app (no refresh logic).
+
 ## 16 Nov 2026: the redesign, on `claude/fable-5-2-redesign-dd3b36`, not released
 
-**Tomorrow, start here (end of 16 Nov, usage limit nearly hit; everything committed, all checks green):**
+**Where 16 Nov left off (superseded by 25 Nov above):**
 1. David on GitHub: `footfungus2` has write access (remove or make read-only); signing secrets behind an approval;
    a `v*` tag ruleset; delete `main-lsx6e3`.
 2. David: Codex's "Hooks need review" for its two new hooks (Trust all and continue), then the Codex status checks.
@@ -129,7 +164,7 @@ What it still needs, in order:
   command" are the parts to read first.
 - **Not built:** the rest of phase 3 (the team picker, one "beside", a shorter bar, what to do
   about an overlap; Plan and Memory in the side panel is in since 16 Nov), and the rest of phase 5.
-- **Electron stays at 44.10.2. Don't take 44.11.x as it is:** its canvas refuses the font string xterm's WebGL renderer
+- **(Superseded 25 Nov: Electron 44.11.4 fixed this, and 0.7.0 ships 44.11.6.) Electron stays at 44.10.2. Don't take 44.11.x as it is:** its canvas refuses the font string xterm's WebGL renderer
   draws letters with (`" normal 25px …"`, with a leading space), so every terminal's text comes out tiny in full-size
   cells. This is what David saw twice. e2e now checks a canvas takes that font, so the next Electron update says so at
   once. The way forward for 44.11 and later is an xterm that writes the font without the leading space.
@@ -317,7 +352,7 @@ changelog, 2 Nov) found Protoplasma already has most team features; these closed
   - git filter drivers in a downloaded folder's own `.git/config` still run when the app reads its status;
   - during a flood of made-up tokens, new sign-ins wait;
   - session-name aliases can be claimed by renames;
-  - DOMPurify advisories in Monaco (1 critical, 1 high, 3 low on 28 Oct). Monaco 0.57.0 bundles DOMPurify 3.4.15 into
+  - ~~DOMPurify advisories in Monaco~~ (done 25 Nov: Monaco 0.58.0 bundles a newer DOMPurify). Earlier note: (1 critical, 1 high, 3 low on 28 Oct). Monaco 0.57.0 bundles DOMPurify 3.4.15 into
     `min/vs`, and that copy is what the app loads; the separate npm package isn't used. None of them can be reached:
     each needs `SAFE_FOR_TEMPLATES`, `IN_PLACE` or `PARSER_MEDIA_TYPE`, and Monaco passes only a tag and attribute
     list, `ALLOW_UNKNOWN_PROTOCOLS` and DOM or TrustedType output. The CSP blocks inline script as well. Take a

@@ -101,6 +101,9 @@ function readPass(pass, key, aud, now = Date.now()) {
 function startHub({ port = 7681, host = '0.0.0.0', dataDir, owners, tls, passIssuer, clientId, addressHeader, verifyUser = token => module.exports.githubUser(token, clientId) } = {}) {
   const same = (a, b) => String(a).toLowerCase() === String(b).toLowerCase();
   const send = (ws, msg) => ws.readyState === ws.OPEN && ws.send(JSON.stringify(msg));
+  // Screens replayed in a burst stop once a window has MAX_BUFFERED unsent: the rest start from their next output. (Not
+  // dropped: one burst to a window that reads fine can pass it. toTeam drops a window that stops reading live output.)
+  const replayTo = (ws, msg) => ws.bufferedAmount <= MAX_BUFFERED && send(ws, msg);
   const parse = raw => { try { return JSON.parse(raw); } catch { return null; } };
   const str = (v, max) => (typeof v === 'string' ? v.slice(0, max) : ''); // a number or object sent where text belongs is nothing
   const onlyDots = name => /^\.+$/.test(name); // "." and ".." vanish from a URL, so a session can't be called that
@@ -278,7 +281,8 @@ function startHub({ port = 7681, host = '0.0.0.0', dataDir, owners, tls, passIss
   };
   let asked = { n: 0, since: 0 };
   const askedBy = new Map(); // client address -> { n, since }: this minute's checks of unseen tokens from there
-  const addressOf = req => (addressHeader && str(req.headers[addressHeader], 100).split(',')[0].trim()) || req.socket.remoteAddress || '';
+  // The last entry: a proxy that appends to a header the client already sent puts the address it saw last.
+  const addressOf = req => (addressHeader && str(req.headers[addressHeader], 100).split(',').pop().trim()) || req.socket.remoteAddress || '';
   async function identify(token, from = '') {
     if (typeof token !== 'string' || !token || token.length > 2000) return null;
     const key = crypto.createHash('sha256').update(token).digest('hex');
@@ -447,7 +451,8 @@ function startHub({ port = 7681, host = '0.0.0.0', dataDir, owners, tls, passIss
   // Settings that change where a plain `git push` goes: push.default=matching pushes main along with everything else.
   // ponytail: these names only; a push.default=upstream already in someone's own config, plus a branch tracking main, isn't
   // caught (the pre-push hook still is, for Codex and OpenCode).
-  const PUSH_CONFIG = /^(remote\..+\.(push|pushurl)|push\.default)$/i;
+  // remote.*.mirror makes a plain push mirror every ref, force-updating main.
+  const PUSH_CONFIG = /^(remote\..+\.(push|pushurl|mirror)|push\.default)$/i;
   const redirectReason = key => `this sets ${key}, which changes where git pushes, so a later push can reach a branch your team shares without naming it. Confirm it's intended.`;
   // Why a `git push` needs a person's confirmation, or null if it's fine. Only applies when the team has other people.
   // ponytail: a reading of the words, not a shell parser; a script that pushes without saying so isn't caught.
@@ -460,14 +465,17 @@ function startHub({ port = 7681, host = '0.0.0.0', dataDir, owners, tls, passIss
       if (words.some((w, i) => w === '-c' && /^alias\.[^=]+=.*push/i.test(words[i + 1] || ''))) {
         return 'this runs git through an inline alias (-c alias.…), which can slip a push past the usual check. Confirm it\'s intended.';
       }
-      // So does config that says where a plain push goes: `git -c remote.origin.push=HEAD:main push`, or set for later.
-      const redirect = words.find((w, i) => words[i - 1] === '-c' && PUSH_CONFIG.test(w.split('=')[0]));
+      // So does config that says where a plain push goes: `git -c remote.origin.push=HEAD:main push` (or --config-env, or
+      // GIT_CONFIG_KEY_0=… in the environment), or set for later.
+      const setting = (w, i) => (['-c', '--config-env'].includes(words[i - 1]) ? w : w.startsWith('--config-env=') ? w.slice(13)
+        : /^GIT_CONFIG_KEY_\d+=/.test(w) ? w.slice(w.indexOf('=') + 1) : '').replace(/["']/g, ''); // KEY_0="remote.origin.push"
+      const redirect = words.map(setting).find(s => PUSH_CONFIG.test(s.split('=')[0]));
       if (redirect) return redirectReason(redirect.split('=')[0]);
       for (let at = 0; at < words.length; at++) { // every git in it: sudo -u git git push, submodule foreach git push
         if (!isGit(words[at])) continue;
         const sub = subcommandAt(words, at), next = words.slice(sub + 1).find(w => !w.startsWith('-'));
         // Reading or removing it is fine (`git config --get remote.origin.push`, `git config unset …`); setting it isn't.
-        const key = words[sub] === 'config' && !words.some(w => /^(--get(-all|-regexp)?|--list|-l|--unset(-all)?|--show-origin)$/.test(w))
+        const key = words[sub] === 'config' && !words.some(w => /^(--get(-all|-regexp)?|--list|--unset(-all)?)$/.test(w))
           && !['get', 'list', 'unset'].includes(next) && words.slice(sub + 1).find(w => PUSH_CONFIG.test(w));
         if (key) return redirectReason(key);
         if (['checkout', 'switch'].includes(words[sub]) && next && !words.includes('--')) branch = next;
@@ -571,7 +579,9 @@ function startHub({ port = 7681, host = '0.0.0.0', dataDir, owners, tls, passIss
   // every index.js; steps with a list of files would be exact, at the cost of a field in the step form.
   const mentions = (text, rel) => {
     const t = String(text).toLowerCase(), path = rel.toLowerCase(), name = path.split('/').pop().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    return t.includes(path) || new RegExp(`(^|[\\s\`'"(/])${name}($|[\\s\`'"),.:;!?])`).test(t);
+    // The name with a boundary on both sides covers a full path too (it ends in "/name"); a plain includes() would let
+    // a.ts match inside data.ts.
+    return new RegExp(`(^|[\\s\`'"(/])${name}($|[\\s\`'"),.:;!?])`).test(t);
   };
   function claimsOn(lane, rel) {
     lane.toldClaims ||= new Set();
@@ -580,11 +590,12 @@ function startHub({ port = 7681, host = '0.0.0.0', dataDir, owners, tls, passIss
       for (const step of session.steps || []) {
         const key = `${step.id}|${rel}`;
         if (step.done || !step.owner || same(step.owner, lane.login) || lane.toldClaims.has(key) || !mentions(step.text, rel)) continue;
+        if (found.length === 3) return found; // three at a time; the rest at the next edit, not marked told yet
         lane.toldClaims.add(key);
         found.push({ step, session });
       }
     }
-    return found.slice(0, 3);
+    return found;
   }
 
   // A JSON reply steers the agent; an empty one lets it continue. Claude Code and Codex send the same events.
@@ -845,6 +856,14 @@ function startHub({ port = 7681, host = '0.0.0.0', dataDir, owners, tls, passIss
         if (!name) return json(400, { error: 'Name the session.' });
         if (onlyDots(name)) return json(400, { error: 'A session name needs a letter or a number.' });
         const existed = findSession(team, name);
+        // Moving a session in (renderer moveSession) must never join someone else's of the same name, under its folder
+        // key or its shown name (`as`). Moving one back to where it came from takes up its own record, left there done.
+        if (body.move === true) {
+          const taken = [existed, typeof body.as === 'string' && body.as && findSession(team, str(body.as, 60))].filter(Boolean)
+            .find(s => !(s.done && keyOf(s) === slug(name) && (same(s.createdBy, user.login) || same(team.owner, user.login))));
+          if (taken) return json(409, { error: `That team already has a session called "${taken.name}". Delete it there first, then move this one again.` });
+          if (existed?.done) Object.assign(existed, { done: false, doneAt: undefined });
+        }
         if (!existed && full(team)) {
           return json(409, { error: `A team holds ${MAX_SESSIONS} sessions. Mark some done or delete them first.` });
         }
@@ -1077,7 +1096,7 @@ function startHub({ port = 7681, host = '0.0.0.0', dataDir, owners, tls, passIss
     Object.assign(ws, { team: team.id, login: user.login, user, session: null, sees: Array.isArray(hello?.sees) ? new Set() : null });
     watchers.add(ws);
     broadcastState(team.id); // doubles as the newcomer's first message
-    if (!ws.sees) for (const l of teamLanes(team.id)) send(ws, { t: 'out', lane: l.id, d: l.history });
+    if (!ws.sees) for (const l of teamLanes(team.id)) replayTo(ws, { t: 'out', lane: l.id, d: l.history });
     // A window drives look (switching session) and replay (opening a stopped agent) from clicks, so a handful a second is
     // plenty. Each look that changes session runs broadcastState (rebuild + a fan-out to every teammate), so a tight loop
     // of them would peg the single-threaded hub: they get a per-socket budget. file:get has its own (fileRate).
@@ -1094,7 +1113,7 @@ function startHub({ port = 7681, host = '0.0.0.0', dataDir, owners, tls, passIss
         // needs, and too few to make the hub pour out screens. Past it, a terminal starts from the next output.
         if (ws.sees && Array.isArray(m.sees)) {
           const sees = new Set(m.sees.slice(0, 8).map(s => str(s, 60)));
-          if (!viewing()) for (const l of teamLanes(team.id)) if (sees.has(l.session) && !ws.sees.has(l.session)) send(ws, { t: 'out', lane: l.id, d: `\x1bc${l.history}` });
+          if (!viewing()) for (const l of teamLanes(team.id)) if (sees.has(l.session) && !ws.sees.has(l.session)) replayTo(ws, { t: 'out', lane: l.id, d: `\x1bc${l.history}` });
           ws.sees = sees;
         }
         if (flooding()) return;
@@ -1202,7 +1221,7 @@ function startHub({ port = 7681, host = '0.0.0.0', dataDir, owners, tls, passIss
   });
 }
 
-module.exports = { startHub, githubUser, signPass, readPass };
+module.exports = { startHub, githubUser, signPass, readPass, CLIENT_ID };
 
 // Standalone: PORT, DATA_DIR, PROTO_OWNERS (comma-separated GitHub logins allowed to create teams), PROTO_CLIENT_ID (the
 // GitHub sign-in app whose tokens are accepted: Protoplasma's unless set; blank accepts any GitHub token),

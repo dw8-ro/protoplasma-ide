@@ -9,12 +9,18 @@ on:
   # when a tag can't be pushed from where you are; the version still has to be bumped on main first.
   workflow_dispatch:
 
+# Dependency code (npm ci, the allowed install scripts, the tests, the packager) runs only in `build`, which has no
+# secrets. `sign` installs nothing, checks out only sign.sh and the release notes, and is the one job that can read the
+# signing certificate and publish: it runs in the `release` environment (Settings → Environments: add required
+# reviewers there, and keep MAC_CERT_P12 and MAC_CERT_PASSWORD as that environment's secrets).
 permissions:
-  contents: write
+  contents: read
 
 jobs:
-  mac:
+  build:
     runs-on: macos-latest
+    outputs:
+      tag: ${{ steps.tag.outputs.tag }}
     steps:
       - uses: actions/checkout@v5
         with:
@@ -30,6 +36,7 @@ jobs:
       # TAG is v<package.json version>: the pushed tag must say the same, and a run from the Actions page must be on
       # main and for a version that isn't released yet.
       - name: Check the tag matches package.json
+        id: tag
         run: |
           TAG="v$(node -p "require('./package.json').version")"
           if [ "$GITHUB_EVENT_NAME" = workflow_dispatch ]; then
@@ -40,18 +47,49 @@ jobs:
           else
             [ "$GITHUB_REF_NAME" = "$TAG" ] || { echo "The tag $GITHUB_REF_NAME doesn't match package.json ($TAG)."; exit 1; }
           fi
-          echo "TAG=$TAG" >> "$GITHUB_ENV"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
       - run: npm ci
       - run: npm run setup # only the install scripts package.json allowScripts names (.npmrc skips all others)
       - run: npm test
       - run: npm run dist
+      # A tar keeps the app's symlinks and permissions, which an artifact's own zip would lose.
+      - run: tar -czf app.tgz -C dist.noindex/Protoplasma-darwin-arm64 Protoplasma.app
+      - uses: actions/upload-artifact@v4
+        with:
+          name: unsigned-app
+          path: app.tgz
+          retention-days: 7 # the sign job may wait days for its reviewer
+
+  sign:
+    needs: build
+    runs-on: macos-latest
+    environment: release
+    permissions:
+      contents: write
+    env:
+      TAG: ${{ needs.build.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+          sparse-checkout: |
+            scripts/sign.sh
+            docs/release-notes
+          sparse-checkout-cone-mode: false
+      - uses: actions/download-artifact@v4
+        with:
+          name: unsigned-app
+      # Only the app, into a folder of its own: anything else in the tar (a path out of it, a replacement sign.sh) is refused.
+      - run: |
+          if tar -tzf app.tgz | grep -qvE '^Protoplasma\.app(/|$)'; then echo "app.tgz holds something besides Protoplasma.app"; exit 1; fi
+          mkdir out && tar -xzf app.tgz -C out
       - name: Sign with the project's own certificate (no Apple account needed) and zip
         env:
           MAC_CERT_P12: ${{ secrets.MAC_CERT_P12 }}
           MAC_CERT_PASSWORD: ${{ secrets.MAC_CERT_PASSWORD }}
         run: |
-          scripts/sign.sh dist.noindex/Protoplasma-darwin-arm64/Protoplasma.app
-          ditto -c -k --keepParent dist.noindex/Protoplasma-darwin-arm64/Protoplasma.app "Protoplasma-${TAG#v}-mac-arm64.zip"
+          scripts/sign.sh out/Protoplasma.app
+          ditto -c -k --keepParent out/Protoplasma.app "Protoplasma-${TAG#v}-mac-arm64.zip"
       - name: Publish
         env:
           GH_TOKEN: ${{ github.token }}
@@ -59,4 +97,4 @@ jobs:
         # tag at this commit when it doesn't exist yet (a run from the Actions page); a pushed tag stays where it is.
         run: |
           NOTES="docs/release-notes/${TAG#v}.md"
-          gh release create "$TAG" Protoplasma-*-mac-arm64.zip --target "$GITHUB_SHA" --title "Protoplasma ${TAG#v}" --generate-notes ${NOTES:+$( [ -f "$NOTES" ] && echo "--notes-file $NOTES")}
+          gh release create "$TAG" Protoplasma-*-mac-arm64.zip --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --title "Protoplasma ${TAG#v}" --generate-notes ${NOTES:+$( [ -f "$NOTES" ] && echo "--notes-file $NOTES")}

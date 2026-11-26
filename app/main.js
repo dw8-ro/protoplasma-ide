@@ -114,7 +114,7 @@ ipcMain.handle('teams:invite', signedIn(async (key, login) => {
 }));
 ipcMain.handle('memories:add', signedIn((key, note) => teams.addMemory(session, teamFor(key), { text: String(note.text), file: String(note.file || ''), repo: String(note.repo || ''), hash: String(note.hash || '') })));
 ipcMain.handle('memories:remove', signedIn((key, id) => teams.removeMemory(session, teamFor(key), String(id))));
-ipcMain.handle('sessions:save', signedIn((key, o) => teams.saveSession(session, teamFor(key), { name: String(o.name), task: String(o.task || '') })));
+ipcMain.handle('sessions:save', signedIn((key, o) => teams.saveSession(session, teamFor(key), { name: String(o.name), task: String(o.task || ''), ...(o.move && { move: true, as: String(o.as || '') }) })));
 ipcMain.handle('sessions:done', signedIn((key, name, done) => teams.setSessionDone(session, teamFor(key), String(name), !!done)));
 ipcMain.handle('sessions:rename', signedIn((key, name, rename) => teams.renameSession(session, teamFor(key), String(name), String(rename))));
 ipcMain.handle('sessions:delete', signedIn((key, name) => teams.deleteSession(session, teamFor(key), String(name))));
@@ -228,6 +228,10 @@ ipcMain.on('lane:write', (_, id, d) => lanes.get(id)?.write(d));
 ipcMain.handle('sessions:folder', (_, repo, name) => github.sessionFolderPath(String(repo), String(name)));
 ipcMain.handle('sessions:removeFolder', signedIn(async (repo, name) => {
   const dir = github.sessionFolderPath(String(repo), String(name));
+  // Never under a running agent: after Move to a team, another team's session works in this same folder.
+  if ([...lanes.values()].some(l => l.cwd === dir || String(l.cwd).startsWith(dir + path.sep))) {
+    throw new Error('An agent is still working in that folder. Stop it first, then remove the folder.');
+  }
   await github.removeSessionFolder(String(repo), String(name), await agentEnv);
   folders.delete(dir);
 }));

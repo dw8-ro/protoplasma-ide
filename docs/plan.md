@@ -2,7 +2,11 @@
 
 Where Protoplasma is heading and what to do next, in order. The evidence is in
 [docs/research/2026-11-14-market-agents-and-ux.md](research/2026-11-14-market-agents-and-ux.md); the R and U numbers
-below are its. Update this file as phases finish. Nothing here has been started: David approves each phase first.
+below are its. Update this file as phases finish. David approves each phase first.
+
+**Where it stands (25 Nov 2026):** phases 1 to 5 are built (all but line ranges in phase 5 and OpenCode 2), reviewed
+independently and ready to release as 0.7.0 ([sessions/2026-11-25-review.md](sessions/2026-11-25-review.md)). What
+stands between 0.7.0 and a 1.0 that anyone can install and rely on is in **Road to 1.0** below.
 
 ## Direction
 
@@ -39,7 +43,7 @@ Ctrl-C or digit the agent's Mac watches its screen for 2.5 s and tells the hub w
 - R7: the relay sends the hub only what it reads. Then change the privacy text in the README and Settings, which
   quote what passes through.
 - R12: fix the e2e step that needs a dirty checkout. R14 (Electron 44.11.3) was tried and undone: its canvas refuses
-  the font xterm draws letters with, so terminal text came out tiny. Electron stays at `~44.10.2`.
+  the font xterm draws letters with, so terminal text came out tiny. (Since: 44.11.4 fixed it; 0.7.0 ships `~44.11.6`.)
 - Recheck Codex's hooks on 0.169.0 (`codex app-server`, `hooks/list`), and e2e on Claude Code 2.1.325.
 
 **Done when:** `npm test` and `npm run e2e` pass, with new tests for each of R1 to R5 (hub-live.test.js) and R7
@@ -109,6 +113,100 @@ is brought up to a teammate's agent about to edit it (hub.js `claimsOn`). Not ye
   a file is a note and one in the same lines is the alert.
 - **Before work starts:** a plan step can name files; an agent starting on a file someone's step claims is told.
 
+## Road to 1.0: fully usable and operational
+
+**1.0 means** someone outside the team can install Protoplasma, start working alone, invite people anywhere (not only
+on their Wi-Fi), and rely on it daily: agents' status is true, overlaps and risky pushes are caught across Claude Code,
+Codex and OpenCode, the hosted hub stays up and keeps their data, updates are safe, and a problem can be reported.
+
+Each step below is a release. **Size:** S is under a day of work, M a few days, L a week or more. **Who:** *David*
+(needs him: GitHub, Railway, Apple, people), *code* (a session builds it after David's go-ahead), or *both*.
+
+### 0.7.0: release what's built (now)
+Review complete: 23 findings in 8 areas, all fixed; then a second review of the fixes themselves. `npm test`,
+`npm run e2e` and `npm run dist` pass. Details: [sessions/2026-11-25-review.md](sessions/2026-11-25-review.md).
+
+| Step | Who | Size |
+|---|---|---|
+| Commit the work (as dw8-ro, no AI lines), merge to `main`, push; check Railway redeployed the hub (`/` answers) | both | S |
+| GitHub → Settings → Environments → `release`: add yourself as required reviewer; move `MAC_CERT_P12` and `MAC_CERT_PASSWORD` into it | David | S |
+| `npm version minor`, push the tag, approve the `sign` job, check the release has `Protoplasma-0.7.0-mac-arm64.zip` | both | S |
+| `node scripts/update-check.js 0.6.1` (an installed 0.6.1 updates itself to 0.7.0) | code | S |
+| `npm run setup` once in every checkout after pulling | David | S |
+
+**Risk:** the release workflow is new (split into build and sign jobs) and runs for the first time on this release. If
+it fails, the fix needs a new commit and a new version (0.7.1), so watch the run.
+
+### 0.7.1: proven on real Macs
+**Goal:** the first time Protoplasma runs on two real Macs with two real people. Everything so far was one Mac with
+stand-in teammates.
+
+| Step | Who | Size |
+|---|---|---|
+| First install with Max, all four parts of [first-install.md](first-install.md): install, an Online team, working together, a This Mac team on Wi-Fi | David | M (an evening) |
+| "Status tells the truth" with real Claude Code and Codex: interrupt → Idle, a question → Needs you, an approval → Working | David | S |
+| Codex live: "Hooks need review" for the two new hooks, then `apply_patch` and a push to main stopped once | David | S |
+| Rechecks on current CLIs: `node scripts/status-check.js` (Claude Code 2.1.332+), `node scripts/codex-hooks.js` and the trust-prompt texts (Codex 0.172+) | code | S |
+| OpenCode against a live model (sign in a provider first) | both | S |
+| Fix what the above turns up, with a test for each | code | M |
+
+**Done when:** every box in first-install.md is ticked on two Macs, and each failure found has a fix and a test.
+**Risk:** real networks (a Mac hub across Wi-Fi, Bonjour, macOS's local-network prompt) are where stand-ins can't
+reach; budget time for that part.
+
+### 0.8: anyone can start
+**Goal:** a person new to Protoplasma gets from a download to an agent working on their request without help.
+
+| Step | Who | Size |
+|---|---|---|
+| Decide notarisation (Q6). If yes: Apple Developer account, sign with a Developer ID and notarise in the `sign` job; a bridge release first, because installed copies only accept updates signed like today's (`sameSigner`) | David, then code | M |
+| A download page (zip or dmg) beside the Terminal one-liner; if not notarised, the app's first window explains "Open Anyway" | code | S |
+| `install.sh` checks the download's signing certificate before it removes quarantine (today it checks nothing) | code | S |
+| First-run walk-through: Just me → "What should the agent do?" → pick a repo → the agent working; the folder-trust prompt and Codex's "Hooks need review" explained where they appear | code | M |
+| Empty states and errors on every screen say what to do next (no CLI installed, gh not signed in, offline, hub asleep) | code | M |
+| Try it on someone who hasn't seen it; fix what they trip on | David | S |
+
+**Done when:** that person reaches a working agent in three choices (sign in, say what to do, pick the repo), and e2e and
+the customer simulation pass on the new screens.
+
+### 0.9: the hosted hub open to everyone, safely (Q1)
+**Goal:** anyone can make an Online team, and the hub can take it.
+
+| Step | Who | Size |
+|---|---|---|
+| Quotas: teams per person (built), plus REST requests per minute, comments, notes and plan steps per team, sessions per person | code | M |
+| Invites that need accepting: an invite shows as an alert; until accepted the person isn't a member and sees nothing | code | M |
+| Storage: stop rewriting all of `teams.json` on each change (one file per team, written on change, or SQLite on the volume) | code | M |
+| Backups: a nightly copy off the volume, and a restore tried once | both | S |
+| Railway's paid plan without App Sleeping (hooks give up after 3 s, so cold starts cost asks), and an uptime alert on `/` | David | S |
+| The hub on its own domain (`hub.<domain>`): renewal, registrar lock, two-factor sign-in, no dangling DNS; the app's `onlineHub` moves in a release | both | S |
+| "Your own hub server": a hub address in the team window, so a team can use a hub it hosts | code | M |
+| Load test: many teams and agents against one hub; memory and hook answer times stay well inside Railway's limits | code | S |
+
+**Done when:** `PROTO_OWNERS` is cleared on Railway, a stranger creates a team, and the load test passes.
+**Watch:** Railway's CDN can give many users one address, so they'd share the 10-a-minute sign-in budget.
+
+### 1.0: dependable
+**Goal:** teams can rely on it for real work.
+
+| Step | Who | Size |
+|---|---|---|
+| Help → Report a problem: the app's version, recent logs and the update log, shown to the person first, then a GitHub issue or an email | code | S |
+| Close the known lows: skip git (with a notice) in a downloaded folder with its own filter drivers; This Mac's hub leaves the network when nobody else is on its teams; the 6 px terminal-width floor | code | M |
+| Overlaps by line ranges: different parts of a file is a note, the same lines the alert (phase 5's last item) | code | M |
+| OpenCode 2's plugin, if OpenCode 2 is out | code | S |
+| Release safety on GitHub: a `v*` tag ruleset, delete `main-lsx6e3`, account email privacy | David | S |
+| Docs: a short user guide, final README and in-app privacy text, a page with download, privacy and terms (drafts exist) | both | M |
+| Two teams use it for real work for two weeks | David | L (calendar time) |
+
+**Done when:** those two weeks pass with no lost work and no unexplained status, and e2e, the customer simulation and
+the update check pass on the release build.
+
+### Every release on the way
+- `npm test`, `npm run e2e`, and for packaging changes `npm run dist`; after the release, `node scripts/update-check.js`.
+- Electron kept current: e2e's canvas-font check catches the kind of break 44.11.0–44.11.3 had.
+- A review of what changed (reviewers in parallel, a skeptic per area, saving as they go: see the 25 Nov review).
+
 ## Alongside, needing people
 - **The first real install with Max**, from [first-install.md](first-install.md). Still the most useful single
   thing: it's the first run on two real Macs.
@@ -120,13 +218,9 @@ is brought up to a teammate's agent about to edit it (hub.js `claimsOn`). Not ye
 - A chat window over ACP, Windows, a browser viewer, an own agent or model router.
 
 ## Decisions for David
-- **Q1. Who may create Online teams?** (16 Nov: recommended to keep it to `dw8-ro` for 0.7.0; a cap of 3 teams per
-  person is built for when it opens; see HANDOFF.md.) Today only `dw8-ro` (the hub's `PROTO_OWNERS`), and the app doesn't say so
-  (R16). Either keep it and have the app explain, starting new people on This Mac; or open it to everyone with a
-  limit per person. Suggested: explain now, open it when the launch plan resumes.
-- **Q2. Should what you type in New session go to the agent as its first message (U1)?** It starts using your model
-  plan at once. Suggested: yes, since it's what the box asks for; settle the details on the review page.
-- **Q3. Install OpenCode on your Mac** (`npm install -g opencode-ai`), so it can be checked at all?
-- **Q4. Update Codex to 0.169.0** before phase 1's recheck? Claude Code updates itself.
-- **Q5. This order,** or the redesign (phase 3) before the agent table (phase 2)? The review page can be made
-  during phase 1 either way.
+- **Q1. Who may create Online teams?** Kept to `dw8-ro` for 0.7.0. For 1.0, open it to everyone once 0.9's quotas,
+  invites and storage are in (or keep it closed and make "your own hub server" the way teams go online).
+- **Q6. Notarise with Apple** ($99 a year) for 0.8, or keep the self-signed certificate and explain "Open Anyway"?
+- **Q7. Launch and pricing:** 1.0 above is about working well for anyone; whether 1.0 is also the public launch
+  (website, closed source, paid hub) is the launch plan's question, on hold since 2 Nov.
+- Settled: Q2 (yes, built), Q3 (OpenCode 1.19.5 installed), Q4 (Codex updated), Q5 (the order as written).
